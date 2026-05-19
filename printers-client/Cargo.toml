@@ -1,0 +1,17 @@
+[package]
+name = "cosmic-settings-printers-client"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+dirs = "6.0.0"
+serde = { version = "1.0", features = ["derive"] }
+cosmic-settings-printers-core = { path = "../printers-core" }
+
+[dependencies.zlink]
+workspace = true
+default-features = false
+features = ["proxy", "tokio", "tracing"]
+
+[dev-dependencies]
+tokio = { version = "1.47.1", features = ["macros", "rt"] }
