@@ -1,0 +1,14 @@
+[package]
+name = "cosmic-settings-printers-server"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+tokio = { version = "1", features = ["sync", "rt", "macros"] }
+cosmic-settings-printers-core = { path = "../printers-core" }
+cups_rs = "0.2.0"
+
+[dependencies.zlink]
+workspace = true
+default-features = false
+features = ["server", "service", "tokio", "tracing"]
