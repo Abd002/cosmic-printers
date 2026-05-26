@@ -1,11 +1,30 @@
 use cosmic_settings_printers_core::{Error, PrinterEntry, PrinterStatus};
-use cups_rs::{Destination, PrinterState as CupsPrinterState, get_all_destinations};
+use cups_rs::{Destination, PrinterState as CupsPrinterState, enum_destinations};
 
 pub async fn list_printers() -> Result<Vec<PrinterEntry>, Error> {
-    let destinations = tokio::task::spawn_blocking(get_all_destinations)
-        .await
-        .map_err(|_| Error::CupsFailed)?
+    let destinations = tokio::task::spawn_blocking(|| {
+        let mut destinations = Vec::new();
+
+        enum_destinations(
+            cups_rs::DEST_FLAGS_NONE,
+            250,
+            None,
+            0,
+            0,
+            &mut |flags, dest, dests: &mut Vec<Destination>| {
+                if (flags & cups_rs::DEST_FLAGS_REMOVED) == 0 {
+                    dests.push(dest.clone());
+                }
+                true
+            },
+            &mut destinations,
+        )
         .map_err(|_| Error::CupsFailed)?;
+
+        Ok::<Vec<Destination>, Error>(destinations)
+    })
+    .await
+    .map_err(|_| Error::CupsFailed)??;
 
     Ok(destinations
         .into_iter()
