@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use zlink::{ReplyError, introspect};
 
 #[derive(Debug, Clone, Deserialize, Serialize, zlink::introspect::Type)]
@@ -36,6 +37,7 @@ pub struct PrinterEntry {
     pub driver_version: String,
     pub paper_size_idx: usize,
     pub print_sides_idx: usize,
+    pub options: HashMap<String, String>,
     pub supplies: Vec<SupplyLevel>,
 }
 
