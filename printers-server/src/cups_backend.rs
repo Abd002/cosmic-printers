@@ -3,8 +3,10 @@ use cups_rs::{
     Destination, IppOperation, IppRequest, IppTag, IppValueTag, PrinterState as CupsPrinterState,
     enum_destinations,
 };
+use std::collections::HashMap;
 
 const PRINTER_ATTRIBUTES: &[&str] = &[
+    "printer-more-info",
     "printer-state",
     "printer-state-message",
     "printer-state-reasons",
@@ -59,6 +61,7 @@ pub async fn list_printers() -> Result<Vec<PrinterEntry>, Error> {
         .collect())
 }
 
+// Later we can add this functionality to cups-rs and remove this code from here
 fn fill_missing_attrs(destination: &mut Destination, attrs: &[&str]) -> Result<(), Error> {
     let mut missing = Vec::new();
     for attr in attrs {
@@ -159,7 +162,7 @@ fn attr_values(name: &str, attr: cups_rs::IppAttribute) -> Vec<String> {
 }
 
 fn local_printer_uri(destination: &Destination) -> String {
-    let path = if is_printer_class(destination) {
+    let path = if is_printer_class(&destination.options) {
         "classes"
     } else {
         "printers"
@@ -168,8 +171,8 @@ fn local_printer_uri(destination: &Destination) -> String {
     format!("ipp://localhost/{path}/{}", destination.name)
 }
 
-fn is_printer_class(destination: &Destination) -> bool {
-    let Some(printer_type) = destination.options.get("printer-type") else {
+fn is_printer_class(options: &HashMap<String, String>) -> bool {
+    let Some(printer_type) = options.get("printer-type") else {
         return false;
     };
 
@@ -178,6 +181,41 @@ fn is_printer_class(destination: &Destination) -> bool {
     };
 
     printer_type & cups_rs::PRINTER_CLASS != 0
+}
+
+fn web_page_from_device_uri(device_uri: &str) -> Option<String> {
+    let device_uri = device_uri.trim();
+
+    let (scheme, rest) = device_uri.split_once("://")?;
+
+    let is_supported_scheme =
+        matches!(scheme, "http" | "https" | "ipp" | "ipps" | "socket" | "lpd");
+
+    if !is_supported_scheme {
+        return None;
+    }
+
+    // Get the part after "://" and before the first "/".
+    let authority = rest.split('/').next()?.trim();
+
+    if authority.is_empty() {
+        return None;
+    }
+
+    // If the authority contains "@", get the part after the last "@".
+    let authority = authority.rsplit('@').next()?.trim();
+
+    if authority.is_empty() {
+        return None;
+    }
+
+    let host = authority.split(':').next()?.trim().to_string();
+
+    if host.is_empty() {
+        return None;
+    }
+
+    Some(format!("http://{host}"))
 }
 
 fn destination_to_printer_entry(destination: Destination) -> PrinterEntry {
@@ -189,6 +227,19 @@ fn destination_to_printer_entry(destination: Destination) -> PrinterEntry {
         .filter(|info| !info.is_empty())
         .cloned()
         .unwrap_or_else(|| id.clone());
+    let web_page = if let Some(url) = destination.options.get("printer-more-info") {
+        let url = url.trim();
+        if url.is_empty() {
+            None
+        } else {
+            Some(url.to_string())
+        }
+    } else if let Some(device_uri) = destination.options.get("device-uri") {
+        // TODO : fallback will be hostname:port.
+        web_page_from_device_uri(device_uri)
+    } else {
+        None
+    };
 
     PrinterEntry {
         id,
@@ -198,6 +249,7 @@ fn destination_to_printer_entry(destination: Destination) -> PrinterEntry {
         location: destination.location().cloned().unwrap_or_default(),
         model: destination.make_and_model().cloned().unwrap_or_default(),
         device_name: destination.device_uri().cloned().unwrap_or_default(),
+        web_page,
         driver_version: String::new(),
         paper_size_idx: 0,
         print_sides_idx: 0,
