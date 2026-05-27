@@ -34,6 +34,7 @@ pub struct PrinterEntry {
     pub location: String,
     pub model: String,
     pub device_name: String,
+    pub web_page: Option<String>,
     pub driver_version: String,
     pub paper_size_idx: usize,
     pub print_sides_idx: usize,

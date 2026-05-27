@@ -12,6 +12,7 @@ async fn main() -> zlink::Result<()> {
             for printer in reply.printers {
                 println!();
                 println!("{} ({})", printer.name, printer.id);
+                println!("  web-page: {:?}", printer.web_page);
 
                 let mut options: Vec<_> = printer.options.into_iter().collect();
                 options.sort_by(|(left, _), (right, _)| left.cmp(right));
