@@ -61,6 +61,49 @@ pub async fn list_printers() -> Result<Vec<PrinterEntry>, Error> {
         .collect())
 }
 
+pub async fn set_default(printer_uri: &str, password: String) -> Result<(), Error> {
+    let printer_uri = printer_uri.to_string();
+
+    tokio::task::spawn_blocking(move || {
+        cups_rs::auth::set_password_callback(Some(Box::new(
+            move |_prompt, _http, _method, _resource| Some(password.clone()),
+        )))
+        .map_err(|_| Error::CupsFailed)?;
+
+        let result = (|| {
+            // BUG: Like KDE, this sets the CUPS server default but does not clear
+            // the current user's lpoptions default. A user default can keep
+            // overriding this until we add the GNOME-style clear step.
+            let mut request =
+                IppRequest::new(IppOperation::CupsSetDefault).map_err(|_| Error::CupsFailed)?;
+
+            request
+                .add_string(
+                    IppTag::Operation,
+                    IppValueTag::Uri,
+                    "printer-uri",
+                    &printer_uri,
+                )
+                .map_err(|_| Error::CupsFailed)?;
+
+            let response = request
+                .send_default("/admin/")
+                .map_err(|_| Error::CupsFailed)?;
+
+            if response.status().is_successful() {
+                Ok(())
+            } else {
+                Err(Error::CupsFailed)
+            }
+        })();
+        cups_rs::auth::set_password_callback(None).map_err(|_| Error::CupsFailed)?;
+
+        result
+    })
+    .await
+    .map_err(|_| Error::CupsFailed)?
+}
+
 // Later we can add this functionality to cups-rs and remove this code from here
 fn fill_missing_attrs(destination: &mut Destination, attrs: &[&str]) -> Result<(), Error> {
     let mut missing = Vec::new();
@@ -221,12 +264,18 @@ fn web_page_from_device_uri(device_uri: &str) -> Option<String> {
 fn destination_to_printer_entry(destination: Destination) -> PrinterEntry {
     let status = printer_status(&destination);
     let queue_status = destination.state().to_string();
+    let printer_uri = destination
+        .uri()
+        .cloned()
+        .unwrap_or_else(|| local_printer_uri(&destination));
     let id = destination.full_name();
     let name = destination
         .info()
         .filter(|info| !info.is_empty())
         .cloned()
         .unwrap_or_else(|| id.clone());
+    let paper_sizes = option_values(&destination.options, "media-supported");
+    let print_sides = option_values(&destination.options, "sides-supported");
     let web_page = if let Some(url) = destination.options.get("printer-more-info") {
         let url = url.trim();
         if url.is_empty() {
@@ -244,6 +293,8 @@ fn destination_to_printer_entry(destination: Destination) -> PrinterEntry {
     PrinterEntry {
         id,
         name,
+        is_default: destination.is_default,
+        printer_uri,
         status,
         queue_status,
         location: destination.location().cloned().unwrap_or_default(),
@@ -255,7 +306,23 @@ fn destination_to_printer_entry(destination: Destination) -> PrinterEntry {
         print_sides_idx: 0,
         options: destination.options,
         supplies: Vec::new(),
+        paper_sizes,
+        print_sides,
     }
+}
+
+fn option_values(options: &HashMap<String, String>, name: &str) -> Vec<String> {
+    options
+        .get(name)
+        .map(|value| {
+            value
+                .split(',')
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToString::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn printer_status(destination: &Destination) -> PrinterStatus {

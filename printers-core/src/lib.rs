@@ -29,6 +29,8 @@ impl PrinterStatus {
 pub struct PrinterEntry {
     pub id: String,
     pub name: String,
+    pub is_default: bool,
+    pub printer_uri: String,
     pub status: PrinterStatus,
     pub queue_status: String,
     pub location: String,
@@ -40,6 +42,8 @@ pub struct PrinterEntry {
     pub print_sides_idx: usize,
     pub options: HashMap<String, String>,
     pub supplies: Vec<SupplyLevel>,
+    pub paper_sizes: Vec<String>,
+    pub print_sides: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, zlink::introspect::Type)]
