@@ -51,12 +51,23 @@ pub struct ListPrintersReply {
     pub printers: Vec<PrinterEntry>,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize, zlink::introspect::Type)]
+pub struct GetJobsReply {
+    pub jobs: Vec<JobInfo>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, zlink::introspect::Type)]
-pub struct PrintJob {
-    pub id: u32,
+pub struct JobInfo {
+    pub id: i32,
     pub printer_id: String,
     pub title: String,
     pub state: JobState,
+    pub user: String,
+    pub size: i32,
+    pub priority: i32,
+    pub creation_time: i64,
+    pub processing_time: i64,
+    pub completed_time: i64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, zlink::introspect::Type)]
@@ -65,7 +76,11 @@ pub enum JobState {
     Processing,
     Completed,
     Canceled,
+    Aborted,
+    Held,
+    Stopped,
     Failed,
+    Unknown,
 }
 
 #[derive(Debug, PartialEq, ReplyError, introspect::ReplyError)]
