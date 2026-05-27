@@ -28,4 +28,28 @@ pub trait CosmicPrintersProxy {
         id: String,
         password: String,
     ) -> zlink::Result<Result<(), Error>>;
+
+    async fn get_jobs(
+        &mut self,
+        name: String,
+        filter: String,
+    ) -> zlink::Result<Result<GetJobsReply, Error>>;
+
+    async fn pause_job(
+        &mut self,
+        printer_uri: String,
+        id: i32,
+    ) -> zlink::Result<Result<(), Error>>;
+
+    async fn resume_job(
+        &mut self,
+        printer_uri: String,
+        id: i32,
+    ) -> zlink::Result<Result<(), Error>>;
+
+    async fn cancel_job(
+        &mut self,
+        printer_uri: String,
+        id: i32,
+    ) -> zlink::Result<Result<(), Error>>;
 }

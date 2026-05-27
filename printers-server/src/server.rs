@@ -1,4 +1,4 @@
-use cosmic_settings_printers_core::{Error, PrinterEntry};
+use cosmic_settings_printers_core::{Error, JobInfo, PrinterEntry};
 
 use crate::{context::Context, cups_backend};
 
@@ -37,5 +37,21 @@ impl Server {
         cups_backend::set_default(&printer_uri, password).await?;
         self.list_printers().await?;
         Ok(())
+    }
+
+    pub async fn get_jobs(&mut self, name: &str, filter: &str) -> Result<Vec<JobInfo>, Error> {
+        cups_backend::get_jobs(name, filter).await
+    }
+
+    pub async fn pause_job(&mut self, printer_uri: &str, id: i32) -> Result<(), Error> {
+        cups_backend::pause_job(&printer_uri, id).await
+    }
+
+    pub async fn resume_job(&mut self, printer_uri: &str, id: i32) -> Result<(), Error> {
+        cups_backend::resume_job(&printer_uri, id).await
+    }
+
+    pub async fn cancel_job(&mut self, printer_uri: &str, id: i32) -> Result<(), Error> {
+        cups_backend::cancel_job(&printer_uri, id).await
     }
 }

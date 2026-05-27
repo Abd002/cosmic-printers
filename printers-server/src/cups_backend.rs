@@ -1,4 +1,4 @@
-use cosmic_settings_printers_core::{Error, PrinterEntry, PrinterStatus};
+use cosmic_settings_printers_core::{Error, JobInfo, JobState, PrinterEntry, PrinterStatus};
 use cups_rs::{
     Destination, IppOperation, IppRequest, IppTag, IppValueTag, PrinterState as CupsPrinterState,
     enum_destinations,
@@ -102,6 +102,119 @@ pub async fn set_default(printer_uri: &str, password: String) -> Result<(), Erro
     })
     .await
     .map_err(|_| Error::CupsFailed)?
+}
+
+// this function is not using ipp operation, i will keep it simple right now
+pub async fn get_jobs(name: &str, filter: &str) -> Result<Vec<JobInfo>, Error> {
+    let name = if name.is_empty() {
+        None
+    } else {
+        Some(name.to_string())
+    };
+    let filter = filter.to_string();
+
+    tokio::task::spawn_blocking(move || {
+        let name = name.as_deref();
+        let jobs = match filter.as_str() {
+            "active" => cups_rs::get_active_jobs(name),
+            "completed" => cups_rs::get_completed_jobs(name),
+            "all" | "" => cups_rs::get_jobs(name),
+            _ => cups_rs::get_jobs(name),
+        }
+        .map_err(|_| Error::CupsFailed)?;
+
+        let jobs = jobs.into_iter().map(job_info).collect();
+
+        Ok::<Vec<JobInfo>, Error>(jobs)
+    })
+    .await
+    .map_err(|_| Error::CupsFailed)?
+}
+
+pub async fn cancel_job(printer_uri: &str, id: i32) -> Result<(), Error> {
+    send_job_request(IppOperation::CancelJob, printer_uri, id).await
+}
+
+pub async fn pause_job(printer_uri: &str, id: i32) -> Result<(), Error> {
+    send_job_request(IppOperation::HoldJob, printer_uri, id).await
+}
+
+pub async fn resume_job(printer_uri: &str, id: i32) -> Result<(), Error> {
+    send_job_request(IppOperation::ReleaseJob, printer_uri, id).await
+}
+
+async fn send_job_request(
+    operation: IppOperation,
+    printer_uri: &str,
+    id: i32,
+) -> Result<(), Error> {
+    let printer_uri = printer_uri.to_string();
+
+    tokio::task::spawn_blocking(move || {
+        let mut request = IppRequest::new(operation).map_err(|_| Error::CupsFailed)?;
+
+        request
+            .add_string(
+                IppTag::Operation,
+                IppValueTag::Uri,
+                "printer-uri",
+                &printer_uri,
+            )
+            .map_err(|_| Error::CupsFailed)?;
+
+        request
+            .add_integer(IppTag::Operation, IppValueTag::Integer, "job-id", id)
+            .map_err(|_| Error::CupsFailed)?;
+
+        request
+            .add_string(
+                IppTag::Operation,
+                IppValueTag::Name,
+                "requesting-user-name",
+                &cups_rs::config::get_user(),
+            )
+            .map_err(|_| Error::CupsFailed)?;
+
+        let response = request
+            .send_default("/jobs/")
+            .map_err(|_| Error::CupsFailed)?;
+
+        if response.status().is_successful() {
+            Ok(())
+        } else {
+            Err(Error::CupsFailed)
+        }
+    })
+    .await
+    .map_err(|_| Error::CupsFailed)?
+}
+
+fn job_info(job: cups_rs::JobInfo) -> JobInfo {
+    JobInfo {
+        id: job.id,
+        printer_id: job.dest,
+        title: job.title,
+        state: job_state(job.status),
+        user: job.user,
+        size: job.size,
+        priority: job.priority,
+        creation_time: job.creation_time,
+        processing_time: job.processing_time,
+        completed_time: job.completed_time,
+    }
+}
+
+fn job_state(status: cups_rs::JobStatus) -> JobState {
+    match status {
+        cups_rs::JobStatus::Pending => JobState::Pending,
+        cups_rs::JobStatus::Processing => JobState::Processing,
+        cups_rs::JobStatus::Completed => JobState::Completed,
+        cups_rs::JobStatus::Canceled => JobState::Canceled,
+        cups_rs::JobStatus::Aborted => JobState::Aborted,
+        cups_rs::JobStatus::Held => JobState::Held,
+        cups_rs::JobStatus::Stopped => JobState::Stopped,
+        cups_rs::JobStatus::Unknown => JobState::Unknown,
+    }
 }
 
 // Later we can add this functionality to cups-rs and remove this code from here
