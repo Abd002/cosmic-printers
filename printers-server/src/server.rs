@@ -17,4 +17,25 @@ impl Server {
         self.context.model.lock().await.printers = printers.clone();
         Ok(printers)
     }
+
+    pub async fn set_default(&mut self, id: &str, password: String) -> Result<(), Error> {
+        if self.context.model.lock().await.printers.is_empty() {
+            self.list_printers().await?;
+        }
+
+        let printer_uri = self
+            .context
+            .model
+            .lock()
+            .await
+            .printers
+            .iter()
+            .find(|printer| printer.id == id)
+            .map(|printer| printer.printer_uri.clone())
+            .ok_or(Error::PrinterNotFound)?;
+
+        cups_backend::set_default(&printer_uri, password).await?;
+        self.list_printers().await?;
+        Ok(())
+    }
 }

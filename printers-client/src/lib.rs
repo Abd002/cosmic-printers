@@ -22,4 +22,10 @@ pub fn socket_path() -> PathBuf {
 #[zlink::proxy("com.system76.CosmicSettings.Printers")]
 pub trait CosmicPrintersProxy {
     async fn list_printers(&mut self) -> zlink::Result<Result<ListPrintersReply, Error>>;
+
+    async fn set_printer_default(
+        &mut self,
+        id: String,
+        password: String,
+    ) -> zlink::Result<Result<(), Error>>;
 }
