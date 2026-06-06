@@ -25,31 +25,31 @@ pub trait CosmicPrintersProxy {
 
     async fn set_printer_default(
         &mut self,
-        id: String,
+        printer_id: String,
         password: String,
     ) -> zlink::Result<Result<(), Error>>;
 
     async fn get_jobs(
         &mut self,
-        name: String,
+        printer_id: String,
         filter: String,
     ) -> zlink::Result<Result<GetJobsReply, Error>>;
 
     async fn pause_job(
         &mut self,
-        printer_uri: String,
-        id: i32,
+        printer_id: String,
+        job_id: i32,
     ) -> zlink::Result<Result<(), Error>>;
 
     async fn resume_job(
         &mut self,
-        printer_uri: String,
-        id: i32,
+        printer_id: String,
+        job_id: i32,
     ) -> zlink::Result<Result<(), Error>>;
 
     async fn cancel_job(
         &mut self,
-        printer_uri: String,
-        id: i32,
+        printer_id: String,
+        job_id: i32,
     ) -> zlink::Result<Result<(), Error>>;
 }
