@@ -23,11 +23,8 @@ pub fn socket_path() -> PathBuf {
 pub trait CosmicPrintersProxy {
     async fn list_printers(&mut self) -> zlink::Result<Result<ListPrintersReply, Error>>;
 
-    async fn set_printer_default(
-        &mut self,
-        printer_id: String,
-        password: String,
-    ) -> zlink::Result<Result<(), Error>>;
+    async fn set_printer_default(&mut self, printer_id: String)
+    -> zlink::Result<Result<(), Error>>;
 
     async fn get_jobs(
         &mut self,
