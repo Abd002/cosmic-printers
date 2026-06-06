@@ -18,40 +18,51 @@ impl Server {
         Ok(printers)
     }
 
-    pub async fn set_default(&mut self, id: &str, password: String) -> Result<(), Error> {
-        if self.context.model.lock().await.printers.is_empty() {
-            self.list_printers().await?;
-        }
-
-        let printer_uri = self
-            .context
-            .model
-            .lock()
-            .await
-            .printers
-            .iter()
-            .find(|printer| printer.id == id)
-            .map(|printer| printer.printer_uri.clone())
-            .ok_or(Error::PrinterNotFound)?;
+    pub async fn set_default(&mut self, printer_id: &str, password: String) -> Result<(), Error> {
+        let printer_uri = self.printer_uri(printer_id).await?;
 
         cups_backend::set_default(&printer_uri, password).await?;
         self.list_printers().await?;
         Ok(())
     }
 
-    pub async fn get_jobs(&mut self, name: &str, filter: &str) -> Result<Vec<JobInfo>, Error> {
-        cups_backend::get_jobs(name, filter).await
+    pub async fn get_jobs(
+        &mut self,
+        printer_id: &str,
+        filter: &str,
+    ) -> Result<Vec<JobInfo>, Error> {
+        self.printer_uri(printer_id).await?;
+        cups_backend::get_jobs(printer_id, filter).await
     }
 
-    pub async fn pause_job(&mut self, printer_uri: &str, id: i32) -> Result<(), Error> {
-        cups_backend::pause_job(&printer_uri, id).await
+    pub async fn pause_job(&mut self, printer_id: &str, job_id: i32) -> Result<(), Error> {
+        let printer_uri = self.printer_uri(printer_id).await?;
+        cups_backend::pause_job(&printer_uri, job_id).await
     }
 
-    pub async fn resume_job(&mut self, printer_uri: &str, id: i32) -> Result<(), Error> {
-        cups_backend::resume_job(&printer_uri, id).await
+    pub async fn resume_job(&mut self, printer_id: &str, job_id: i32) -> Result<(), Error> {
+        let printer_uri = self.printer_uri(printer_id).await?;
+        cups_backend::resume_job(&printer_uri, job_id).await
     }
 
-    pub async fn cancel_job(&mut self, printer_uri: &str, id: i32) -> Result<(), Error> {
-        cups_backend::cancel_job(&printer_uri, id).await
+    pub async fn cancel_job(&mut self, printer_id: &str, job_id: i32) -> Result<(), Error> {
+        let printer_uri = self.printer_uri(printer_id).await?;
+        cups_backend::cancel_job(&printer_uri, job_id).await
+    }
+
+    async fn printer_uri(&mut self, printer_id: &str) -> Result<String, Error> {
+        if self.context.model.lock().await.printers.is_empty() {
+            self.list_printers().await?;
+        }
+
+        self.context
+            .model
+            .lock()
+            .await
+            .printers
+            .iter()
+            .find(|printer| printer.id == printer_id)
+            .map(|printer| printer.printer_uri.clone())
+            .ok_or(Error::PrinterNotFound)
     }
 }

@@ -105,21 +105,21 @@ pub async fn set_default(printer_uri: &str, password: String) -> Result<(), Erro
 }
 
 // this function is not using ipp operation, i will keep it simple right now
-pub async fn get_jobs(name: &str, filter: &str) -> Result<Vec<JobInfo>, Error> {
-    let name = if name.is_empty() {
+pub async fn get_jobs(printer_id: &str, filter: &str) -> Result<Vec<JobInfo>, Error> {
+    let printer_id = if printer_id.is_empty() {
         None
     } else {
-        Some(name.to_string())
+        Some(printer_id.to_string())
     };
     let filter = filter.to_string();
 
     tokio::task::spawn_blocking(move || {
-        let name = name.as_deref();
+        let printer_id = printer_id.as_deref();
         let jobs = match filter.as_str() {
-            "active" => cups_rs::get_active_jobs(name),
-            "completed" => cups_rs::get_completed_jobs(name),
-            "all" | "" => cups_rs::get_jobs(name),
-            _ => cups_rs::get_jobs(name),
+            "active" => cups_rs::get_active_jobs(printer_id),
+            "completed" => cups_rs::get_completed_jobs(printer_id),
+            "all" | "" => cups_rs::get_jobs(printer_id),
+            _ => cups_rs::get_jobs(printer_id),
         }
         .map_err(|_| Error::CupsFailed)?;
 
@@ -131,22 +131,22 @@ pub async fn get_jobs(name: &str, filter: &str) -> Result<Vec<JobInfo>, Error> {
     .map_err(|_| Error::CupsFailed)?
 }
 
-pub async fn cancel_job(printer_uri: &str, id: i32) -> Result<(), Error> {
-    send_job_request(IppOperation::CancelJob, printer_uri, id).await
+pub async fn cancel_job(printer_uri: &str, job_id: i32) -> Result<(), Error> {
+    send_job_request(IppOperation::CancelJob, printer_uri, job_id).await
 }
 
-pub async fn pause_job(printer_uri: &str, id: i32) -> Result<(), Error> {
-    send_job_request(IppOperation::HoldJob, printer_uri, id).await
+pub async fn pause_job(printer_uri: &str, job_id: i32) -> Result<(), Error> {
+    send_job_request(IppOperation::HoldJob, printer_uri, job_id).await
 }
 
-pub async fn resume_job(printer_uri: &str, id: i32) -> Result<(), Error> {
-    send_job_request(IppOperation::ReleaseJob, printer_uri, id).await
+pub async fn resume_job(printer_uri: &str, job_id: i32) -> Result<(), Error> {
+    send_job_request(IppOperation::ReleaseJob, printer_uri, job_id).await
 }
 
 async fn send_job_request(
     operation: IppOperation,
     printer_uri: &str,
-    id: i32,
+    job_id: i32,
 ) -> Result<(), Error> {
     let printer_uri = printer_uri.to_string();
 
@@ -163,7 +163,7 @@ async fn send_job_request(
             .map_err(|_| Error::CupsFailed)?;
 
         request
-            .add_integer(IppTag::Operation, IppValueTag::Integer, "job-id", id)
+            .add_integer(IppTag::Operation, IppValueTag::Integer, "job-id", job_id)
             .map_err(|_| Error::CupsFailed)?;
 
         request
