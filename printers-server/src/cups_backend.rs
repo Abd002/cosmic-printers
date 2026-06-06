@@ -5,6 +5,8 @@ use cups_rs::{
 };
 use std::collections::HashMap;
 
+const LOCAL_CUPS_SOCKET: &str = "/run/cups/cups.sock";
+
 const PRINTER_ATTRIBUTES: &[&str] = &[
     "printer-more-info",
     "printer-state",
@@ -61,44 +63,58 @@ pub async fn list_printers() -> Result<Vec<PrinterEntry>, Error> {
         .collect())
 }
 
-pub async fn set_default(printer_uri: &str, password: String) -> Result<(), Error> {
+pub async fn set_default(printer_uri: &str) -> Result<(), Error> {
     let printer_uri = printer_uri.to_string();
 
     tokio::task::spawn_blocking(move || {
-        cups_rs::auth::set_password_callback(Some(Box::new(
-            move |_prompt, _http, _method, _resource| Some(password.clone()),
-        )))
-        .map_err(|_| Error::CupsFailed)?;
+        let previous_server = cups_rs::config::get_server();
 
-        let result = (|| {
-            // BUG: Like KDE, this sets the CUPS server default but does not clear
-            // the current user's lpoptions default. A user default can keep
-            // overriding this until we add the GNOME-style clear step.
-            let mut request =
-                IppRequest::new(IppOperation::CupsSetDefault).map_err(|_| Error::CupsFailed)?;
+        // Use the local socket so CUPS can authorize lpadmin users with PeerCred.
+        cups_rs::config::set_server(Some(LOCAL_CUPS_SOCKET)).map_err(|_| Error::CupsFailed)?;
 
-            request
-                .add_string(
+        // BUG: Like KDE, this sets the CUPS server default but does not clear
+        // the current user's lpoptions default. A user default can keep
+        // overriding this until we add the GNOME-style clear step.
+        let result = match IppRequest::new(IppOperation::CupsSetDefault) {
+            Ok(mut request) => {
+                let printer_uri_added = request.add_string(
                     IppTag::Operation,
                     IppValueTag::Uri,
                     "printer-uri",
                     &printer_uri,
-                )
-                .map_err(|_| Error::CupsFailed)?;
+                );
+                let user_added = request.add_string(
+                    IppTag::Operation,
+                    IppValueTag::Name,
+                    "requesting-user-name",
+                    &cups_rs::config::get_user(),
+                );
 
-            let response = request
-                .send_default("/admin/")
-                .map_err(|_| Error::CupsFailed)?;
-
-            if response.status().is_successful() {
-                Ok(())
-            } else {
-                Err(Error::CupsFailed)
+                if printer_uri_added.is_err() || user_added.is_err() {
+                    Err(Error::CupsFailed)
+                } else {
+                    request
+                        .send_default("/admin/")
+                        .map_err(|_| Error::CupsFailed)
+                        .and_then(|response| {
+                            response
+                                .status()
+                                .is_successful()
+                                .then_some(())
+                                .ok_or(Error::CupsFailed)
+                        })
+                }
             }
-        })();
-        cups_rs::auth::set_password_callback(None).map_err(|_| Error::CupsFailed)?;
+            Err(_) => Err(Error::CupsFailed),
+        };
 
-        result
+        let restore_server = cups_rs::config::set_server(Some(&previous_server));
+
+        if restore_server.is_err() {
+            Err(Error::CupsFailed)
+        } else {
+            result
+        }
     })
     .await
     .map_err(|_| Error::CupsFailed)?
