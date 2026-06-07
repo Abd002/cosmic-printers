@@ -1,11 +1,12 @@
 use cosmic_settings_printers_core::{Error, JobInfo, JobState, PrinterEntry, PrinterStatus};
 use cups_rs::{
     Destination, IppOperation, IppRequest, IppTag, IppValueTag, PrinterState as CupsPrinterState,
-    enum_destinations,
+    create_job, enum_destinations,
 };
 use std::collections::HashMap;
 
 const LOCAL_CUPS_SOCKET: &str = "/run/cups/cups.sock";
+const TEST_PAGE_PDF: &str = "/usr/share/cups/data/default-testpage.pdf";
 
 const PRINTER_ATTRIBUTES: &[&str] = &[
     "printer-more-info",
@@ -115,6 +116,19 @@ pub async fn set_default(printer_uri: &str) -> Result<(), Error> {
         } else {
             result
         }
+    })
+    .await
+    .map_err(|_| Error::CupsFailed)?
+}
+
+pub async fn print_test_page(destination: Destination) -> Result<i32, Error> {
+    tokio::task::spawn_blocking(move || {
+        let job = create_job(&destination, "Test Page").map_err(|_| Error::CupsFailed)?;
+
+        job.submit_file(TEST_PAGE_PDF, cups_rs::FORMAT_PDF)
+            .map_err(|_| Error::CupsFailed)?;
+
+        Ok(job.id)
     })
     .await
     .map_err(|_| Error::CupsFailed)?
