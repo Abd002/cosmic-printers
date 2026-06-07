@@ -26,6 +26,35 @@ impl Server {
         Ok(())
     }
 
+    pub async fn print_test_page(&mut self, printer_id: &str) -> Result<i32, Error> {
+        if self.context.model.lock().await.printers.is_empty() {
+            self.list_printers().await?;
+        }
+
+        let printer = self
+            .context
+            .model
+            .lock()
+            .await
+            .printers
+            .iter()
+            .find(|printer| printer.id == printer_id)
+            .cloned()
+            .ok_or(Error::PrinterNotFound)?;
+        let (name, instance) = match printer.id.split_once('/') {
+            Some((name, instance)) => (name, Some(instance.to_string())),
+            None => (printer.id.as_str(), None),
+        };
+        let destination = cups_rs::Destination {
+            name: name.to_string(),
+            instance,
+            is_default: printer.is_default,
+            options: printer.options,
+        };
+
+        cups_backend::print_test_page(destination).await
+    }
+
     pub async fn get_jobs(
         &mut self,
         printer_id: &str,

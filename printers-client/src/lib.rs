@@ -26,6 +26,11 @@ pub trait CosmicPrintersProxy {
     async fn set_printer_default(&mut self, printer_id: String)
     -> zlink::Result<Result<(), Error>>;
 
+    async fn print_test_page(
+        &mut self,
+        printer_id: String,
+    ) -> zlink::Result<Result<PrintTestPageReply, Error>>;
+
     async fn get_jobs(
         &mut self,
         printer_id: String,

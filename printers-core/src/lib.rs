@@ -56,6 +56,11 @@ pub struct GetJobsReply {
     pub jobs: Vec<JobInfo>,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize, zlink::introspect::Type)]
+pub struct PrintTestPageReply {
+    pub job_id: i32,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, zlink::introspect::Type)]
 pub struct JobInfo {
     pub id: i32,
