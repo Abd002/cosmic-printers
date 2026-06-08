@@ -1,4 +1,6 @@
-use cosmic_settings_printers_core::{Error, JobInfo, JobState, PrinterEntry, PrinterStatus};
+use cosmic_settings_printers_core::{
+    Error, JobInfo, JobState, PrinterEntry, PrinterStatus, parse_uri_endpoint,
+};
 use cups_rs::{
     Destination, IppOperation, IppRequest, IppTag, IppValueTag, PrinterState as CupsPrinterState,
     create_job, enum_destinations,
@@ -27,11 +29,12 @@ const PRINTER_ATTRIBUTES: &[&str] = &[
     "media-supported",
     "sides-default",
     "sides-supported",
+    "printer-uuid",
 ];
 
 pub async fn list_printers() -> Result<Vec<PrinterEntry>, Error> {
     let destinations = tokio::task::spawn_blocking(|| {
-        let mut destinations = Vec::new();
+        let mut destinations = HashMap::<String, Destination>::new();
 
         enum_destinations(
             cups_rs::DEST_FLAGS_NONE,
@@ -39,29 +42,41 @@ pub async fn list_printers() -> Result<Vec<PrinterEntry>, Error> {
             None,
             0,
             0,
-            &mut |flags, dest, dests: &mut Vec<Destination>| {
-                if (flags & cups_rs::DEST_FLAGS_REMOVED) == 0 {
-                    dests.push(dest.clone());
+            &mut |flags, destination, destinations: &mut HashMap<String, Destination>| {
+                let id = destination.full_name();
+
+                if flags & cups_rs::DEST_FLAGS_REMOVED != 0 {
+                    destinations.remove(&id);
+                } else {
+                    destinations.insert(id, destination.clone());
                 }
+
                 true
             },
             &mut destinations,
         )
         .map_err(|_| Error::CupsFailed)?;
 
-        for destination in &mut destinations {
-            fill_missing_attrs(destination, PRINTER_ATTRIBUTES)?;
+        for destination in destinations.values_mut() {
+            if fill_missing_attrs(destination, PRINTER_ATTRIBUTES).is_err() {
+                eprintln!(
+                    "failed to load optional attributes for printer {}",
+                    destination.full_name()
+                );
+            }
         }
 
-        Ok::<Vec<Destination>, Error>(destinations)
+        Ok::<HashMap<String, Destination>, Error>(destinations)
     })
     .await
     .map_err(|_| Error::CupsFailed)??;
 
-    Ok(destinations
-        .into_iter()
+    let mut printers = destinations
+        .into_values()
         .map(destination_to_printer_entry)
-        .collect())
+        .collect::<Vec<_>>();
+
+    Ok(printers)
 }
 
 pub async fn set_default(printer_uri: &str) -> Result<(), Error> {
@@ -370,38 +385,8 @@ fn is_printer_class(options: &HashMap<String, String>) -> bool {
 }
 
 fn web_page_from_device_uri(device_uri: &str) -> Option<String> {
-    let device_uri = device_uri.trim();
-
-    let (scheme, rest) = device_uri.split_once("://")?;
-
-    let is_supported_scheme =
-        matches!(scheme, "http" | "https" | "ipp" | "ipps" | "socket" | "lpd");
-
-    if !is_supported_scheme {
-        return None;
-    }
-
-    // Get the part after "://" and before the first "/".
-    let authority = rest.split('/').next()?.trim();
-
-    if authority.is_empty() {
-        return None;
-    }
-
-    // If the authority contains "@", get the part after the last "@".
-    let authority = authority.rsplit('@').next()?.trim();
-
-    if authority.is_empty() {
-        return None;
-    }
-
-    let host = authority.split(':').next()?.trim().to_string();
-
-    if host.is_empty() {
-        return None;
-    }
-
-    Some(format!("http://{host}"))
+    let (hostname, _) = parse_uri_endpoint(device_uri)?;
+    Some(format!("http://{hostname}"))
 }
 
 fn destination_to_printer_entry(destination: Destination) -> PrinterEntry {
