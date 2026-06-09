@@ -1,3 +1,4 @@
+use crate::DeviceIdentity;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -12,16 +13,6 @@ pub enum PrinterStatus {
     Ready,
     Offline,
     LowToner,
-}
-
-impl PrinterStatus {
-    fn label(&self) -> String {
-        match self {
-            Self::Ready => "printer-ready".to_string(),
-            Self::Offline => "printer-offline".to_string(),
-            Self::LowToner => "printer-low-toner".to_string(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, zlink::introspect::Type)]
@@ -45,12 +36,9 @@ pub struct PrinterEntry {
     pub print_sides: Vec<String>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, zlink::introspect::Type)]
+#[derive(Debug, Clone)]
 pub struct GroupedDevice {
-    pub(crate) uuid: Option<String>,
-    pub(crate) hostname: Option<String>,
-    pub(crate) port: Option<u16>,
-    pub(crate) device_uri_prefix: Option<String>,
+    pub(crate) identity: DeviceIdentity,
     pub(crate) queues: Vec<PrinterEntry>,
 }
 
@@ -62,28 +50,42 @@ impl GroupedDevice {
 
     /// Returns the normalized printer UUID used for strongest matching.
     pub fn uuid(&self) -> Option<&str> {
-        self.uuid.as_deref()
+        self.identity.uuid()
     }
 
     /// Returns the normalized hostname used when no UUID is available.
     pub fn hostname(&self) -> Option<&str> {
-        self.hostname.as_deref()
+        self.identity.hostname()
     }
 
     /// Returns the URI port used for host-and-port matching.
     pub fn port(&self) -> Option<u16> {
-        self.port
+        self.identity.port()
     }
 
     /// Returns the normalized URI used as the final matching fallback.
     pub fn device_uri_prefix(&self) -> Option<&str> {
-        self.device_uri_prefix.as_deref()
+        self.identity.uri()
     }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, zlink::introspect::Type)]
 pub struct ListPrintersReply {
     pub printers: Vec<PrinterEntry>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, zlink::introspect::Type)]
+pub struct DiscoveredPrinter {
+    pub id: String,
+    pub name: String,
+    pub device_uri: String,
+    pub location: String,
+    pub model: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, zlink::introspect::Type)]
+pub struct ListDiscoveredPrintersReply {
+    pub printers: Vec<DiscoveredPrinter>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, zlink::introspect::Type)]
