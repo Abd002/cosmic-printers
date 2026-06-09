@@ -11,11 +11,7 @@ pub struct DeviceIdentity {
 
 impl DeviceIdentity {
     /// Builds identity from a UUID, device URI, and queue URI fallback.
-    pub fn new(
-        uuid: Option<&str>,
-        device_uri: Option<&str>,
-        fallback_uri: Option<&str>,
-    ) -> Self {
+    pub fn new(uuid: Option<&str>, device_uri: Option<&str>, fallback_uri: Option<&str>) -> Self {
         let uri = device_uri.or(fallback_uri);
 
         Self {
@@ -121,7 +117,7 @@ pub fn group_printers(printers: Vec<PrinterEntry>) -> Vec<GroupedDevice> {
 /// Extracts the shared matching identity from a printer entry.
 fn printer_identity(printer: &PrinterEntry) -> DeviceIdentity {
     DeviceIdentity::new(
-        non_empty_option(&printer.options, "printer-uuid"),
+        non_empty_option(&printer.options, "device-uuid"),
         non_empty_option(&printer.options, "device-uri"),
         non_empty_option(&printer.options, "printer-uri-supported"),
     )

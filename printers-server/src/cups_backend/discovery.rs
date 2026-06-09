@@ -5,13 +5,26 @@ use std::collections::HashSet;
 use super::helpers::{
     LOCAL_CUPS_SOCKET, PRINTER_ATTRIBUTES, add_requesting_user, configured_destinations,
     destination_uri, destinations_match, discovered_destinations, ensure_success,
-    fill_attrs_from_device,
+    fill_attrs_from_device, fill_device_attrs_from_device,
 };
+use super::metadata::{self, QueueMetadata};
 
 pub async fn list_discovered_printers() -> Result<Vec<DiscoveredPrinter>, Error> {
     tokio::task::spawn_blocking(|| {
-        let configured = configured_destinations(250)?;
-        let mut discovered = discovered_destinations(250)?
+        let mut configured = configured_destinations(250)?;
+        metadata::apply(&mut configured)?;
+        let mut discovered = discovered_destinations(250)?;
+
+        for destination in discovered.values_mut() {
+            if fill_device_attrs_from_device(destination).is_err() {
+                eprintln!(
+                    "failed to load device attributes for destination {}",
+                    destination.full_name()
+                );
+            }
+        }
+
+        let mut discovered = discovered
             .into_values()
             .filter(|candidate| {
                 !configured
@@ -67,20 +80,40 @@ pub async fn add_discovered_printer(printer_id: &str) -> Result<(), Error> {
 
     tokio::task::spawn_blocking(move || {
         let discovered = discovered_destinations(250)?;
-        let destination = discovered.get(&printer_id).ok_or(Error::PrinterNotFound)?;
-        let configured = configured_destinations(250)?;
-        let device_uri = destination_uri(destination).ok_or(Error::CupsFailed)?;
+        let mut destination = discovered
+            .get(&printer_id)
+            .cloned()
+            .ok_or(Error::PrinterNotFound)?;
+        fill_device_attrs_from_device(&mut destination)?;
+
+        let mut configured = configured_destinations(250)?;
+        metadata::apply(&mut configured)?;
+        let device_uri = destination_uri(&destination).ok_or(Error::CupsFailed)?;
         let queue_name = available_queue_name(&destination.name, configured.values());
         let info = destination
             .info()
             .cloned()
             .unwrap_or_else(|| destination.name.clone());
         let location = destination.location().cloned().unwrap_or_default();
+        let device_uuid = destination.options.get("device-uuid").map(String::as_str);
+        let printer_more_info = destination
+            .options
+            .get("printer-more-info")
+            .map(String::as_str);
 
         let previous_server = cups_rs::config::get_server();
         cups_rs::config::set_server(Some(LOCAL_CUPS_SOCKET)).map_err(|_| Error::CupsFailed)?;
 
         let result = create_local_printer(&queue_name, device_uri, &info, &location);
+        if result.is_ok() {
+            metadata::save(
+                &queue_name,
+                QueueMetadata {
+                    device_uuid: device_uuid.map(ToString::to_string),
+                    printer_more_info: printer_more_info.map(ToString::to_string),
+                },
+            )?;
+        }
         // if result.is_ok() {
         //     result = create_permanent_printer(&queue_name);
         // }
@@ -123,31 +156,6 @@ fn create_local_printer(
 
     let response = request.send_default("/").map_err(|_| Error::CupsFailed)?;
     ensure_success(response, "CUPS-Create-Local-Printer")
-}
-
-/// Promotes a temporary queue to permanent while leaving sharing disabled.
-fn _create_permanent_printer(queue_name: &str) -> Result<(), Error> {
-    let mut request =
-        IppRequest::new(IppOperation::CupsAddModifyPrinter).map_err(|_| Error::CupsFailed)?;
-    let printer_uri = format!("ipp://localhost/printers/{queue_name}");
-
-    request
-        .add_string(
-            IppTag::Operation,
-            IppValueTag::Uri,
-            "printer-uri",
-            &printer_uri,
-        )
-        .map_err(|_| Error::CupsFailed)?;
-    add_requesting_user(&mut request)?;
-    request
-        .add_boolean(IppTag::Printer, "printer-is-shared", true)
-        .map_err(|_| Error::CupsFailed)?;
-
-    let response = request
-        .send_default("/admin/")
-        .map_err(|_| Error::CupsFailed)?;
-    ensure_success(response, "CUPS-Add-Modify-Printer sharing update")
 }
 
 /// Adds the device URI, description, and optional location to an IPP request.

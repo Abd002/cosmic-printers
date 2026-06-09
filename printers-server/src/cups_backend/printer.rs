@@ -5,12 +5,14 @@ use super::helpers::{
     LOCAL_CUPS_SOCKET, PRINTER_ATTRIBUTES, add_requesting_user, configured_destinations,
     destination_to_printer_entry, ensure_success, fill_missing_attrs,
 };
+use super::metadata;
 
 const TEST_PAGE_PDF: &str = "/usr/share/cups/data/default-testpage.pdf";
 
 pub async fn list_printers() -> Result<Vec<PrinterEntry>, Error> {
     tokio::task::spawn_blocking(|| {
         let mut destinations = configured_destinations(250)?;
+        metadata::apply(&mut destinations)?;
 
         for destination in destinations.values_mut() {
             if fill_missing_attrs(destination, PRINTER_ATTRIBUTES).is_err() {
