@@ -129,10 +129,29 @@ pub(super) fn destinations_match(left: &Destination, right: &Destination) -> boo
 /// Extracts the shared matching identity from a CUPS destination.
 fn destination_identity(destination: &Destination) -> DeviceIdentity {
     DeviceIdentity::new(
-        destination.options.get("printer-uuid").map(String::as_str),
+        destination.options.get("device-uuid").map(String::as_str),
         destination.device_uri().map(String::as_str),
         destination.uri().map(String::as_str),
     )
+}
+
+/// Loads identity and web interface attributes from an IPP/IPPS device.
+pub(super) fn fill_device_attrs_from_device(destination: &mut Destination) -> Result<(), Error> {
+    let Some(device_uri) = destination.device_uri().map(String::as_str) else {
+        return Ok(());
+    };
+
+    let is_ipp = device_uri
+        .split_once("://")
+        .map(|(scheme, _)| scheme)
+        .is_some_and(|scheme| {
+            scheme.eq_ignore_ascii_case("ipp") || scheme.eq_ignore_ascii_case("ipps")
+        });
+    if !is_ipp {
+        return Ok(());
+    }
+
+    fill_attrs_from_device(destination, &["device-uuid", "printer-more-info"])
 }
 
 /// Matches a cups-browsed queue with its DNS-SD destination by queue name.

@@ -1,6 +1,7 @@
 mod discovery;
 mod helpers;
 mod jobs;
+mod metadata;
 mod printer;
 
 pub use discovery::{add_discovered_printer, list_discovered_printers};
