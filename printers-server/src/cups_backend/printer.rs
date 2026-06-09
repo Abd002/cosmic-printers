@@ -1,12 +1,9 @@
 use cosmic_settings_printers_core::{Error, PrinterEntry};
-use cups_rs::{
-    Destination, IppOperation, IppRequest, IppTag, IppValueTag, create_job, enum_destinations,
-};
-use std::collections::HashMap;
+use cups_rs::{Destination, IppOperation, IppRequest, IppTag, IppValueTag, create_job};
 
 use super::helpers::{
-    LOCAL_CUPS_SOCKET, add_requesting_user, destination_to_printer_entry, ensure_success,
-    fill_missing_attrs,
+    LOCAL_CUPS_SOCKET, add_requesting_user, configured_destinations, destination_to_printer_entry,
+    discovered_destinations, ensure_success, fill_missing_attrs, printer_status_with_discovery,
 };
 
 const TEST_PAGE_PDF: &str = "/usr/share/cups/data/default-testpage.pdf";
@@ -34,29 +31,9 @@ const PRINTER_ATTRIBUTES: &[&str] = &[
 ];
 
 pub async fn list_printers() -> Result<Vec<PrinterEntry>, Error> {
-    let destinations = tokio::task::spawn_blocking(|| {
-        let mut destinations = HashMap::<String, Destination>::new();
-
-        enum_destinations(
-            cups_rs::DEST_FLAGS_NONE,
-            250,
-            None,
-            0,
-            0,
-            &mut |flags, destination, destinations: &mut HashMap<String, Destination>| {
-                let id = destination.full_name();
-
-                if flags & cups_rs::DEST_FLAGS_REMOVED != 0 {
-                    destinations.remove(&id);
-                } else {
-                    destinations.insert(id, destination.clone());
-                }
-
-                true
-            },
-            &mut destinations,
-        )
-        .map_err(|_| Error::CupsFailed)?;
+    tokio::task::spawn_blocking(|| {
+        let mut destinations = configured_destinations(250)?;
+        let discovered = discovered_destinations(250)?;
 
         for destination in destinations.values_mut() {
             if fill_missing_attrs(destination, PRINTER_ATTRIBUTES).is_err() {
@@ -67,15 +44,18 @@ pub async fn list_printers() -> Result<Vec<PrinterEntry>, Error> {
             }
         }
 
-        Ok::<HashMap<String, Destination>, Error>(destinations)
+        let printers = destinations
+            .into_values()
+            .map(|destination| {
+                let status = printer_status_with_discovery(&destination, discovered.values());
+                destination_to_printer_entry(destination, status)
+            })
+            .collect();
+
+        Ok::<Vec<PrinterEntry>, Error>(printers)
     })
     .await
-    .map_err(|_| Error::CupsFailed)??;
-
-    Ok(destinations
-        .into_values()
-        .map(destination_to_printer_entry)
-        .collect())
+    .map_err(|_| Error::CupsFailed)?
 }
 
 pub async fn set_default(printer_uri: &str) -> Result<(), Error> {

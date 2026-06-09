@@ -1,4 +1,4 @@
-use cosmic_settings_printers_core::{Error, JobInfo, PrinterEntry};
+use cosmic_settings_printers_core::{DiscoveredPrinter, Error, JobInfo, PrinterEntry};
 
 use crate::{context::Context, cups_backend};
 
@@ -16,6 +16,16 @@ impl Server {
         let printers = cups_backend::list_printers().await?;
         self.context.model.lock().await.printers = printers.clone();
         Ok(printers)
+    }
+
+    pub async fn list_discovered_printers(&mut self) -> Result<Vec<DiscoveredPrinter>, Error> {
+        cups_backend::list_discovered_printers().await
+    }
+
+    pub async fn add_discovered_printer(&mut self, printer_id: &str) -> Result<(), Error> {
+        cups_backend::add_discovered_printer(printer_id).await?;
+        self.list_printers().await?;
+        Ok(())
     }
 
     pub async fn set_default(&mut self, printer_id: &str) -> Result<(), Error> {
