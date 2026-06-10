@@ -3,22 +3,36 @@ use cups_rs::{Destination, IppOperation, IppRequest, IppTag, IppValueTag};
 use std::collections::HashSet;
 
 use super::helpers::{
-    LOCAL_CUPS_SOCKET, add_requesting_user, configured_destinations, destination_uri,
-    destinations_match, discovered_destinations, ensure_success,
+    LOCAL_CUPS_SOCKET, PRINTER_ATTRIBUTES, add_requesting_user, configured_destinations,
+    destination_uri, destinations_match, discovered_destinations, ensure_success,
+    fill_attrs_from_device,
 };
 
 pub async fn list_discovered_printers() -> Result<Vec<DiscoveredPrinter>, Error> {
     tokio::task::spawn_blocking(|| {
         let configured = configured_destinations(250)?;
-        let discovered = discovered_destinations(250)?;
-
-        let mut printers = discovered
+        let mut discovered = discovered_destinations(250)?
             .into_values()
             .filter(|candidate| {
                 !configured
                     .values()
                     .any(|queue| destinations_match(queue, candidate))
             })
+            .collect::<Vec<_>>();
+
+        for destination in &mut discovered {
+            if fill_attrs_from_device(destination, PRINTER_ATTRIBUTES).is_err() {
+                eprintln!(
+                    "failed to load all attributes for discovered destination {}",
+                    destination.full_name()
+                );
+            }
+            // debugging output to verify discovered attributes are loaded correctly
+            print_discovered_destination(destination);
+        }
+
+        let mut printers = discovered
+            .into_iter()
             .filter_map(discovered_printer)
             .collect::<Vec<_>>();
         printers.sort_by(|left, right| left.name.cmp(&right.name));
@@ -27,6 +41,25 @@ pub async fn list_discovered_printers() -> Result<Vec<DiscoveredPrinter>, Error>
     })
     .await
     .map_err(|_| Error::CupsFailed)?
+}
+
+/// Prints every attribute returned by CUPS for a discovered destination.
+fn print_discovered_destination(destination: &Destination) {
+    eprintln!("discovered destination:");
+    eprintln!("  name: {}", destination.name);
+    eprintln!(
+        "  instance: {}",
+        destination.instance.as_deref().unwrap_or("<none>")
+    );
+    eprintln!("  is-default: {}", destination.is_default);
+
+    let mut attributes = destination.options.iter().collect::<Vec<_>>();
+    attributes.sort_unstable_by(|(left, _), (right, _)| left.cmp(right));
+
+    eprintln!("  attributes:");
+    for (name, value) in attributes {
+        eprintln!("    {name}: {value}");
+    }
 }
 
 pub async fn add_discovered_printer(printer_id: &str) -> Result<(), Error> {
@@ -47,10 +80,10 @@ pub async fn add_discovered_printer(printer_id: &str) -> Result<(), Error> {
         let previous_server = cups_rs::config::get_server();
         cups_rs::config::set_server(Some(LOCAL_CUPS_SOCKET)).map_err(|_| Error::CupsFailed)?;
 
-        let mut result = create_local_printer(&queue_name, device_uri, &info, &location);
-        if result.is_ok() {
-            result = create_permanent_printer(&queue_name);
-        }
+        let result = create_local_printer(&queue_name, device_uri, &info, &location);
+        // if result.is_ok() {
+        //     result = create_permanent_printer(&queue_name);
+        // }
 
         cups_rs::config::set_server(Some(&previous_server)).map_err(|_| Error::CupsFailed)?;
         result
@@ -93,7 +126,7 @@ fn create_local_printer(
 }
 
 /// Promotes a temporary queue to permanent while leaving sharing disabled.
-fn create_permanent_printer(queue_name: &str) -> Result<(), Error> {
+fn _create_permanent_printer(queue_name: &str) -> Result<(), Error> {
     let mut request =
         IppRequest::new(IppOperation::CupsAddModifyPrinter).map_err(|_| Error::CupsFailed)?;
     let printer_uri = format!("ipp://localhost/printers/{queue_name}");

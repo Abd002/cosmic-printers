@@ -2,38 +2,15 @@ use cosmic_settings_printers_core::{Error, PrinterEntry};
 use cups_rs::{Destination, IppOperation, IppRequest, IppTag, IppValueTag, create_job};
 
 use super::helpers::{
-    LOCAL_CUPS_SOCKET, add_requesting_user, configured_destinations, destination_to_printer_entry,
-    discovered_destinations, ensure_success, fill_missing_attrs, printer_status_with_discovery,
+    LOCAL_CUPS_SOCKET, PRINTER_ATTRIBUTES, add_requesting_user, configured_destinations,
+    destination_to_printer_entry, ensure_success, fill_missing_attrs,
 };
 
 const TEST_PAGE_PDF: &str = "/usr/share/cups/data/default-testpage.pdf";
 
-const PRINTER_ATTRIBUTES: &[&str] = &[
-    "printer-more-info",
-    "printer-state",
-    "printer-state-message",
-    "printer-state-reasons",
-    "printer-is-accepting-jobs",
-    "printer-type",
-    "printer-location",
-    "printer-info",
-    "printer-make-and-model",
-    "device-uri",
-    "marker-colors",
-    "marker-levels",
-    "marker-names",
-    "marker-types",
-    "media-default",
-    "media-supported",
-    "sides-default",
-    "sides-supported",
-    "printer-uuid",
-];
-
 pub async fn list_printers() -> Result<Vec<PrinterEntry>, Error> {
     tokio::task::spawn_blocking(|| {
         let mut destinations = configured_destinations(250)?;
-        let discovered = discovered_destinations(250)?;
 
         for destination in destinations.values_mut() {
             if fill_missing_attrs(destination, PRINTER_ATTRIBUTES).is_err() {
@@ -46,10 +23,7 @@ pub async fn list_printers() -> Result<Vec<PrinterEntry>, Error> {
 
         let printers = destinations
             .into_values()
-            .map(|destination| {
-                let status = printer_status_with_discovery(&destination, discovered.values());
-                destination_to_printer_entry(destination, status)
-            })
+            .map(|destination| destination_to_printer_entry(destination))
             .collect();
 
         Ok::<Vec<PrinterEntry>, Error>(printers)
