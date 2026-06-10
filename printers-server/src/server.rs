@@ -101,7 +101,7 @@ impl Server {
             .printers
             .iter()
             .find(|printer| printer.id == printer_id)
-            .map(|printer| printer.printer_uri.clone())
+            .map(|printer| printer.printer_local_uri.clone())
             .ok_or(Error::PrinterNotFound)
     }
 }

@@ -11,7 +11,7 @@ async fn main() -> zlink::Result<()> {
             for printer in reply.printers {
                 println!(
                     "{} | {:?} | {} | {}",
-                    printer.name, printer.status, printer.queue_status, printer.device_name
+                    printer.name, printer.status, printer.queue_status, printer.device_uri
                 );
             }
         }

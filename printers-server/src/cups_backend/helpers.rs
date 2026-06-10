@@ -2,10 +2,33 @@ use cosmic_settings_printers_core::{
     DeviceIdentity, Error, PrinterEntry, PrinterStatus, parse_uri_endpoint,
 };
 use cups_rs::{
-    Destination, IppOperation, IppRequest, IppResponse, IppTag, IppValueTag,
+    Destination, HttpConnection, IppOperation, IppRequest, IppResponse, IppTag, IppValueTag,
     PrinterState as CupsPrinterState, enum_destinations,
 };
 use std::collections::HashMap;
+
+pub(super) const PRINTER_ATTRIBUTES: &[&str] = &[
+    "printer-more-info",
+    "printer-state",
+    "printer-state-message",
+    "printer-state-reasons",
+    "printer-is-accepting-jobs",
+    "printer-type",
+    "printer-location",
+    "printer-info",
+    "printer-make-and-model",
+    "device-uri",
+    "marker-colors",
+    "marker-levels",
+    "marker-names",
+    "marker-types",
+    "media-default",
+    "media-supported",
+    "sides-default",
+    "sides-supported",
+    "printer-uuid",
+    "device-uuid",
+];
 
 pub(super) const LOCAL_CUPS_SOCKET: &str = "/run/cups/cups.sock";
 
@@ -118,60 +141,6 @@ fn cups_browsed_name_matches(left: &Destination, right: &Destination) -> bool {
         && left.name.eq_ignore_ascii_case(&right.name)
 }
 
-/// To solve the problem of dest when it be offline but still detected as ready.
-/// Combines the CUPS queue state with current DNS-SD discovery availability.
-/// we should replace this with Avahi
-pub(super) fn printer_status_with_discovery<'a>(
-    destination: &Destination,
-    discovered: impl Iterator<Item = &'a Destination>,
-) -> PrinterStatus {
-    let cups_status = printer_status(destination);
-    let device_uri = destination_uri(destination);
-    let Some(device_uri) = device_uri else {
-        return cups_status;
-    };
-
-    if discovered
-        .into_iter()
-        .filter(|candidate| is_live_discovered_device(candidate))
-        .any(|candidate| destinations_match(destination, candidate))
-    {
-        return cups_status;
-    }
-
-    if is_dns_sd_uri(device_uri) {
-        PrinterStatus::Offline
-    } else {
-        cups_status
-    }
-}
-
-/// Rejects local scheduler queues from the discovery set.
-fn is_live_discovered_device(destination: &Destination) -> bool {
-    destination
-        .uri()
-        .map(|uri| !is_local_scheduler_uri(uri))
-        .unwrap_or(true)
-}
-
-/// Detects a printer or class URI served by the local CUPS scheduler.
-fn is_local_scheduler_uri(uri: &str) -> bool {
-    let Some((hostname, _)) = parse_uri_endpoint(uri) else {
-        return false;
-    };
-
-    matches!(hostname.as_str(), "localhost" | "127.0.0.1" | "[::1]")
-        && (uri.contains("/printers/") || uri.contains("/classes/"))
-}
-
-/// Detects an IPP URI whose hostname is a DNS-SD service name.
-fn is_dns_sd_uri(uri: &str) -> bool {
-    let Some((hostname, _)) = parse_uri_endpoint(uri) else {
-        return false;
-    };
-    hostname.ends_with(".local")
-}
-
 /// Fetches requested IPP attributes that are absent from a destination.
 pub(super) fn fill_missing_attrs(
     destination: &mut Destination,
@@ -208,6 +177,36 @@ pub(super) fn fill_missing_attrs(
             destination
                 .options
                 .insert(name.to_string(), values.join(","));
+        }
+    }
+
+    Ok(())
+}
+
+/// Fetches and merges every IPP attribute exposed by a destination.
+pub(super) fn fill_attrs_from_device(
+    destination: &mut Destination,
+    attrs: &[&str],
+) -> Result<(), Error> {
+    let device_uri = destination_uri(destination).ok_or(Error::CupsFailed)?;
+    let (connection, printer_uri) =
+        HttpConnection::connect_uri(device_uri, Some(250)).map_err(|_| Error::CupsFailed)?;
+    let request = printer_attrs_request(&printer_uri, attrs)?;
+    let response = request
+        .send(&connection, connection.resource_path())
+        .map_err(|_| Error::CupsFailed)?;
+
+    if !response.status().is_successful() {
+        return Err(Error::CupsFailed);
+    }
+
+    for attr in response.attributes() {
+        let Some(name) = attr.name() else {
+            continue;
+        };
+        let values = attr_values(&name, attr);
+        if !values.is_empty() {
+            destination.options.insert(name, values.join(","));
         }
     }
 
@@ -290,15 +289,13 @@ fn web_page_from_device_uri(device_uri: &str) -> Option<String> {
 }
 
 /// Converts a cups-rs destination into the type exposed by the printer API.
-pub(super) fn destination_to_printer_entry(
-    destination: Destination,
-    status: PrinterStatus,
-) -> PrinterEntry {
+pub(super) fn destination_to_printer_entry(destination: Destination) -> PrinterEntry {
     let queue_status = destination.state().to_string();
-    let printer_uri = destination
+    let printer_local_uri = destination
         .uri()
         .cloned()
         .unwrap_or_else(|| local_printer_uri(&destination));
+    let device_uri = destination.device_uri().cloned().unwrap_or_default();
     let id = destination.full_name();
     let name = destination
         .info()
@@ -323,12 +320,12 @@ pub(super) fn destination_to_printer_entry(
         id,
         name,
         is_default: destination.is_default,
-        printer_uri,
-        status,
+        printer_local_uri,
+        status: printer_status(&destination),
         queue_status,
         location: destination.location().cloned().unwrap_or_default(),
         model: destination.make_and_model().cloned().unwrap_or_default(),
-        device_name: destination.device_uri().cloned().unwrap_or_default(),
+        device_uri: device_uri,
         web_page,
         driver_version: String::new(),
         paper_size_idx: 0,
