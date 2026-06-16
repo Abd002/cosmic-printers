@@ -1,0 +1,15 @@
+[workspace]
+members = [
+    "printers-core",
+    "printers-client",
+    "printers-server",
+]
+resolver = "3"
+
+[workspace.dependencies]
+cosmic-config = { git = "https://github.com/pop-os/libcosmic" }
+
+[workspace.dependencies.zlink]
+version = "0.5"
+default-features = false
+features = ["tokio"]
