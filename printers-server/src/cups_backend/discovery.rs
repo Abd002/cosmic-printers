@@ -3,9 +3,9 @@ use cups_rs::{Destination, IppOperation, IppRequest, IppTag, IppValueTag};
 use std::collections::HashSet;
 
 use super::helpers::{
-    LOCAL_CUPS_SOCKET, PRINTER_ATTRIBUTES, add_requesting_user, configured_destinations,
-    destination_uri, destinations_match, discovered_destinations, ensure_success,
-    fill_attrs_from_device, fill_device_attrs_from_device,
+    CupsResultExt, LOCAL_CUPS_SOCKET, PRINTER_ATTRIBUTES, add_requesting_user,
+    configured_destinations, destination_uri, destinations_match, discovered_destinations,
+    ensure_success, fill_attrs_from_device, fill_device_attrs_from_device,
 };
 use super::metadata::{self, QueueMetadata};
 
@@ -53,7 +53,9 @@ pub async fn list_discovered_printers() -> Result<Vec<DiscoveredPrinter>, Error>
         Ok(printers)
     })
     .await
-    .map_err(|_| Error::CupsFailed)?
+    .map_err(|error| Error::Internal {
+        why: error.to_string(),
+    })?
 }
 
 /// Prints every attribute returned by CUPS for a discovered destination.
@@ -88,7 +90,9 @@ pub async fn add_discovered_printer(printer_id: &str) -> Result<(), Error> {
 
         let mut configured = configured_destinations(250)?;
         metadata::apply(&mut configured)?;
-        let device_uri = destination_uri(&destination).ok_or(Error::CupsFailed)?;
+        let device_uri = destination_uri(&destination).ok_or_else(|| Error::MissingDeviceUri {
+            queue: destination.full_name(),
+        })?;
         let queue_name = available_queue_name(&destination.name, configured.values());
         let info = destination
             .info()
@@ -102,7 +106,7 @@ pub async fn add_discovered_printer(printer_id: &str) -> Result<(), Error> {
             .map(String::as_str);
 
         let previous_server = cups_rs::config::get_server();
-        cups_rs::config::set_server(Some(LOCAL_CUPS_SOCKET)).map_err(|_| Error::CupsFailed)?;
+        cups_rs::config::set_server(Some(LOCAL_CUPS_SOCKET)).cups_err()?;
 
         let result = create_local_printer(&queue_name, device_uri, &info, &location);
         if result.is_ok() {
@@ -118,11 +122,13 @@ pub async fn add_discovered_printer(printer_id: &str) -> Result<(), Error> {
         //     result = create_permanent_printer(&queue_name);
         // }
 
-        cups_rs::config::set_server(Some(&previous_server)).map_err(|_| Error::CupsFailed)?;
+        cups_rs::config::set_server(Some(&previous_server)).cups_err()?;
         result
     })
     .await
-    .map_err(|_| Error::CupsFailed)?
+    .map_err(|error| Error::Internal {
+        why: error.to_string(),
+    })?
 }
 
 /// Creates a temporary local queue for a discovered driverless device.
@@ -132,8 +138,7 @@ fn create_local_printer(
     info: &str,
     location: &str,
 ) -> Result<(), Error> {
-    let mut request =
-        IppRequest::new(IppOperation::CupsCreateLocalPrinter).map_err(|_| Error::CupsFailed)?;
+    let mut request = IppRequest::new(IppOperation::CupsCreateLocalPrinter).cups_err()?;
 
     request
         .add_string(
@@ -142,7 +147,7 @@ fn create_local_printer(
             "printer-uri",
             "ipp://localhost/",
         )
-        .map_err(|_| Error::CupsFailed)?;
+        .cups_err()?;
     add_requesting_user(&mut request)?;
     request
         .add_string(
@@ -151,11 +156,11 @@ fn create_local_printer(
             "printer-name",
             queue_name,
         )
-        .map_err(|_| Error::CupsFailed)?;
+        .cups_err()?;
     add_printer_attributes(&mut request, device_uri, info, location)?;
 
-    let response = request.send_default("/").map_err(|_| Error::CupsFailed)?;
-    ensure_success(response, "CUPS-Create-Local-Printer")
+    let response = request.send_default("/").cups_err()?;
+    ensure_success(&response, "CUPS-Create-Local-Printer")
 }
 
 /// Adds the device URI, description, and optional location to an IPP request.
@@ -167,10 +172,10 @@ fn add_printer_attributes(
 ) -> Result<(), Error> {
     request
         .add_string(IppTag::Printer, IppValueTag::Uri, "device-uri", device_uri)
-        .map_err(|_| Error::CupsFailed)?;
+        .cups_err()?;
     request
         .add_string(IppTag::Printer, IppValueTag::Text, "printer-info", info)
-        .map_err(|_| Error::CupsFailed)?;
+        .cups_err()?;
     if !location.is_empty() {
         request
             .add_string(
@@ -179,7 +184,7 @@ fn add_printer_attributes(
                 "printer-location",
                 location,
             )
-            .map_err(|_| Error::CupsFailed)?;
+            .cups_err()?;
     }
 
     Ok(())

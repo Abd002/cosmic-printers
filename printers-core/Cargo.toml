@@ -9,3 +9,6 @@ serde = { version = "1.0", features = ["derive"] }
 [dependencies.zlink]
 workspace = true
 features = ["introspection", "tracing"]
+
+[dev-dependencies]
+serde_json = "1.0"

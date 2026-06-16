@@ -1,7 +1,7 @@
 use cosmic_settings_printers_core::{Error, JobInfo, JobState};
 use cups_rs::{IppOperation, IppRequest, IppTag, IppValueTag};
 
-use super::helpers::{add_requesting_user, ensure_success};
+use super::helpers::{CupsResultExt, add_requesting_user, ensure_success};
 
 pub async fn get_jobs(printer_id: &str, filter: &str) -> Result<Vec<JobInfo>, Error> {
     let printer_id = if printer_id.is_empty() {
@@ -18,12 +18,14 @@ pub async fn get_jobs(printer_id: &str, filter: &str) -> Result<Vec<JobInfo>, Er
             "completed" => cups_rs::get_completed_jobs(printer_id),
             _ => cups_rs::get_jobs(printer_id),
         }
-        .map_err(|_| Error::CupsFailed)?;
+        .cups_err()?;
 
         Ok::<Vec<JobInfo>, Error>(jobs.into_iter().map(job_info).collect())
     })
     .await
-    .map_err(|_| Error::CupsFailed)?
+    .map_err(|error| Error::Internal {
+        why: error.to_string(),
+    })?
 }
 
 pub async fn cancel_job(printer_uri: &str, job_id: i32) -> Result<(), Error> {
@@ -46,7 +48,7 @@ async fn send_job_request(
     let printer_uri = printer_uri.to_string();
 
     tokio::task::spawn_blocking(move || {
-        let mut request = IppRequest::new(operation).map_err(|_| Error::CupsFailed)?;
+        let mut request = IppRequest::new(operation).cups_err()?;
 
         request
             .add_string(
@@ -55,20 +57,20 @@ async fn send_job_request(
                 "printer-uri",
                 &printer_uri,
             )
-            .map_err(|_| Error::CupsFailed)?;
+            .cups_err()?;
         request
             .add_integer(IppTag::Operation, IppValueTag::Integer, "job-id", job_id)
-            .map_err(|_| Error::CupsFailed)?;
+            .cups_err()?;
         add_requesting_user(&mut request)?;
 
-        let response = request
-            .send_default("/jobs/")
-            .map_err(|_| Error::CupsFailed)?;
+        let response = request.send_default("/jobs/").cups_err()?;
 
-        ensure_success(response, "job operation")
+        ensure_success(&response, "job operation")
     })
     .await
-    .map_err(|_| Error::CupsFailed)?
+    .map_err(|error| Error::Internal {
+        why: error.to_string(),
+    })?
 }
 
 /// Converts cups-rs job data into the job type exposed by the printer API.

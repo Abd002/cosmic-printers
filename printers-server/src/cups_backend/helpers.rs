@@ -2,8 +2,8 @@ use cosmic_settings_printers_core::{
     DeviceIdentity, Error, PrinterEntry, PrinterStatus, parse_uri_endpoint,
 };
 use cups_rs::{
-    Destination, HttpConnection, IppOperation, IppRequest, IppResponse, IppTag, IppValueTag,
-    PrinterState as CupsPrinterState, enum_destinations,
+    Destination, HttpConnection, IppOperation, IppRequest, IppResponse, IppStatus, IppTag,
+    IppValueTag, PrinterState as CupsPrinterState, enum_destinations,
 };
 use std::collections::HashMap;
 
@@ -31,6 +31,18 @@ pub(super) const PRINTER_ATTRIBUTES: &[&str] = &[
 ];
 
 pub(super) const LOCAL_CUPS_SOCKET: &str = "/run/cups/cups.sock";
+
+pub(super) trait CupsResultExt<T> {
+    fn cups_err(self) -> Result<T, Error>;
+}
+
+impl<T, E: std::fmt::Display> CupsResultExt<T> for std::result::Result<T, E> {
+    fn cups_err(self) -> Result<T, Error> {
+        self.map_err(|error| Error::CupsFailed {
+            why: error.to_string(),
+        })
+    }
+}
 
 /// Lists queues configured in the local CUPS scheduler.
 pub(super) fn configured_destinations(
@@ -81,7 +93,9 @@ fn enum_destination_set(
         },
         &mut destinations,
     )
-    .map_err(|_| Error::CupsFailed)?;
+    .map_err(|error| Error::FailedToGetPrinters {
+        why: error.to_string(),
+    })?;
 
     Ok(destinations)
 }
@@ -95,17 +109,25 @@ pub(super) fn add_requesting_user(request: &mut IppRequest) -> Result<(), Error>
             "requesting-user-name",
             &cups_rs::config::get_user(),
         )
-        .map_err(|_| Error::CupsFailed)
+        .cups_err()
 }
 
 /// Converts an IPP response status into the backend result.
-pub(super) fn ensure_success(response: IppResponse, operation: &str) -> Result<(), Error> {
+pub(super) fn ensure_success(response: &IppResponse, operation: &str) -> Result<(), Error> {
     let status = response.status();
     if status.is_successful() {
         Ok(())
     } else {
-        eprintln!("{operation} failed with status {status:?}");
-        Err(Error::CupsFailed)
+        match status {
+            IppStatus::ErrorNotAuthorized
+            | IppStatus::ErrorForbidden
+            | IppStatus::ErrorNotAuthenticated => Err(Error::PermissionDenied {
+                operation: operation.to_string(),
+            }),
+            _ => Err(Error::CupsFailed {
+                why: format!("{operation} failed with status {status:?}"),
+            }),
+        }
     }
 }
 
@@ -181,11 +203,8 @@ pub(super) fn fill_missing_attrs(
         .unwrap_or_else(|| local_printer_uri(destination));
 
     let request = printer_attrs_request(&printer_uri, &missing)?;
-    let response = request.send_default("/").map_err(|_| Error::CupsFailed)?;
-
-    if !response.status().is_successful() {
-        return Err(Error::CupsFailed);
-    }
+    let response = request.send_default("/").cups_err()?;
+    ensure_success(&response, "Get-Printer-Attributes")?;
 
     for name in missing {
         let Some(attr) = response.find_attribute(name, None) else {
@@ -207,17 +226,22 @@ pub(super) fn fill_attrs_from_device(
     destination: &mut Destination,
     attrs: &[&str],
 ) -> Result<(), Error> {
-    let device_uri = destination_uri(destination).ok_or(Error::CupsFailed)?;
+    let device_uri = destination_uri(destination).ok_or_else(|| Error::MissingDeviceUri {
+        queue: destination.full_name(),
+    })?;
     let (connection, printer_uri) =
-        HttpConnection::connect_uri(device_uri, Some(250)).map_err(|_| Error::CupsFailed)?;
+        HttpConnection::connect_uri(device_uri, Some(250)).map_err(|error| {
+            Error::DeviceUnreachable {
+                why: error.to_string(),
+            }
+        })?;
     let request = printer_attrs_request(&printer_uri, attrs)?;
     let response = request
         .send(&connection, connection.resource_path())
-        .map_err(|_| Error::CupsFailed)?;
-
-    if !response.status().is_successful() {
-        return Err(Error::CupsFailed);
-    }
+        .map_err(|error| Error::DeviceUnreachable {
+            why: error.to_string(),
+        })?;
+    ensure_success(&response, "Get-Printer-Attributes")?;
 
     for attr in response.attributes() {
         let Some(name) = attr.name() else {
@@ -234,8 +258,7 @@ pub(super) fn fill_attrs_from_device(
 
 /// Builds a Get-Printer-Attributes request for selected attribute names.
 fn printer_attrs_request(printer_uri: &str, requested_attrs: &[&str]) -> Result<IppRequest, Error> {
-    let mut request =
-        IppRequest::new(IppOperation::GetPrinterAttributes).map_err(|_| Error::CupsFailed)?;
+    let mut request = IppRequest::new(IppOperation::GetPrinterAttributes).cups_err()?;
 
     request
         .add_string(
@@ -244,7 +267,7 @@ fn printer_attrs_request(printer_uri: &str, requested_attrs: &[&str]) -> Result<
             "printer-uri",
             printer_uri,
         )
-        .map_err(|_| Error::CupsFailed)?;
+        .cups_err()?;
     request
         .add_strings(
             IppTag::Operation,
@@ -252,7 +275,7 @@ fn printer_attrs_request(printer_uri: &str, requested_attrs: &[&str]) -> Result<
             "requested-attributes",
             requested_attrs,
         )
-        .map_err(|_| Error::CupsFailed)?;
+        .cups_err()?;
 
     Ok(request)
 }

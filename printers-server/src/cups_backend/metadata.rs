@@ -23,7 +23,9 @@ pub(super) fn save(queue_name: &str, metadata: QueueMetadata) -> Result<(), Erro
     entries.insert(queue_name.to_string(), metadata);
     config
         .set(METADATA_KEY, entries)
-        .map_err(|_| Error::CupsFailed)
+        .map_err(|error| Error::ConfigFailed {
+            why: error.to_string(),
+        })
 }
 
 pub(super) fn apply(destinations: &mut HashMap<String, Destination>) -> Result<(), Error> {
@@ -51,7 +53,11 @@ pub(super) fn apply(destinations: &mut HashMap<String, Destination>) -> Result<(
 }
 
 fn config() -> Result<cosmic_config::Config, Error> {
-    cosmic_config::Config::new_state(CONFIG_ID, CONFIG_VERSION).map_err(|_| Error::CupsFailed)
+    cosmic_config::Config::new_state(CONFIG_ID, CONFIG_VERSION).map_err(|error| {
+        Error::ConfigFailed {
+            why: error.to_string(),
+        }
+    })
 }
 
 fn load_from(config: &cosmic_config::Config) -> MetadataMap {
