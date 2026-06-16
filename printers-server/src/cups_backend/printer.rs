@@ -1,9 +1,9 @@
 use cosmic_settings_printers_core::{Error, PrinterEntry};
-use cups_rs::{Destination, IppOperation, IppRequest, IppTag, IppValueTag, create_job};
+use cups_rs::{IppOperation, IppRequest, IppTag, IppValueTag, create_job};
 
 use super::helpers::{
-    CupsResultExt, LOCAL_CUPS_SOCKET, PRINTER_ATTRIBUTES, add_requesting_user,
-    configured_destinations, destination_to_printer_entry, ensure_success, fill_missing_attrs,
+    CupsResultExt, LOCAL_CUPS_SOCKET, PRINTER_ATTRIBUTES, add_requesting_user, configured_printers,
+    ensure_success, fill_missing_attrs, printer_id_parts,
 };
 use super::metadata;
 
@@ -11,24 +11,19 @@ const TEST_PAGE_PDF: &str = "/usr/share/cups/data/default-testpage.pdf";
 
 pub async fn list_printers() -> Result<Vec<PrinterEntry>, Error> {
     tokio::task::spawn_blocking(|| {
-        let mut destinations = configured_destinations(250)?;
-        metadata::apply(&mut destinations)?;
+        let mut printers = configured_printers(250)?;
+        metadata::apply(&mut printers)?;
 
-        for destination in destinations.values_mut() {
-            if fill_missing_attrs(destination, PRINTER_ATTRIBUTES).is_err() {
+        for printer in printers.values_mut() {
+            if fill_missing_attrs(printer, PRINTER_ATTRIBUTES).is_err() {
                 eprintln!(
                     "failed to load optional attributes for printer {}",
-                    destination.full_name()
+                    printer.id
                 );
             }
         }
 
-        let printers = destinations
-            .into_values()
-            .map(|destination| destination_to_printer_entry(destination))
-            .collect();
-
-        Ok::<Vec<PrinterEntry>, Error>(printers)
+        Ok::<Vec<PrinterEntry>, Error>(printers.into_values().collect())
     })
     .await
     .map_err(|error| Error::Internal {
@@ -72,8 +67,9 @@ pub async fn set_default(printer_uri: &str) -> Result<(), Error> {
     })?
 }
 
-pub async fn print_test_page(destination: Destination) -> Result<i32, Error> {
+pub async fn print_test_page(printer: PrinterEntry) -> Result<i32, Error> {
     tokio::task::spawn_blocking(move || {
+        let destination = destination_for_print_job(printer);
         let job = create_job(&destination, "Test Page").cups_err()?;
 
         job.submit_file(TEST_PAGE_PDF, cups_rs::FORMAT_PDF)
@@ -85,4 +81,19 @@ pub async fn print_test_page(destination: Destination) -> Result<i32, Error> {
     .map_err(|error| Error::Internal {
         why: error.to_string(),
     })?
+}
+
+/// Converts the normalized printer entry to the raw CUPS type required by `cupsCreateJob`.
+fn destination_for_print_job(printer: PrinterEntry) -> cups_rs::Destination {
+    let (name, instance) = {
+        let (name, instance) = printer_id_parts(&printer);
+        (name.to_string(), instance.map(ToString::to_string))
+    };
+
+    cups_rs::Destination {
+        name,
+        instance,
+        is_default: printer.is_default,
+        options: printer.options,
+    }
 }

@@ -1,9 +1,8 @@
 use cosmic_config::{ConfigGet, ConfigSet};
-use cups_rs::Destination;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use cosmic_settings_printers_core::Error;
+use cosmic_settings_printers_core::{Error, PrinterEntry};
 
 const CONFIG_ID: &str = "com.system76.CosmicSettings.Printers";
 const CONFIG_VERSION: u64 = 1;
@@ -28,24 +27,25 @@ pub(super) fn save(queue_name: &str, metadata: QueueMetadata) -> Result<(), Erro
         })
 }
 
-pub(super) fn apply(destinations: &mut HashMap<String, Destination>) -> Result<(), Error> {
+pub(super) fn apply(printers: &mut HashMap<String, PrinterEntry>) -> Result<(), Error> {
     let config = config()?;
     let entries = load_from(&config);
 
-    for destination in destinations.values_mut() {
-        let Some(metadata) = entries.get(&destination.name) else {
+    for printer in printers.values_mut() {
+        let Some(metadata) = entries.get(&printer.id) else {
             continue;
         };
 
         if let Some(device_uuid) = &metadata.device_uuid {
-            destination
+            printer
                 .options
                 .insert("device-uuid".to_string(), device_uuid.clone());
         }
         if let Some(printer_more_info) = &metadata.printer_more_info {
-            destination
+            printer
                 .options
                 .insert("printer-more-info".to_string(), printer_more_info.clone());
+            printer.web_page = Some(printer_more_info.clone());
         }
     }
 
