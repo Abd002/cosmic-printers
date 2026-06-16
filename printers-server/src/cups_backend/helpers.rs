@@ -32,6 +32,8 @@ pub(super) const PRINTER_ATTRIBUTES: &[&str] = &[
 
 pub(super) const LOCAL_CUPS_SOCKET: &str = "/run/cups/cups.sock";
 
+// CUPS wrapper/binding helpers.
+
 pub(super) trait CupsResultExt<T> {
     fn cups_err(self) -> Result<T, Error>;
 }
@@ -44,26 +46,24 @@ impl<T, E: std::fmt::Display> CupsResultExt<T> for std::result::Result<T, E> {
     }
 }
 
-/// Lists queues configured in the local CUPS scheduler.
-pub(super) fn configured_destinations(
-    timeout_ms: i32,
-) -> Result<HashMap<String, Destination>, Error> {
-    enum_destination_set(
+/// Lists queues configured in the local CUPS scheduler as normalized printer entries.
+pub(super) fn configured_printers(timeout_ms: i32) -> Result<HashMap<String, PrinterEntry>, Error> {
+    let destinations = enum_destination_set(
         cups_rs::PRINTER_LOCAL,
         cups_rs::PRINTER_DISCOVERED,
         timeout_ms,
-    )
+    )?;
+    Ok(printer_entry_set(destinations))
 }
 
-/// Discovers network and temporary CUPS destinations.
-pub(super) fn discovered_destinations(
-    timeout_ms: i32,
-) -> Result<HashMap<String, Destination>, Error> {
-    enum_destination_set(
+/// Discovers network and temporary CUPS destinations as normalized printer entries.
+pub(super) fn discovered_printers(timeout_ms: i32) -> Result<HashMap<String, PrinterEntry>, Error> {
+    let destinations = enum_destination_set(
         cups_rs::PRINTER_DISCOVERED,
         cups_rs::PRINTER_DISCOVERED,
         timeout_ms,
-    )
+    )?;
+    Ok(printer_entry_set(destinations))
 }
 
 /// Collects `cupsEnumDests` callbacks into a map keyed by destination full name.
@@ -100,6 +100,16 @@ fn enum_destination_set(
     Ok(destinations)
 }
 
+/// Normalizes raw CUPS destinations immediately after enumeration.
+fn printer_entry_set(destinations: HashMap<String, Destination>) -> HashMap<String, PrinterEntry> {
+    destinations
+        .into_iter()
+        .map(|(id, destination)| (id, destination_to_printer_entry(destination)))
+        .collect()
+}
+
+// Raw IPP request helpers.
+
 /// Adds the current CUPS user to an IPP request.
 pub(super) fn add_requesting_user(request: &mut IppRequest) -> Result<(), Error> {
     request
@@ -131,132 +141,7 @@ pub(super) fn ensure_success(response: &IppResponse, operation: &str) -> Result<
     }
 }
 
-/// Returns the device URI, falling back to the destination's printer URI.
-pub(super) fn destination_uri(destination: &Destination) -> Option<&str> {
-    destination
-        .device_uri()
-        .or_else(|| destination.uri())
-        .map(String::as_str)
-}
-
-/// Checks whether two CUPS destinations refer to the same device.
-pub(super) fn destinations_match(left: &Destination, right: &Destination) -> bool {
-    if destination_identity(left).matches(&destination_identity(right)) {
-        return true;
-    }
-
-    cups_browsed_name_matches(left, right)
-}
-
-/// Extracts the shared matching identity from a CUPS destination.
-fn destination_identity(destination: &Destination) -> DeviceIdentity {
-    DeviceIdentity::new(
-        destination.options.get("device-uuid").map(String::as_str),
-        destination.device_uri().map(String::as_str),
-        destination.uri().map(String::as_str),
-    )
-}
-
-/// Loads identity and web interface attributes from an IPP/IPPS device.
-pub(super) fn fill_device_attrs_from_device(destination: &mut Destination) -> Result<(), Error> {
-    let Some(device_uri) = destination.device_uri().map(String::as_str) else {
-        return Ok(());
-    };
-
-    let is_ipp = device_uri
-        .split_once("://")
-        .map(|(scheme, _)| scheme)
-        .is_some_and(|scheme| {
-            scheme.eq_ignore_ascii_case("ipp") || scheme.eq_ignore_ascii_case("ipps")
-        });
-    if !is_ipp {
-        return Ok(());
-    }
-
-    fill_attrs_from_device(destination, &["device-uuid", "printer-more-info"])
-}
-
-/// Matches a cups-browsed queue with its DNS-SD destination by queue name.
-fn cups_browsed_name_matches(left: &Destination, right: &Destination) -> bool {
-    (left.options.contains_key("cups-browsed") || right.options.contains_key("cups-browsed"))
-        && left.name.eq_ignore_ascii_case(&right.name)
-}
-
-/// Fetches requested IPP attributes that are absent from a destination.
-pub(super) fn fill_missing_attrs(
-    destination: &mut Destination,
-    attrs: &[&str],
-) -> Result<(), Error> {
-    let missing = attrs
-        .iter()
-        .copied()
-        .filter(|attr| !destination.options.contains_key(*attr))
-        .collect::<Vec<_>>();
-
-    if missing.is_empty() {
-        return Ok(());
-    }
-
-    let printer_uri = destination
-        .uri()
-        .cloned()
-        .unwrap_or_else(|| local_printer_uri(destination));
-
-    let request = printer_attrs_request(&printer_uri, &missing)?;
-    let response = request.send_default("/").cups_err()?;
-    ensure_success(&response, "Get-Printer-Attributes")?;
-
-    for name in missing {
-        let Some(attr) = response.find_attribute(name, None) else {
-            continue;
-        };
-        let values = attr_values(name, attr);
-        if !values.is_empty() {
-            destination
-                .options
-                .insert(name.to_string(), values.join(","));
-        }
-    }
-
-    Ok(())
-}
-
-/// Fetches and merges every IPP attribute exposed by a destination.
-pub(super) fn fill_attrs_from_device(
-    destination: &mut Destination,
-    attrs: &[&str],
-) -> Result<(), Error> {
-    let device_uri = destination_uri(destination).ok_or_else(|| Error::MissingDeviceUri {
-        queue: destination.full_name(),
-    })?;
-    let (connection, printer_uri) =
-        HttpConnection::connect_uri(device_uri, Some(250)).map_err(|error| {
-            Error::DeviceUnreachable {
-                why: error.to_string(),
-            }
-        })?;
-    let request = printer_attrs_request(&printer_uri, attrs)?;
-    let response = request
-        .send(&connection, connection.resource_path())
-        .map_err(|error| Error::DeviceUnreachable {
-            why: error.to_string(),
-        })?;
-    ensure_success(&response, "Get-Printer-Attributes")?;
-
-    for attr in response.attributes() {
-        let Some(name) = attr.name() else {
-            continue;
-        };
-        let values = attr_values(&name, attr);
-        if !values.is_empty() {
-            destination.options.insert(name, values.join(","));
-        }
-    }
-
-    Ok(())
-}
-
-/// Builds a Get-Printer-Attributes request for selected attribute names.
+/// Builds a raw Get-Printer-Attributes request for selected attribute names.
 fn printer_attrs_request(printer_uri: &str, requested_attrs: &[&str]) -> Result<IppRequest, Error> {
     let mut request = IppRequest::new(IppOperation::GetPrinterAttributes).cups_err()?;
 
@@ -278,6 +163,170 @@ fn printer_attrs_request(printer_uri: &str, requested_attrs: &[&str]) -> Result<
         .cups_err()?;
 
     Ok(request)
+}
+
+// URI and destination identity helpers.
+
+/// Constructs the local scheduler URI for a queue or printer class.
+fn local_printer_uri(destination: &Destination) -> String {
+    let path = if is_printer_class(&destination.options) {
+        "classes"
+    } else {
+        "printers"
+    };
+
+    format!("ipp://localhost/{path}/{}", destination.name)
+}
+
+/// Derives a simple web interface URL from a device URI hostname.
+fn web_page_from_device_uri(device_uri: &str) -> Option<String> {
+    let (hostname, _) = parse_uri_endpoint(device_uri)?;
+    Some(format!("http://{hostname}"))
+}
+
+/// Splits a printer entry id into its CUPS queue name and optional instance.
+pub(super) fn printer_id_parts(printer: &PrinterEntry) -> (&str, Option<&str>) {
+    printer
+        .id
+        .split_once('/')
+        .map_or((printer.id.as_str(), None), |(name, instance)| {
+            (name, Some(instance))
+        })
+}
+
+/// Returns the CUPS queue name portion of a printer entry id.
+pub(super) fn printer_queue_name(printer: &PrinterEntry) -> &str {
+    printer_id_parts(printer).0
+}
+
+/// Checks whether two printer entries refer to the same physical device.
+pub(super) fn printers_match(left: &PrinterEntry, right: &PrinterEntry) -> bool {
+    if printer_identity(left).matches(&printer_identity(right)) {
+        return true;
+    }
+
+    cups_browsed_name_matches(left, right)
+}
+
+/// Extracts the shared matching identity from a printer entry.
+fn printer_identity(printer: &PrinterEntry) -> DeviceIdentity {
+    DeviceIdentity::new(
+        non_empty_option(&printer.options, "device-uuid"),
+        non_empty_option(&printer.options, "device-uri"),
+        non_empty_option(&printer.options, "printer-uri-supported"),
+    )
+}
+
+/// Matches a cups-browsed queue with its DNS-SD destination by queue name.
+fn cups_browsed_name_matches(left: &PrinterEntry, right: &PrinterEntry) -> bool {
+    (left.options.contains_key("cups-browsed") || right.options.contains_key("cups-browsed"))
+        && left.id.eq_ignore_ascii_case(&right.id)
+}
+
+// Raw IPP attribute loading.
+
+/// Loads identity and web interface attributes from an IPP/IPPS device.
+pub(super) fn fill_device_attrs_from_device(printer: &mut PrinterEntry) -> Result<(), Error> {
+    if printer.device_uri.is_empty() {
+        return Ok(());
+    }
+
+    let is_ipp = printer
+        .device_uri
+        .split_once("://")
+        .map(|(scheme, _)| scheme)
+        .is_some_and(|scheme| {
+            scheme.eq_ignore_ascii_case("ipp") || scheme.eq_ignore_ascii_case("ipps")
+        });
+    if !is_ipp {
+        return Ok(());
+    }
+
+    fill_attrs_from_device(printer, &["device-uuid", "printer-more-info"])
+}
+
+/// Fetches requested IPP attributes that are absent from a scheduler printer entry.
+pub(super) fn fill_missing_attrs(printer: &mut PrinterEntry, attrs: &[&str]) -> Result<(), Error> {
+    let missing = attrs
+        .iter()
+        .copied()
+        .filter(|attr| !printer.options.contains_key(*attr))
+        .collect::<Vec<_>>();
+
+    if missing.is_empty() {
+        return Ok(());
+    }
+
+    let request = printer_attrs_request(&printer.printer_local_uri, &missing)?;
+    let response = request.send_default("/").cups_err()?;
+    ensure_success(&response, "Get-Printer-Attributes")?;
+
+    merge_response_attrs(&mut printer.options, &response, &missing);
+    refresh_printer_entry(printer);
+    Ok(())
+}
+
+/// Fetches and merges every IPP attribute exposed by a direct device printer.
+pub(super) fn fill_attrs_from_device(
+    printer: &mut PrinterEntry,
+    attrs: &[&str],
+) -> Result<(), Error> {
+    if printer.device_uri.is_empty() {
+        return Err(Error::MissingDeviceUri {
+            queue: printer.id.clone(),
+        });
+    }
+
+    fill_attrs_from_device_uri(
+        &printer.id,
+        &printer.device_uri,
+        &mut printer.options,
+        attrs,
+    )?;
+    refresh_printer_entry(printer);
+    Ok(())
+}
+
+/// Sends the raw IPP request to an already-selected device URI.
+fn fill_attrs_from_device_uri(
+    queue_name: &str,
+    device_uri: &str,
+    options: &mut HashMap<String, String>,
+    attrs: &[&str],
+) -> Result<(), Error> {
+    let (connection, printer_uri) =
+        HttpConnection::connect_uri(device_uri, Some(250)).map_err(|error| {
+            Error::DeviceUnreachable {
+                why: format!("{queue_name}: {error}"),
+            }
+        })?;
+    let request = printer_attrs_request(&printer_uri, attrs)?;
+    let response = request
+        .send(&connection, connection.resource_path())
+        .map_err(|error| Error::DeviceUnreachable {
+            why: format!("{queue_name}: {error}"),
+        })?;
+    ensure_success(&response, "Get-Printer-Attributes")?;
+
+    merge_response_attrs(options, &response, attrs);
+    Ok(())
+}
+
+/// Copies requested response attributes into the destination option map.
+fn merge_response_attrs(
+    options: &mut HashMap<String, String>,
+    response: &IppResponse,
+    attrs: &[&str],
+) {
+    for name in attrs {
+        let Some(attr) = response.find_attribute(name, None) else {
+            continue;
+        };
+        let values = attr_values(name, attr);
+        if !values.is_empty() {
+            options.insert((*name).to_string(), values.join(","));
+        }
+    }
 }
 
 /// Converts all values of an IPP attribute into strings.
@@ -305,16 +354,7 @@ fn attr_values(name: &str, attr: cups_rs::IppAttribute) -> Vec<String> {
     }
 }
 
-/// Constructs the local scheduler URI for a queue or printer class.
-fn local_printer_uri(destination: &Destination) -> String {
-    let path = if is_printer_class(&destination.options) {
-        "classes"
-    } else {
-        "printers"
-    };
-
-    format!("ipp://localhost/{path}/{}", destination.name)
-}
+// CUPS option conversion helpers.
 
 /// Checks the CUPS printer-type bitmask for the class flag.
 fn is_printer_class(options: &HashMap<String, String>) -> bool {
@@ -324,20 +364,48 @@ fn is_printer_class(options: &HashMap<String, String>) -> bool {
         .is_some_and(|printer_type| printer_type & cups_rs::PRINTER_CLASS != 0)
 }
 
-/// Derives a simple web interface URL from a device URI hostname.
-fn web_page_from_device_uri(device_uri: &str) -> Option<String> {
-    let (hostname, _) = parse_uri_endpoint(device_uri)?;
-    Some(format!("http://{hostname}"))
+/// Splits a comma-separated CUPS option into trimmed values.
+fn option_values(options: &HashMap<String, String>, name: &str) -> Vec<String> {
+    options
+        .get(name)
+        .map(|value| {
+            value
+                .split(',')
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToString::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
+/// Reads a trimmed option and treats missing or empty values as absent.
+fn non_empty_option<'a>(options: &'a HashMap<String, String>, name: &str) -> Option<&'a str> {
+    options
+        .get(name)
+        .map(String::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+}
+
+// Public API model conversion.
+
 /// Converts a cups-rs destination into the type exposed by the printer API.
-pub(super) fn destination_to_printer_entry(destination: Destination) -> PrinterEntry {
+fn destination_to_printer_entry(mut destination: Destination) -> PrinterEntry {
     let queue_status = destination.state().to_string();
     let printer_local_uri = destination
         .uri()
         .cloned()
         .unwrap_or_else(|| local_printer_uri(&destination));
     let device_uri = destination.device_uri().cloned().unwrap_or_default();
+    destination
+        .options
+        .entry("printer-uri-supported".to_string())
+        .or_insert_with(|| printer_local_uri.clone());
+    destination
+        .options
+        .entry("device-uri".to_string())
+        .or_insert_with(|| device_uri.clone());
     let id = destination.full_name();
     let name = destination
         .info()
@@ -367,7 +435,7 @@ pub(super) fn destination_to_printer_entry(destination: Destination) -> PrinterE
         queue_status,
         location: destination.location().cloned().unwrap_or_default(),
         model: destination.make_and_model().cloned().unwrap_or_default(),
-        device_uri: device_uri,
+        device_uri,
         web_page,
         driver_version: String::new(),
         paper_size_idx: 0,
@@ -379,19 +447,32 @@ pub(super) fn destination_to_printer_entry(destination: Destination) -> PrinterE
     }
 }
 
-/// Splits a comma-separated CUPS option into trimmed values.
-fn option_values(options: &HashMap<String, String>, name: &str) -> Vec<String> {
-    options
-        .get(name)
-        .map(|value| {
-            value
-                .split(',')
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(ToString::to_string)
-                .collect()
-        })
-        .unwrap_or_default()
+/// Recomputes derived public fields after new IPP attributes are merged.
+fn refresh_printer_entry(printer: &mut PrinterEntry) {
+    printer.device_uri = printer
+        .options
+        .get("device-uri")
+        .cloned()
+        .unwrap_or_default();
+    printer.location = printer
+        .options
+        .get("printer-location")
+        .cloned()
+        .unwrap_or_default();
+    printer.model = printer
+        .options
+        .get("printer-make-and-model")
+        .cloned()
+        .unwrap_or_default();
+    printer.web_page = printer
+        .options
+        .get("printer-more-info")
+        .filter(|url| !url.trim().is_empty())
+        .cloned()
+        .or_else(|| web_page_from_device_uri(&printer.device_uri));
+    printer.paper_sizes = option_values(&printer.options, "media-supported");
+    printer.print_sides = option_values(&printer.options, "sides-supported");
+    printer.status = printer_status_from_options(printer);
 }
 
 /// Maps CUPS state and toner reasons to the UI printer status.
@@ -407,5 +488,21 @@ fn printer_status(destination: &Destination) -> PrinterStatus {
     match destination.state() {
         CupsPrinterState::Idle | CupsPrinterState::Processing => PrinterStatus::Ready,
         CupsPrinterState::Stopped | CupsPrinterState::Unknown => PrinterStatus::Offline,
+    }
+}
+
+/// Maps normalized printer options to the UI printer status after IPP refreshes.
+fn printer_status_from_options(printer: &PrinterEntry) -> PrinterStatus {
+    if option_values(&printer.options, "printer-state-reasons")
+        .iter()
+        .any(|reason| reason.contains("toner-low") || reason.contains("toner-empty"))
+    {
+        return PrinterStatus::LowToner;
+    }
+
+    match printer.options.get("printer-state").map(String::as_str) {
+        Some("5") => PrinterStatus::Offline,
+        Some("3" | "4") => PrinterStatus::Ready,
+        _ => printer.status.clone(),
     }
 }
