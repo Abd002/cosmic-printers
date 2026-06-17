@@ -202,19 +202,18 @@ fn web_page_from_device_uri(device_uri: &str) -> Option<String> {
     Some(format!("http://{hostname}"))
 }
 
-/// Splits a printer entry id into its CUPS queue name and optional instance.
-pub(super) fn printer_id_parts(printer: &PrinterEntry) -> (&str, Option<&str>) {
-    printer
-        .id
+/// Splits a CUPS destination id into its queue name and optional instance.
+pub(super) fn split_queue_instance(printer_id: &str) -> (&str, Option<&str>) {
+    printer_id
         .split_once('/')
-        .map_or((printer.id.as_str(), None), |(name, instance)| {
+        .map_or((printer_id, None), |(name, instance)| {
             (name, Some(instance))
         })
 }
 
 /// Returns the CUPS queue name portion of a printer entry id.
 pub(super) fn printer_queue_name(printer: &PrinterEntry) -> &str {
-    printer_id_parts(printer).0
+    split_queue_instance(&printer.id).0
 }
 
 /// Checks whether two printer entries refer to the same physical device.

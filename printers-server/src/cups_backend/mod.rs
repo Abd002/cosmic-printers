@@ -2,6 +2,7 @@ mod discovery;
 mod helpers;
 mod jobs;
 mod metadata;
+mod polkit_helper;
 mod printer;
 
 pub use discovery::{add_discovered_printer, list_discovered_printers};
