@@ -34,6 +34,24 @@ pub(super) const LOCAL_CUPS_SOCKET: &str = "/run/cups/cups.sock";
 
 // CUPS wrapper/binding helpers.
 
+pub(super) struct LocalSocketGuard {
+    previous: String,
+}
+
+impl LocalSocketGuard {
+    pub(super) fn engage() -> Result<Self, Error> {
+        let previous = cups_rs::config::get_server();
+        cups_rs::config::set_server(Some(LOCAL_CUPS_SOCKET)).cups_err()?;
+        Ok(Self { previous })
+    }
+}
+
+impl Drop for LocalSocketGuard {
+    fn drop(&mut self) {
+        let _ = cups_rs::config::set_server(Some(&self.previous));
+    }
+}
+
 pub(super) trait CupsResultExt<T> {
     fn cups_err(self) -> Result<T, Error>;
 }
