@@ -1,11 +1,11 @@
 use cosmic_settings_printers_core::{Error, PrinterEntry};
-use cups_rs::{IppOperation, IppRequest, IppTag, IppValueTag, create_job};
+use cups_rs::create_job;
 
 use super::helpers::{
-    CupsResultExt, LocalSocketGuard, PRINTER_ATTRIBUTES, add_requesting_user, configured_printers,
-    ensure_success, fill_missing_attrs, printer_id_parts,
+    CupsResultExt, PRINTER_ATTRIBUTES, configured_printers, fill_missing_attrs,
+    split_queue_instance,
 };
-use super::metadata;
+use super::{metadata, polkit_helper};
 
 const TEST_PAGE_PDF: &str = "/usr/share/cups/data/default-testpage.pdf";
 
@@ -31,33 +31,11 @@ pub async fn list_printers() -> Result<Vec<PrinterEntry>, Error> {
     })?
 }
 
-pub async fn set_default(printer_uri: &str) -> Result<(), Error> {
-    let printer_uri = printer_uri.to_string();
-
-    tokio::task::spawn_blocking(move || {
-        // BUG: This sets the server default but does not clear a user default
-        // stored in lpoptions, which can continue to override it.
-        let mut request = IppRequest::new(IppOperation::CupsSetDefault).cups_err()?;
-        request
-            .add_string(
-                IppTag::Operation,
-                IppValueTag::Uri,
-                "printer-uri",
-                &printer_uri,
-            )
-            .cups_err()?;
-        add_requesting_user(&mut request)?;
-
-        let _guard = LocalSocketGuard::engage()?;
-        request
-            .send_default("/admin/")
-            .cups_err()
-            .and_then(|response| ensure_success(&response, "CUPS-Set-Default"))
-    })
-    .await
-    .map_err(|error| Error::Internal {
-        why: error.to_string(),
-    })?
+// BUG: This sets the server default but does not clear a user default
+// stored in lpoptions, which can continue to override it.
+pub async fn set_default(printer_id: &str, _printer_uri: &str) -> Result<(), Error> {
+    let (queue_name, _instance) = split_queue_instance(printer_id);
+    polkit_helper::set_default(queue_name.to_string()).await
 }
 
 pub async fn print_test_page(printer: PrinterEntry) -> Result<i32, Error> {
@@ -79,7 +57,7 @@ pub async fn print_test_page(printer: PrinterEntry) -> Result<i32, Error> {
 /// Converts the normalized printer entry to the raw CUPS type required by `cupsCreateJob`.
 fn destination_for_print_job(printer: PrinterEntry) -> cups_rs::Destination {
     let (name, instance) = {
-        let (name, instance) = printer_id_parts(&printer);
+        let (name, instance) = split_queue_instance(&printer.id);
         (name.to_string(), instance.map(ToString::to_string))
     };
 

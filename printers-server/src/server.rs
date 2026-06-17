@@ -31,7 +31,7 @@ impl Server {
     pub async fn set_default(&mut self, printer_id: &str) -> Result<(), Error> {
         let printer_uri = self.printer_uri(printer_id).await?;
 
-        cups_backend::set_default(&printer_uri).await?;
+        cups_backend::set_default(printer_id, &printer_uri).await?;
         self.list_printers().await?;
         Ok(())
     }

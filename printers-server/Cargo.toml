@@ -4,11 +4,12 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-tokio = { version = "1", features = ["sync", "rt", "macros"] }
+tokio = { version = "1", features = ["sync", "rt", "macros", "net", "time"] }
 cosmic-config.workspace = true
 cosmic-settings-printers-core = { path = "../printers-core" }
 cups_rs = { git = "https://github.com/Abd002/cups-rs.git", branch = "cups3-pr6-signatures" }
 serde = { version = "1.0", features = ["derive"] }
+zbus = { version = "5", default-features = false, features = ["tokio"] }
 
 [dependencies.zlink]
 workspace = true
