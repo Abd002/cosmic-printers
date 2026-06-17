@@ -3,7 +3,7 @@ use cups_rs::{IppOperation, IppRequest, IppTag, IppValueTag};
 use std::collections::HashSet;
 
 use super::helpers::{
-    CupsResultExt, LOCAL_CUPS_SOCKET, PRINTER_ATTRIBUTES, add_requesting_user, configured_printers,
+    CupsResultExt, LocalSocketGuard, PRINTER_ATTRIBUTES, add_requesting_user, configured_printers,
     discovered_printers, ensure_success, fill_attrs_from_device, fill_device_attrs_from_device,
     printer_queue_name, printers_match,
 };
@@ -98,9 +98,7 @@ pub async fn add_discovered_printer(printer_id: &str) -> Result<(), Error> {
         let device_uuid = printer.options.get("device-uuid").map(String::as_str);
         let printer_more_info = printer.options.get("printer-more-info").map(String::as_str);
 
-        let previous_server = cups_rs::config::get_server();
-        cups_rs::config::set_server(Some(LOCAL_CUPS_SOCKET)).cups_err()?;
-
+        let _guard = LocalSocketGuard::engage()?;
         let result = create_local_printer(&queue_name, &device_uri, &info, &location);
         if result.is_ok() {
             metadata::save(
@@ -115,7 +113,6 @@ pub async fn add_discovered_printer(printer_id: &str) -> Result<(), Error> {
         //     result = create_permanent_printer(&queue_name);
         // }
 
-        cups_rs::config::set_server(Some(&previous_server)).cups_err()?;
         result
     })
     .await

@@ -2,7 +2,7 @@ use cosmic_settings_printers_core::{Error, PrinterEntry};
 use cups_rs::{IppOperation, IppRequest, IppTag, IppValueTag, create_job};
 
 use super::helpers::{
-    CupsResultExt, LOCAL_CUPS_SOCKET, PRINTER_ATTRIBUTES, add_requesting_user, configured_printers,
+    CupsResultExt, LocalSocketGuard, PRINTER_ATTRIBUTES, add_requesting_user, configured_printers,
     ensure_success, fill_missing_attrs, printer_id_parts,
 };
 use super::metadata;
@@ -48,18 +48,11 @@ pub async fn set_default(printer_uri: &str) -> Result<(), Error> {
             .cups_err()?;
         add_requesting_user(&mut request)?;
 
-        let previous_server = cups_rs::config::get_server();
-
-        // Use the local socket so CUPS can authorize lpadmin users with PeerCred.
-        cups_rs::config::set_server(Some(LOCAL_CUPS_SOCKET)).cups_err()?;
-
-        let result = request
+        let _guard = LocalSocketGuard::engage()?;
+        request
             .send_default("/admin/")
             .cups_err()
-            .and_then(|response| ensure_success(&response, "CUPS-Set-Default"));
-
-        cups_rs::config::set_server(Some(&previous_server)).cups_err()?;
-        result
+            .and_then(|response| ensure_success(&response, "CUPS-Set-Default"))
     })
     .await
     .map_err(|error| Error::Internal {
