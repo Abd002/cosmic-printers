@@ -25,10 +25,14 @@ pub(in crate::cups_backend) fn printers_match(left: &PrinterEntry, right: &Print
     cups_browsed_name_matches(left, right)
 }
 
-/// Extracts the shared matching identity from a printer entry.
-fn printer_identity(printer: &PrinterEntry) -> DeviceIdentity {
+pub(in crate::cups_backend) fn printer_identity(printer: &PrinterEntry) -> DeviceIdentity {
     DeviceIdentity::new(
         non_empty_option(&printer.options, "device-uuid"),
+        printer
+            .hostname
+            .as_ref()
+            .zip(printer.port)
+            .map(|(host, port)| (host.clone(), port)),
         non_empty_option(&printer.options, "device-uri"),
         non_empty_option(&printer.options, "printer-uri-supported"),
     )

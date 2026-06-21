@@ -1,4 +1,4 @@
-use cosmic_settings_printers_core::{DiscoveredPrinter, Error, PrinterEntry};
+use cosmic_settings_printers_core::{Error, PrinterEntry};
 use cups_rs::{IppOperation, IppRequest, IppTag, IppValueTag};
 use std::collections::HashSet;
 
@@ -9,7 +9,7 @@ use super::helpers::{
 };
 use super::metadata::{self, QueueMetadata};
 
-pub async fn list_discovered_printers() -> Result<Vec<DiscoveredPrinter>, Error> {
+pub async fn list_discovered_printers() -> Result<Vec<PrinterEntry>, Error> {
     tokio::task::spawn_blocking(|| {
         let mut configured = configured_printers(250)?;
         metadata::apply(&mut configured)?;
@@ -46,7 +46,7 @@ pub async fn list_discovered_printers() -> Result<Vec<DiscoveredPrinter>, Error>
 
         let mut printers = discovered
             .into_iter()
-            .filter_map(discovered_printer)
+            .filter(|printer| !printer.device_uri.is_empty())
             .collect::<Vec<_>>();
         printers.sort_by(|left, right| left.name.cmp(&right.name));
 
@@ -178,21 +178,6 @@ fn add_printer_attributes(
     }
 
     Ok(())
-}
-
-/// Converts a discovered CUPS destination into the lightweight discovery API type.
-fn discovered_printer(printer: PrinterEntry) -> Option<DiscoveredPrinter> {
-    if printer.device_uri.is_empty() {
-        return None;
-    }
-
-    Some(DiscoveredPrinter {
-        id: printer.id,
-        name: printer.name,
-        device_uri: printer.device_uri,
-        location: printer.location,
-        model: printer.model,
-    })
 }
 
 /// Produces a valid queue name that does not collide with configured queues.

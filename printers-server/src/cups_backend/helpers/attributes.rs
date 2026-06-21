@@ -2,8 +2,9 @@ use cosmic_settings_printers_core::{Error, PrinterEntry};
 use cups_rs::{HttpConnection, IppResponse};
 use std::collections::HashMap;
 
-use super::conversion::refresh_printer_entry;
+use super::conversion::{apply_endpoint, refresh_printer_entry};
 use super::ipp::{CupsResultExt, ensure_success, printer_attrs_request};
+use super::options::parse_uri_endpoint;
 
 pub(in crate::cups_backend) const PRINTER_ATTRIBUTES: &[&str] = &[
     "printer-more-info",
@@ -85,29 +86,22 @@ pub(in crate::cups_backend) fn fill_attrs_from_device(
         });
     }
 
-    fill_attrs_from_device_uri(
-        &printer.id,
-        &printer.device_uri,
-        &mut printer.options,
-        attrs,
-    )?;
-    refresh_printer_entry(printer);
-    Ok(())
+    fill_attrs_from_device_uri(printer, attrs)
 }
 
 /// Sends the raw IPP request to an already-selected device URI.
-fn fill_attrs_from_device_uri(
-    queue_name: &str,
-    device_uri: &str,
-    options: &mut HashMap<String, String>,
-    attrs: &[&str],
-) -> Result<(), Error> {
+fn fill_attrs_from_device_uri(printer: &mut PrinterEntry, attrs: &[&str]) -> Result<(), Error> {
+    let queue_name = printer.id.clone();
+    let device_uri = printer.device_uri.clone();
     let (connection, printer_uri) =
-        HttpConnection::connect_uri(device_uri, Some(250)).map_err(|error| {
+        HttpConnection::connect_uri(&device_uri, Some(250)).map_err(|error| {
             Error::DeviceUnreachable {
                 why: format!("{queue_name}: {error}"),
             }
         })?;
+
+    let endpoint = parse_uri_endpoint(&printer_uri);
+
     let request = printer_attrs_request(&printer_uri, attrs)?;
     let response = request
         .send(&connection, connection.resource_path())
@@ -116,7 +110,9 @@ fn fill_attrs_from_device_uri(
         })?;
     ensure_success(&response, "Get-Printer-Attributes")?;
 
-    merge_response_attrs(options, &response, attrs);
+    merge_response_attrs(&mut printer.options, &response, attrs);
+    refresh_printer_entry(printer);
+    apply_endpoint(printer, endpoint);
     Ok(())
 }
 
