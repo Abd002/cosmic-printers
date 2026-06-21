@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::net::IpAddr;
 
 /// Checks the CUPS printer-type bitmask for the class flag.
 pub(super) fn is_printer_class(options: &HashMap<String, String>) -> bool {
@@ -23,7 +24,6 @@ pub(super) fn option_values(options: &HashMap<String, String>, name: &str) -> Ve
         .unwrap_or_default()
 }
 
-/// Reads a trimmed option and treats missing or empty values as absent.
 pub(super) fn non_empty_option<'a>(
     options: &'a HashMap<String, String>,
     name: &str,
@@ -33,4 +33,49 @@ pub(super) fn non_empty_option<'a>(
         .map(String::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
+}
+
+pub(super) fn parse_uri_endpoint(uri: &str) -> Option<(String, u16)> {
+    let (scheme, rest) = uri.split_once("://")?;
+    let authority = rest.split('/').next()?.rsplit('@').next()?.trim();
+    if authority.is_empty() {
+        return None;
+    }
+
+    let default_port = match scheme.to_ascii_lowercase().as_str() {
+        "ipp" | "ipps" => 631,
+        "http" => 80,
+        "https" => 443,
+        _ => return None,
+    };
+
+    if authority.starts_with('[') {
+        let end = authority.find(']')?;
+        let host = &authority[..=end];
+        let port = authority
+            .get(end + 1..)
+            .and_then(|suffix| suffix.strip_prefix(':'))
+            .and_then(|port| port.parse::<u16>().ok())
+            .unwrap_or(default_port);
+        return Some((host.to_ascii_lowercase(), port));
+    }
+
+    let (host, port) = match authority.rsplit_once(':') {
+        Some((host, port)) if port.parse::<u16>().is_ok() => (host, port.parse::<u16>().ok()),
+        _ => (authority, Some(default_port)),
+    };
+
+    Some((host.to_ascii_lowercase(), port?))
+}
+
+pub(super) fn is_loopback_host(host: &str) -> bool {
+    let bare = host
+        .strip_prefix('[')
+        .and_then(|rest| rest.strip_suffix(']'))
+        .unwrap_or(host);
+
+    bare.eq_ignore_ascii_case("localhost")
+        || bare
+            .parse::<IpAddr>()
+            .is_ok_and(|address| address.is_loopback())
 }

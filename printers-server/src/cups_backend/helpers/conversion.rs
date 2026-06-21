@@ -1,7 +1,7 @@
-use cosmic_settings_printers_core::{PrinterEntry, PrinterStatus, parse_uri_endpoint};
+use cosmic_settings_printers_core::{PrinterEntry, PrinterStatus};
 use cups_rs::{Destination, PrinterState as CupsPrinterState};
 
-use super::options::{is_printer_class, option_values};
+use super::options::{is_loopback_host, is_printer_class, option_values, parse_uri_endpoint};
 
 /// Constructs the local scheduler URI for a queue or printer class.
 fn local_printer_uri(destination: &Destination) -> String {
@@ -36,6 +36,7 @@ pub(super) fn destination_to_printer_entry(mut destination: Destination) -> Prin
         .options
         .entry("device-uri".to_string())
         .or_insert_with(|| device_uri.clone());
+    let endpoint = endpoint_from_uris(&printer_local_uri, &device_uri);
     let id = destination.full_name();
     let name = destination
         .info()
@@ -66,6 +67,8 @@ pub(super) fn destination_to_printer_entry(mut destination: Destination) -> Prin
         location: destination.location().cloned().unwrap_or_default(),
         model: destination.make_and_model().cloned().unwrap_or_default(),
         device_uri,
+        hostname: endpoint.as_ref().map(|(host, _)| host.clone()),
+        port: endpoint.map(|(_, port)| port),
         web_page,
         driver_version: String::new(),
         paper_size_idx: 0,
@@ -75,6 +78,24 @@ pub(super) fn destination_to_printer_entry(mut destination: Destination) -> Prin
         paper_sizes,
         print_sides,
     }
+}
+
+fn endpoint_from_uris(printer_uri: &str, device_uri: &str) -> Option<(String, u16)> {
+    if is_local_scheduler_uri(printer_uri) {
+        return parse_uri_endpoint(device_uri);
+    }
+
+    parse_uri_endpoint(printer_uri).or_else(|| parse_uri_endpoint(device_uri))
+}
+
+fn is_local_scheduler_uri(uri: &str) -> bool {
+    let Some((host, port)) = parse_uri_endpoint(uri) else {
+        return false;
+    };
+
+    port == 631
+        && is_loopback_host(&host)
+        && (uri.contains("/printers/") || uri.contains("/classes/"))
 }
 
 /// Recomputes derived public fields after new IPP attributes are merged.
@@ -100,9 +121,18 @@ pub(super) fn refresh_printer_entry(printer: &mut PrinterEntry) {
         .filter(|url| !url.trim().is_empty())
         .cloned()
         .or_else(|| web_page_from_device_uri(&printer.device_uri));
+    apply_endpoint(
+        printer,
+        endpoint_from_uris(&printer.printer_local_uri, &printer.device_uri),
+    );
     printer.paper_sizes = option_values(&printer.options, "media-supported");
     printer.print_sides = option_values(&printer.options, "sides-supported");
     printer.status = printer_status_from_options(printer);
+}
+
+pub(super) fn apply_endpoint(printer: &mut PrinterEntry, endpoint: Option<(String, u16)>) {
+    printer.hostname = endpoint.as_ref().map(|(host, _)| host.clone());
+    printer.port = endpoint.map(|(_, port)| port);
 }
 
 /// Maps CUPS state and toner reasons to the UI printer status.
@@ -134,5 +164,40 @@ fn printer_status_from_options(printer: &PrinterEntry) -> PrinterStatus {
         Some("5") => PrinterStatus::Offline,
         Some("3" | "4") => PrinterStatus::Ready,
         _ => printer.status.clone(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stores_endpoint_from_remote_printer_uri() {
+        let endpoint = endpoint_from_uris(
+            "ipps://DESKTOP-96VEKVC-2.local:8880/ipp/print",
+            "ipps://Abd._ipps._tcp.local/",
+        );
+
+        assert_eq!(
+            endpoint,
+            Some(("desktop-96vekvc-2.local".to_string(), 8880))
+        );
+    }
+
+    #[test]
+    fn skips_local_scheduler_uri_and_uses_device_uri() {
+        let endpoint = endpoint_from_uris(
+            "ipp://localhost/printers/Abd",
+            "ipp://localhost:60001/ipp/print",
+        );
+
+        assert_eq!(endpoint, Some(("localhost".to_string(), 60001)));
+    }
+
+    #[test]
+    fn leaves_endpoint_absent_when_no_network_uri_is_available() {
+        let endpoint = endpoint_from_uris("ipp://localhost/printers/Usb", "usb://HP/DeskJet");
+
+        assert_eq!(endpoint, None);
     }
 }

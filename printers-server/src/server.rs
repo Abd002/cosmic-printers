@@ -1,4 +1,4 @@
-use cosmic_settings_printers_core::{DiscoveredPrinter, Error, JobInfo, PrinterEntry};
+use cosmic_settings_printers_core::{Error, JobInfo, PrinterEntry};
 
 use crate::{context::Context, cups_backend};
 
@@ -18,7 +18,7 @@ impl Server {
         Ok(printers)
     }
 
-    pub async fn list_discovered_printers(&mut self) -> Result<Vec<DiscoveredPrinter>, Error> {
+    pub async fn list_discovered_printers(&mut self) -> Result<Vec<PrinterEntry>, Error> {
         cups_backend::list_discovered_printers().await
     }
 

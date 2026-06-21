@@ -26,6 +26,8 @@ pub struct PrinterEntry {
     pub location: String,
     pub model: String,
     pub device_uri: String,
+    pub hostname: Option<String>,
+    pub port: Option<u16>,
     pub web_page: Option<String>,
     pub driver_version: String,
     pub paper_size_idx: usize,
@@ -75,17 +77,8 @@ pub struct ListPrintersReply {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, zlink::introspect::Type)]
-pub struct DiscoveredPrinter {
-    pub id: String,
-    pub name: String,
-    pub device_uri: String,
-    pub location: String,
-    pub model: String,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize, zlink::introspect::Type)]
 pub struct ListDiscoveredPrintersReply {
-    pub printers: Vec<DiscoveredPrinter>,
+    pub printers: Vec<PrinterEntry>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, zlink::introspect::Type)]
