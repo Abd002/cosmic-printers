@@ -92,7 +92,7 @@ pub async fn add_discovered_printer(printer_id: &str) -> Result<(), Error> {
             .ok_or_else(|| Error::MissingDeviceUri {
                 queue: printer.id.clone(),
             })?;
-        let queue_name = available_queue_name(printer_queue_name(&printer), configured.values());
+        let queue_name = available_queue_name(&printer, configured.values());
         let info = printer.name.clone();
         let location = printer.location.clone();
         let device_uuid = printer.options.get("device-uuid").map(String::as_str);
@@ -182,30 +182,92 @@ fn add_printer_attributes(
 
 /// Produces a valid queue name that does not collide with configured queues.
 fn available_queue_name<'a>(
-    name: &str,
+    printer: &PrinterEntry,
     configured: impl Iterator<Item = &'a PrinterEntry>,
 ) -> String {
-    let sanitized_name = name
-        .chars()
-        .map(|character| match character {
-            character if character.is_ascii_alphanumeric() => character,
-            '-' | '_' | '.' => character,
-            _ => '_',
-        })
-        .collect::<String>();
-    let base_name = if sanitized_name.is_empty() {
-        "printer".to_string()
-    } else {
-        sanitized_name
-    };
+    let base_name = queue_name(printer).unwrap_or_else(|| "printer".to_string());
     let existing_names = configured.map(printer_queue_name).collect::<HashSet<_>>();
 
     let mut candidate = base_name.clone();
     let mut suffix = 2;
     while existing_names.contains(candidate.as_str()) {
-        candidate = format!("{base_name}_{suffix}");
+        candidate = format!("{base_name}-{suffix}");
         suffix += 1;
     }
 
     candidate
+}
+
+fn queue_name(printer: &PrinterEntry) -> Option<String> {
+    let mut name = queue_name_base(printer)?;
+
+    name = name.trim().to_string();
+    name = name
+        .chars()
+        .map(|character| match character {
+            character if character.is_ascii_alphanumeric() => character,
+            '-' | '_' => character,
+            _ => '-',
+        })
+        .collect();
+
+    const SUFFIXES: &[&str] = &[
+        "-foomatic",
+        "-hpijs",
+        "-hpcups",
+        "-cups",
+        "-gutenprint",
+        "-series",
+        "-label-printer",
+        "-dot-matrix",
+        "-ps3",
+        "-ps2",
+        "-br-script",
+        "-kpdl",
+        "-pcl3",
+        "-pcl",
+        "-zxs",
+        "-pxl",
+    ];
+
+    // Remove common driver suffixes from generated queue names.
+    for suffix in SUFFIXES {
+        if let Some(index) = name.to_ascii_lowercase().rfind(suffix) {
+            name.truncate(index);
+        }
+    }
+
+    // Normalize separators after replacing invalid characters.
+    name = name.trim_matches('-').to_string();
+    while name.contains("--") {
+        name = name.replace("--", "-");
+    }
+
+    (!name.is_empty()).then_some(name)
+}
+
+fn queue_name_base(printer: &PrinterEntry) -> Option<String> {
+    device_id_tag(printer, "mdl")
+        .or_else(|| device_id_tag(printer, "model"))
+        .or_else(|| non_empty_string(&printer.model))
+        .or_else(|| non_empty_string(printer_queue_name(printer)))
+        .or_else(|| non_empty_string(&printer.name))
+}
+
+fn device_id_tag(printer: &PrinterEntry, tag: &str) -> Option<String> {
+    let device_id = printer.options.get("device-id")?;
+
+    device_id.split(';').find_map(|field| {
+        let (key, value) = field.split_once(':')?;
+        key.trim()
+            .eq_ignore_ascii_case(tag)
+            .then(|| value.trim())
+            .filter(|value| !value.is_empty())
+            .map(ToString::to_string)
+    })
+}
+
+fn non_empty_string(value: &str) -> Option<String> {
+    let value = value.trim();
+    (!value.is_empty()).then(|| value.to_string())
 }
