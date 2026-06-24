@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use super::helpers::{
     CupsResultExt, LocalSocketGuard, PRINTER_ATTRIBUTES, add_requesting_user, configured_printers,
     discovered_printers, ensure_success, fill_attrs_from_device, fill_device_attrs_from_device,
-    printer_queue_name, printers_match,
+    printer_queue_name, printers_match, queue_name_from_printer_uri,
 };
 use super::metadata::{self, QueueMetadata};
 
@@ -99,21 +99,15 @@ pub async fn add_discovered_printer(printer_id: &str) -> Result<(), Error> {
         let printer_more_info = printer.options.get("printer-more-info").map(String::as_str);
 
         let _guard = LocalSocketGuard::engage()?;
-        let result = create_local_printer(&queue_name, &device_uri, &info, &location);
-        if result.is_ok() {
-            metadata::save(
-                &queue_name,
-                QueueMetadata {
-                    device_uuid: device_uuid.map(ToString::to_string),
-                    printer_more_info: printer_more_info.map(ToString::to_string),
-                },
-            )?;
-        }
-        // if result.is_ok() {
-        //     result = create_permanent_printer(&queue_name);
-        // }
-
-        result
+        let actual_queue_name = create_local_printer(&queue_name, &device_uri, &info, &location)?;
+        metadata::save(
+            &actual_queue_name,
+            QueueMetadata {
+                device_uuid: device_uuid.map(ToString::to_string),
+                printer_more_info: printer_more_info.map(ToString::to_string),
+            },
+        )?;
+        Ok(())
     })
     .await
     .map_err(|error| Error::Internal {
@@ -127,7 +121,7 @@ fn create_local_printer(
     device_uri: &str,
     info: &str,
     location: &str,
-) -> Result<(), Error> {
+) -> Result<String, Error> {
     let mut request = IppRequest::new(IppOperation::CupsCreateLocalPrinter).cups_err()?;
 
     request
@@ -150,7 +144,18 @@ fn create_local_printer(
     add_printer_attributes(&mut request, device_uri, info, location)?;
 
     let response = request.send_default("/").cups_err()?;
-    ensure_success(&response, "CUPS-Create-Local-Printer")
+    ensure_success(&response, "CUPS-Create-Local-Printer")?;
+
+    let printer_uri = response
+        .find_attribute("printer-uri-supported", None)
+        .and_then(|attr| attr.get_string(0))
+        .ok_or_else(|| Error::Internal {
+            why: "CUPS-Create-Local-Printer response missing printer-uri-supported".to_string(),
+        })?;
+
+    queue_name_from_printer_uri(&printer_uri).ok_or_else(|| Error::Internal {
+        why: format!("invalid printer-uri-supported returned by CUPS: {printer_uri}"),
+    })
 }
 
 /// Adds the device URI, description, and optional location to an IPP request.

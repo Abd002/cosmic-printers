@@ -4,6 +4,8 @@ use std::collections::HashMap;
 
 use cosmic_settings_printers_core::{Error, PrinterEntry};
 
+use super::helpers::split_queue_instance;
+
 const CONFIG_ID: &str = "com.system76.CosmicSettings.Printers";
 const CONFIG_VERSION: u64 = 1;
 const METADATA_KEY: &str = "queue_metadata";
@@ -32,7 +34,8 @@ pub(super) fn apply(printers: &mut HashMap<String, PrinterEntry>) -> Result<(), 
     let entries = load_from(&config);
 
     for printer in printers.values_mut() {
-        let Some(metadata) = entries.get(&printer.id) else {
+        let (queue_name, _) = split_queue_instance(&printer.id);
+        let Some(metadata) = entries.get(queue_name) else {
             continue;
         };
 
