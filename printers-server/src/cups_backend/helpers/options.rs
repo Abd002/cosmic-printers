@@ -68,6 +68,13 @@ pub(super) fn parse_uri_endpoint(uri: &str) -> Option<(String, u16)> {
     Some((host.to_ascii_lowercase(), port?))
 }
 
+pub(in crate::cups_backend) fn queue_name_from_printer_uri(uri: &str) -> Option<String> {
+    let path = uri.split(['?', '#']).next()?;
+    let name = path.rsplit('/').next()?.trim();
+
+    (!name.is_empty()).then(|| name.to_string())
+}
+
 pub(super) fn is_loopback_host(host: &str) -> bool {
     let bare = host
         .strip_prefix('[')
