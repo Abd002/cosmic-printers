@@ -12,16 +12,9 @@ const TEST_PAGE_PDF: &str = "/usr/share/cups/data/default-testpage.pdf";
 pub async fn list_printers() -> Result<Vec<PrinterEntry>, Error> {
     tokio::task::spawn_blocking(|| {
         let mut printers = configured_printers(250)?;
-        metadata::apply(&mut printers)?;
 
-        for printer in printers.values_mut() {
-            if fill_missing_attrs(printer, PRINTER_ATTRIBUTES).is_err() {
-                eprintln!(
-                    "failed to load optional attributes for printer {}",
-                    printer.id
-                );
-            }
-        }
+        fill_printer_attrs(printers.values_mut());
+        metadata::apply(&mut printers)?;
 
         Ok::<Vec<PrinterEntry>, Error>(printers.into_values().collect())
     })
@@ -29,6 +22,21 @@ pub async fn list_printers() -> Result<Vec<PrinterEntry>, Error> {
     .map_err(|error| Error::Internal {
         why: error.to_string(),
     })?
+}
+
+fn fill_printer_attrs<'a>(printers: impl Iterator<Item = &'a mut PrinterEntry>) {
+    std::thread::scope(|scope| {
+        for printer in printers {
+            scope.spawn(move || {
+                if fill_missing_attrs(printer, PRINTER_ATTRIBUTES).is_err() {
+                    eprintln!(
+                        "failed to load optional attributes for printer {}",
+                        printer.id
+                    );
+                }
+            });
+        }
+    });
 }
 
 // BUG: This sets the server default but does not clear a user default

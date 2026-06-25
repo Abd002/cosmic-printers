@@ -4,8 +4,8 @@ use std::collections::HashSet;
 
 use super::helpers::{
     CupsResultExt, LocalSocketGuard, PRINTER_ATTRIBUTES, add_requesting_user, configured_printers,
-    discovered_printers, ensure_success, fill_attrs_from_device, fill_device_attrs_from_device,
-    printer_queue_name, printers_match, queue_name_from_printer_uri,
+    discovered_printers, ensure_success, fill_attrs_from_device, printer_queue_name,
+    printers_match, queue_name_from_printer_uri,
 };
 use super::metadata::{self, QueueMetadata};
 
@@ -15,16 +15,9 @@ pub async fn list_discovered_printers() -> Result<Vec<PrinterEntry>, Error> {
         metadata::apply(&mut configured)?;
         let mut discovered = discovered_printers(250)?;
 
-        for printer in discovered.values_mut() {
-            if fill_device_attrs_from_device(printer).is_err() {
-                eprintln!(
-                    "failed to load device attributes for destination {}",
-                    printer.id
-                );
-            }
-        }
+        fill_discovered_printer_attrs(discovered.values_mut());
 
-        let mut discovered = discovered
+        let discovered = discovered
             .into_values()
             .filter(|candidate| {
                 !configured
@@ -33,21 +26,13 @@ pub async fn list_discovered_printers() -> Result<Vec<PrinterEntry>, Error> {
             })
             .collect::<Vec<_>>();
 
-        for printer in &mut discovered {
-            if fill_attrs_from_device(printer, PRINTER_ATTRIBUTES).is_err() {
-                eprintln!(
-                    "failed to load all attributes for discovered destination {}",
-                    printer.id
-                );
-            }
+        for printer in &discovered {
             // debugging output to verify discovered attributes are loaded correctly
             print_discovered_destination(printer);
         }
 
-        let mut printers = discovered
-            .into_iter()
-            .filter(|printer| !printer.device_uri.is_empty())
-            .collect::<Vec<_>>();
+        let mut printers = discovered;
+        printers.retain(|printer| !printer.device_uri.is_empty());
         printers.sort_by(|left, right| left.name.cmp(&right.name));
 
         Ok(printers)
@@ -56,6 +41,21 @@ pub async fn list_discovered_printers() -> Result<Vec<PrinterEntry>, Error> {
     .map_err(|error| Error::Internal {
         why: error.to_string(),
     })?
+}
+
+fn fill_discovered_printer_attrs<'a>(printers: impl Iterator<Item = &'a mut PrinterEntry>) {
+    std::thread::scope(|scope| {
+        for printer in printers {
+            scope.spawn(move || {
+                if fill_attrs_from_device(printer, PRINTER_ATTRIBUTES).is_err() {
+                    eprintln!(
+                        "failed to load all attributes for discovered destination {}",
+                        printer.id
+                    );
+                }
+            });
+        }
+    });
 }
 
 /// Prints every attribute returned by CUPS for a discovered destination.
@@ -83,7 +83,7 @@ pub async fn add_discovered_printer(printer_id: &str) -> Result<(), Error> {
             .get(&printer_id)
             .cloned()
             .ok_or(Error::PrinterNotFound)?;
-        fill_device_attrs_from_device(&mut printer)?;
+        fill_attrs_from_device(&mut printer, PRINTER_ATTRIBUTES)?;
 
         let mut configured = configured_printers(250)?;
         metadata::apply(&mut configured)?;
