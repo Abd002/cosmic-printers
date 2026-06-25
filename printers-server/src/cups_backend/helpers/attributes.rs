@@ -29,28 +29,6 @@ pub(in crate::cups_backend) const PRINTER_ATTRIBUTES: &[&str] = &[
     "device-uuid",
 ];
 
-/// Loads identity and web interface attributes from an IPP/IPPS device.
-pub(in crate::cups_backend) fn fill_device_attrs_from_device(
-    printer: &mut PrinterEntry,
-) -> Result<(), Error> {
-    if printer.device_uri.is_empty() {
-        return Ok(());
-    }
-
-    let is_ipp = printer
-        .device_uri
-        .split_once("://")
-        .map(|(scheme, _)| scheme)
-        .is_some_and(|scheme| {
-            scheme.eq_ignore_ascii_case("ipp") || scheme.eq_ignore_ascii_case("ipps")
-        });
-    if !is_ipp {
-        return Ok(());
-    }
-
-    fill_attrs_from_device(printer, &["device-uuid", "printer-more-info"])
-}
-
 /// Fetches requested IPP attributes that are absent from a scheduler printer entry.
 pub(in crate::cups_backend) fn fill_missing_attrs(
     printer: &mut PrinterEntry,
