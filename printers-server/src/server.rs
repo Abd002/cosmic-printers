@@ -28,10 +28,68 @@ impl Server {
         Ok(())
     }
 
-    pub async fn set_default(&mut self, printer_id: &str) -> Result<(), Error> {
-        let printer_uri = self.printer_entry(printer_id).await?.printer_local_uri;
+    pub async fn delete_printer(&mut self, printer_id: &str) -> Result<(), Error> {
+        self.printer_entry(printer_id).await?;
+        cups_backend::delete_printer(printer_id).await?;
+        self.list_printers().await?;
+        Ok(())
+    }
 
-        cups_backend::set_default(printer_id, &printer_uri).await?;
+    pub async fn set_printer_accept_jobs(
+        &mut self,
+        printer_id: &str,
+        enabled: bool,
+        reason: &str,
+    ) -> Result<(), Error> {
+        self.printer_entry(printer_id).await?;
+        cups_backend::set_printer_accept_jobs(printer_id, enabled, reason).await?;
+        self.list_printers().await?;
+        Ok(())
+    }
+
+    pub async fn set_printer_default(&mut self, printer_id: &str) -> Result<(), Error> {
+        self.printer_entry(printer_id).await?;
+        cups_backend::set_printer_default(printer_id).await?;
+        self.list_printers().await?;
+        Ok(())
+    }
+
+    pub async fn set_printer_enabled(
+        &mut self,
+        printer_id: &str,
+        enabled: bool,
+    ) -> Result<(), Error> {
+        self.printer_entry(printer_id).await?;
+        cups_backend::set_printer_enabled(printer_id, enabled).await?;
+        self.list_printers().await?;
+        Ok(())
+    }
+
+    pub async fn set_printer_info(&mut self, printer_id: &str, info: &str) -> Result<(), Error> {
+        self.printer_entry(printer_id).await?;
+        cups_backend::set_printer_info(printer_id, info).await?;
+        self.list_printers().await?;
+        Ok(())
+    }
+
+    pub async fn set_printer_location(
+        &mut self,
+        printer_id: &str,
+        location: &str,
+    ) -> Result<(), Error> {
+        self.printer_entry(printer_id).await?;
+        cups_backend::set_printer_location(printer_id, location).await?;
+        self.list_printers().await?;
+        Ok(())
+    }
+
+    pub async fn set_printer_shared(
+        &mut self,
+        printer_id: &str,
+        shared: bool,
+    ) -> Result<(), Error> {
+        self.printer_entry(printer_id).await?;
+        cups_backend::set_printer_shared(printer_id, shared).await?;
         self.list_printers().await?;
         Ok(())
     }

@@ -32,8 +32,41 @@ pub trait CosmicPrintersProxy {
         printer_id: String,
     ) -> zlink::Result<Result<(), Error>>;
 
+    async fn delete_printer(&mut self, printer_id: String) -> zlink::Result<Result<(), Error>>;
+
+    async fn set_printer_accept_jobs(
+        &mut self,
+        printer_id: String,
+        enabled: bool,
+        reason: String,
+    ) -> zlink::Result<Result<(), Error>>;
+
     async fn set_printer_default(&mut self, printer_id: String)
     -> zlink::Result<Result<(), Error>>;
+
+    async fn set_printer_enabled(
+        &mut self,
+        printer_id: String,
+        enabled: bool,
+    ) -> zlink::Result<Result<(), Error>>;
+
+    async fn set_printer_info(
+        &mut self,
+        printer_id: String,
+        info: String,
+    ) -> zlink::Result<Result<(), Error>>;
+
+    async fn set_printer_location(
+        &mut self,
+        printer_id: String,
+        location: String,
+    ) -> zlink::Result<Result<(), Error>>;
+
+    async fn set_printer_shared(
+        &mut self,
+        printer_id: String,
+        shared: bool,
+    ) -> zlink::Result<Result<(), Error>>;
 
     async fn print_test_page(
         &mut self,

@@ -39,11 +39,45 @@ fn fill_printer_attrs<'a>(printers: impl Iterator<Item = &'a mut PrinterEntry>) 
     });
 }
 
+pub async fn delete_printer(printer_id: &str) -> Result<(), Error> {
+    let queue_name = split_queue_instance(printer_id).0;
+    polkit_helper::delete_printer(queue_name).await
+}
+
+pub async fn set_printer_accept_jobs(
+    printer_id: &str,
+    enabled: bool,
+    reason: &str,
+) -> Result<(), Error> {
+    let queue_name = split_queue_instance(printer_id).0;
+    polkit_helper::set_printer_accept_jobs(queue_name, enabled, reason).await
+}
+
 // BUG: This sets the server default but does not clear a user default
 // stored in lpoptions, which can continue to override it.
-pub async fn set_default(printer_id: &str, _printer_uri: &str) -> Result<(), Error> {
-    let (queue_name, _instance) = split_queue_instance(printer_id);
-    polkit_helper::set_default(queue_name.to_string()).await
+pub async fn set_printer_default(printer_id: &str) -> Result<(), Error> {
+    let queue_name = split_queue_instance(printer_id).0;
+    polkit_helper::set_printer_default(queue_name).await
+}
+
+pub async fn set_printer_enabled(printer_id: &str, enabled: bool) -> Result<(), Error> {
+    let queue_name = split_queue_instance(printer_id).0;
+    polkit_helper::set_printer_enabled(queue_name, enabled).await
+}
+
+pub async fn set_printer_info(printer_id: &str, info: &str) -> Result<(), Error> {
+    let queue_name = split_queue_instance(printer_id).0;
+    polkit_helper::set_printer_info(queue_name, info).await
+}
+
+pub async fn set_printer_location(printer_id: &str, location: &str) -> Result<(), Error> {
+    let queue_name = split_queue_instance(printer_id).0;
+    polkit_helper::set_printer_location(queue_name, location).await
+}
+
+pub async fn set_printer_shared(printer_id: &str, shared: bool) -> Result<(), Error> {
+    let queue_name = split_queue_instance(printer_id).0;
+    polkit_helper::set_printer_shared(queue_name, shared).await
 }
 
 pub async fn print_test_page(printer: PrinterEntry) -> Result<i32, Error> {
