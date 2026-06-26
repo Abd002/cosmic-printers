@@ -8,6 +8,7 @@ use super::helpers::{
     printers_match, queue_name_from_printer_uri,
 };
 use super::metadata::{self, QueueMetadata};
+use super::polkit_helper;
 
 pub async fn list_discovered_printers() -> Result<Vec<PrinterEntry>, Error> {
     tokio::task::spawn_blocking(|| {
@@ -77,7 +78,7 @@ fn print_discovered_destination(printer: &PrinterEntry) {
 pub async fn add_discovered_printer(printer_id: &str) -> Result<(), Error> {
     let printer_id = printer_id.to_string();
 
-    tokio::task::spawn_blocking(move || {
+    let actual_queue_name = tokio::task::spawn_blocking(move || {
         let discovered = discovered_printers(250)?;
         let mut printer = discovered
             .get(&printer_id)
@@ -107,12 +108,20 @@ pub async fn add_discovered_printer(printer_id: &str) -> Result<(), Error> {
                 printer_more_info: printer_more_info.map(ToString::to_string),
             },
         )?;
-        Ok(())
+        Ok::<_, Error>(actual_queue_name)
     })
     .await
     .map_err(|error| Error::Internal {
         why: error.to_string(),
-    })?
+    })??;
+
+    make_printer_permanent(&actual_queue_name).await
+}
+
+/// Converts a temporary local queue created by CUPS into a persistent queue.
+async fn make_printer_permanent(queue_name: &str) -> Result<(), Error> {
+    polkit_helper::set_printer_shared(queue_name, true).await?;
+    polkit_helper::set_printer_shared(queue_name, false).await
 }
 
 /// Creates a temporary local queue for a discovered driverless device.
