@@ -24,17 +24,6 @@ pub(super) fn option_values(options: &HashMap<String, String>, name: &str) -> Ve
         .unwrap_or_default()
 }
 
-pub(super) fn non_empty_option<'a>(
-    options: &'a HashMap<String, String>,
-    name: &str,
-) -> Option<&'a str> {
-    options
-        .get(name)
-        .map(String::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-}
-
 pub(super) fn parse_uri_endpoint(uri: &str) -> Option<(String, u16)> {
     let (scheme, rest) = uri.split_once("://")?;
     let authority = rest.split('/').next()?.rsplit('@').next()?.trim();

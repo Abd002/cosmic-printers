@@ -5,34 +5,24 @@ use std::collections::HashSet;
 use super::helpers::{
     CupsResultExt, LocalSocketGuard, PRINTER_ATTRIBUTES, add_requesting_user, configured_printers,
     discovered_printers, ensure_success, fill_attrs_from_device, printer_queue_name,
-    printers_match, queue_name_from_printer_uri,
+    queue_name_from_printer_uri,
 };
 use super::metadata::{self, QueueMetadata};
 use super::polkit_helper;
 
 pub async fn list_discovered_printers() -> Result<Vec<PrinterEntry>, Error> {
     tokio::task::spawn_blocking(|| {
-        let mut configured = configured_printers(250)?;
-        metadata::apply(&mut configured)?;
         let mut discovered = discovered_printers(250)?;
 
         fill_discovered_printer_attrs(discovered.values_mut());
 
-        let discovered = discovered
-            .into_values()
-            .filter(|candidate| {
-                !configured
-                    .values()
-                    .any(|queue| printers_match(queue, candidate))
-            })
-            .collect::<Vec<_>>();
+        let mut printers = discovered.into_values().collect::<Vec<_>>();
 
-        for printer in &discovered {
+        for printer in &printers {
             // debugging output to verify discovered attributes are loaded correctly
             print_discovered_destination(printer);
         }
 
-        let mut printers = discovered;
         printers.retain(|printer| !printer.device_uri.is_empty());
         printers.sort_by(|left, right| left.name.cmp(&right.name));
 
