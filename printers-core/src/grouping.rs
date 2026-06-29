@@ -199,6 +199,12 @@ pub fn group_printers(printers: Vec<PrinterEntry>) -> Vec<GroupedDevice> {
     devices
 }
 
+/// Returns true when two printer entries appear to describe the same physical
+/// device or queue.
+pub fn printers_match(left: &PrinterEntry, right: &PrinterEntry) -> bool {
+    printer_identity(left).matches(&printer_identity(right))
+}
+
 fn printer_identity(printer: &PrinterEntry) -> DeviceIdentity {
     DeviceIdentity::new(
         non_empty_option(&printer.options, "device-uuid"),
