@@ -9,60 +9,26 @@ use super::helpers::{
 };
 use super::metadata::{self, QueueMetadata};
 use super::polkit_helper;
+use crate::context::Context;
 
-pub async fn list_discovered_printers() -> Result<Vec<PrinterEntry>, Error> {
-    tokio::task::spawn_blocking(|| {
-        let mut discovered = discovered_printers(250)?;
+pub async fn list_discovered_printers(context: Context) -> Result<Vec<PrinterEntry>, Error> {
+    let task_context = context.clone();
+    let printers = {
+        let mut model = context.model.lock().await;
+        let printers = model.discovered_printers.clone();
+        if !model.discovery_running {
+            model.discovery_running = true;
+            tokio::spawn(async move {
+                crate::avahi::discover_printers_into_cache(task_context.clone()).await;
 
-        fill_discovered_printer_attrs(discovered.values_mut());
-
-        let mut printers = discovered.into_values().collect::<Vec<_>>();
-
-        for printer in &printers {
-            // debugging output to verify discovered attributes are loaded correctly
-            print_discovered_destination(printer);
-        }
-
-        printers.retain(|printer| !printer.device_uri.is_empty());
-        printers.sort_by(|left, right| left.name.cmp(&right.name));
-
-        Ok(printers)
-    })
-    .await
-    .map_err(|error| Error::Internal {
-        why: error.to_string(),
-    })?
-}
-
-fn fill_discovered_printer_attrs<'a>(printers: impl Iterator<Item = &'a mut PrinterEntry>) {
-    std::thread::scope(|scope| {
-        for printer in printers {
-            scope.spawn(move || {
-                if fill_attrs_from_device(printer, PRINTER_ATTRIBUTES).is_err() {
-                    eprintln!(
-                        "failed to load all attributes for discovered destination {}",
-                        printer.id
-                    );
-                }
+                let mut model = task_context.model.lock().await;
+                model.discovery_running = false;
             });
         }
-    });
-}
+        printers
+    };
 
-/// Prints every attribute returned by CUPS for a discovered destination.
-fn print_discovered_destination(printer: &PrinterEntry) {
-    eprintln!("discovered destination:");
-    eprintln!("  id: {}", printer.id);
-    eprintln!("  name: {}", printer.name);
-    eprintln!("  is-default: {}", printer.is_default);
-
-    let mut attributes = printer.options.iter().collect::<Vec<_>>();
-    attributes.sort_unstable_by(|(left, _), (right, _)| left.cmp(right));
-
-    eprintln!("  attributes:");
-    for (name, value) in attributes {
-        eprintln!("    {name}: {value}");
-    }
+    Ok(printers)
 }
 
 pub async fn add_discovered_printer(printer_id: &str) -> Result<(), Error> {
