@@ -38,6 +38,56 @@ pub struct PrinterEntry {
     pub print_sides: Vec<String>,
 }
 
+impl PrinterEntry {
+    pub fn merge_from(&mut self, incoming: Self) {
+        if self.name.is_empty() {
+            self.name = incoming.name;
+        }
+        if self.printer_local_uri.is_empty() {
+            self.printer_local_uri = incoming.printer_local_uri;
+        }
+        if self.queue_status.is_empty() {
+            self.queue_status = incoming.queue_status;
+        }
+        if self.location.is_empty() {
+            self.location = incoming.location;
+        }
+        if self.model.is_empty() {
+            self.model = incoming.model;
+        }
+        if self.device_uri.is_empty() {
+            self.device_uri = incoming.device_uri;
+        }
+        if self.hostname.is_none() {
+            self.hostname = incoming.hostname;
+        }
+        if self.port.is_none() {
+            self.port = incoming.port;
+        }
+        if self.web_page.is_none() {
+            self.web_page = incoming.web_page;
+        }
+        if self.driver_version.is_empty() {
+            self.driver_version = incoming.driver_version;
+        }
+        if self.supplies.is_empty() {
+            self.supplies = incoming.supplies;
+        }
+        if self.paper_sizes.is_empty() {
+            self.paper_sizes = incoming.paper_sizes;
+        }
+        if self.print_sides.is_empty() {
+            self.print_sides = incoming.print_sides;
+        }
+
+        for (key, value) in incoming.options {
+            if !value.is_empty() {
+                self.options.insert(key, value);
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct GroupedDevice {
     pub(crate) identity: DeviceIdentity,

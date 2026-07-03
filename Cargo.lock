@@ -364,6 +364,7 @@ dependencies = [
  "cosmic-config",
  "cosmic-settings-printers-core",
  "cups_rs",
+ "futures-util",
  "serde",
  "tokio",
  "zbus",
