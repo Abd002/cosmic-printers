@@ -23,7 +23,18 @@ impl Server {
     }
 
     pub async fn add_discovered_printer(&mut self, printer_id: &str) -> Result<(), Error> {
-        cups_backend::add_discovered_printer(printer_id).await?;
+        let printer = {
+            let model = self.context.model.lock().await;
+            model
+                .discovered_printers
+                .iter()
+                .find(|printer| printer.id == printer_id)
+                .cloned()
+        };
+
+        let printer = printer.ok_or(Error::PrinterNotFound)?;
+        cups_backend::add_discovered_printer(printer).await?;
+
         self.list_printers().await?;
         Ok(())
     }

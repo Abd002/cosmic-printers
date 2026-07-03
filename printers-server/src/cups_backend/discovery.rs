@@ -4,8 +4,7 @@ use std::collections::HashSet;
 
 use super::helpers::{
     CupsResultExt, LocalSocketGuard, PRINTER_ATTRIBUTES, add_requesting_user, configured_printers,
-    discovered_printers, ensure_success, fill_attrs_from_device, printer_queue_name,
-    queue_name_from_printer_uri,
+    ensure_success, fill_attrs_from_device, printer_queue_name, queue_name_from_printer_uri,
 };
 use super::metadata::{self, QueueMetadata};
 use super::polkit_helper;
@@ -20,6 +19,7 @@ pub async fn list_discovered_printers(context: Context) -> Result<Vec<PrinterEnt
             model.discovery_running = true;
             tokio::spawn(async move {
                 crate::avahi::discover_printers_into_cache(task_context.clone()).await;
+                fill_cached_discovered_attrs(task_context.clone()).await;
 
                 let mut model = task_context.model.lock().await;
                 model.discovery_running = false;
@@ -31,16 +31,12 @@ pub async fn list_discovered_printers(context: Context) -> Result<Vec<PrinterEnt
     Ok(printers)
 }
 
-pub async fn add_discovered_printer(printer_id: &str) -> Result<(), Error> {
-    let printer_id = printer_id.to_string();
-
+pub async fn add_discovered_printer(mut printer: PrinterEntry) -> Result<(), Error> {
     let actual_queue_name = tokio::task::spawn_blocking(move || {
-        let discovered = discovered_printers(250)?;
-        let mut printer = discovered
-            .get(&printer_id)
-            .cloned()
-            .ok_or(Error::PrinterNotFound)?;
-        fill_attrs_from_device(&mut printer, PRINTER_ATTRIBUTES)?;
+        if !printer.device_uri.is_empty() && !printer.options.contains_key("printer-make-and-model")
+        {
+            fill_attrs_from_device(&mut printer, PRINTER_ATTRIBUTES)?;
+        }
 
         let mut configured = configured_printers(250)?;
         metadata::apply(&mut configured)?;
@@ -72,6 +68,51 @@ pub async fn add_discovered_printer(printer_id: &str) -> Result<(), Error> {
     })??;
 
     make_printer_permanent(&actual_queue_name).await
+}
+
+async fn fill_cached_discovered_attrs(context: Context) {
+    let printers = context.model.lock().await.discovered_printers.clone();
+
+    let Ok(printers) = tokio::task::spawn_blocking(move || {
+        printers
+            .into_iter()
+            .map(|mut printer| {
+                if !printer.device_uri.is_empty()
+                    && fill_attrs_from_device(&mut printer, PRINTER_ATTRIBUTES).is_ok()
+                {
+                    printer.options.insert(
+                        "cosmic-discovery-detail-state".to_string(),
+                        "enriched".to_string(),
+                    );
+                }
+                printer
+            })
+            .collect::<Vec<_>>()
+    })
+    .await
+    else {
+        return;
+    };
+
+    let mut model = context.model.lock().await;
+    merge_cached_discovered_printers(&mut model.discovered_printers, printers);
+}
+
+fn merge_cached_discovered_printers(
+    printers: &mut Vec<PrinterEntry>,
+    incoming: impl IntoIterator<Item = PrinterEntry>,
+) {
+    for printer in incoming {
+        if let Some(existing) = printers
+            .iter_mut()
+            .find(|existing| existing.id == printer.id)
+        {
+            existing.merge_from(printer);
+        } else {
+            printers.push(printer);
+        }
+    }
+    printers.sort_by(|left, right| left.name.cmp(&right.name).then(left.id.cmp(&right.id)));
 }
 
 /// Converts a temporary local queue created by CUPS into a persistent queue.
