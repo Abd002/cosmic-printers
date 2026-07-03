@@ -19,7 +19,7 @@ impl Server {
     }
 
     pub async fn list_discovered_printers(&mut self) -> Result<Vec<PrinterEntry>, Error> {
-        cups_backend::list_discovered_printers().await
+        cups_backend::list_discovered_printers(self.context.clone()).await
     }
 
     pub async fn add_discovered_printer(&mut self, printer_id: &str) -> Result<(), Error> {
