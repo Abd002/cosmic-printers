@@ -2,9 +2,8 @@ use cosmic_settings_printers_core::{Error, PrinterEntry};
 use cups_rs::{HttpConnection, IppResponse};
 use std::collections::HashMap;
 
-use super::conversion::{apply_endpoint, refresh_printer_entry};
-use super::ipp::{CupsResultExt, ensure_success, printer_attrs_request};
-use super::options::parse_uri_endpoint;
+use super::conversion::refresh_printer_entry;
+use super::ipp::{ensure_success, printer_attrs_request, CupsResultExt};
 
 pub(in crate::cups_backend) const PRINTER_ATTRIBUTES: &[&str] = &[
     "printer-more-info",
@@ -71,15 +70,28 @@ pub(in crate::cups_backend) fn fill_attrs_from_device(
 fn fill_attrs_from_device_uri(printer: &mut PrinterEntry, attrs: &[&str]) -> Result<(), Error> {
     let queue_name = printer.id.clone();
     let device_uri = printer.device_uri.clone();
-    let (connection, printer_uri) =
-        HttpConnection::connect_uri(&device_uri, Some(250)).map_err(|error| {
+    let host = printer
+        .hostname
+        .clone()
+        .ok_or_else(|| Error::DeviceUnreachable {
+            why: format!("{queue_name}: missing hostname"),
+        })?;
+    let port = printer.port.ok_or_else(|| Error::DeviceUnreachable {
+        why: format!("{queue_name}: missing port"),
+    })?;
+    let resource = printer
+        .options
+        .get("dnssd-resource-path")
+        .map(|path| format!("/{}", path.trim_start_matches('/')))
+        .unwrap_or_else(|| "/".to_string());
+    let connection =
+        HttpConnection::connect_host(&host, port, &resource, Some(250)).map_err(|error| {
             Error::DeviceUnreachable {
                 why: format!("{queue_name}: {error}"),
             }
         })?;
 
-    let endpoint = parse_uri_endpoint(&printer_uri);
-
+    let printer_uri = device_uri;
     let request = printer_attrs_request(&printer_uri, attrs)?;
     let response = request
         .send(&connection, connection.resource_path())
@@ -90,7 +102,6 @@ fn fill_attrs_from_device_uri(printer: &mut PrinterEntry, attrs: &[&str]) -> Res
 
     merge_response_attrs(&mut printer.options, &response, attrs);
     refresh_printer_entry(printer);
-    apply_endpoint(printer, endpoint);
     Ok(())
 }
 
