@@ -14,7 +14,7 @@ impl Server {
 
     pub async fn list_printers(&mut self) -> Result<Vec<PrinterEntry>, Error> {
         let printers = cups_backend::list_printers().await?;
-        self.context.model.lock().await.printers = printers.clone();
+        self.context.set_printers(printers.clone()).await;
         Ok(printers)
     }
 
@@ -23,16 +23,11 @@ impl Server {
     }
 
     pub async fn add_discovered_printer(&mut self, printer_id: &str) -> Result<(), Error> {
-        let printer = {
-            let model = self.context.model.lock().await;
-            model
-                .discovered_printers
-                .iter()
-                .find(|printer| printer.id == printer_id)
-                .cloned()
-        };
-
-        let printer = printer.ok_or(Error::PrinterNotFound)?;
+        let printer = self
+            .context
+            .discovered_printer(printer_id)
+            .await
+            .ok_or(Error::PrinterNotFound)?;
         cups_backend::add_discovered_printer(printer).await?;
 
         self.list_printers().await?;
