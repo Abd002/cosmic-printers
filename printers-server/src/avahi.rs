@@ -144,8 +144,9 @@ pub async fn discover_printers_into_cache(context: Context) {
 }
 
 async fn merge_printer_into_cache(context: &Context, printer: PrinterEntry) {
-    let mut model = context.model.lock().await;
-    merge_discovered_printer(&mut model.discovered_printers, printer);
+    context
+        .merge_discovered_printer_by(printer, entries_match)
+        .await;
 }
 
 async fn resolve_service_entry(
@@ -286,18 +287,6 @@ fn parse_txt_records(records: Vec<Vec<u8>>) -> HashMap<String, String> {
             (!key.is_empty()).then(|| (key.to_string(), value.to_string()))
         })
         .collect()
-}
-
-fn merge_discovered_printer(printers: &mut Vec<PrinterEntry>, printer: PrinterEntry) {
-    if let Some(existing) = printers
-        .iter_mut()
-        .find(|existing| entries_match(existing, &printer))
-    {
-        existing.merge_from(printer);
-    } else {
-        printers.push(printer);
-    }
-    printers.sort_by(|left, right| left.name.cmp(&right.name).then(left.id.cmp(&right.id)));
 }
 
 fn entries_match(left: &PrinterEntry, right: &PrinterEntry) -> bool {

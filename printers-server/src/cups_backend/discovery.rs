@@ -11,22 +11,15 @@ use super::polkit_helper;
 use crate::context::Context;
 
 pub async fn list_discovered_printers(context: Context) -> Result<Vec<PrinterEntry>, Error> {
+    let printers = context.discovered_printers().await;
     let task_context = context.clone();
-    let printers = {
-        let mut model = context.model.lock().await;
-        let printers = model.discovered_printers.clone();
-        if !model.discovery_running {
-            model.discovery_running = true;
-            tokio::spawn(async move {
-                crate::avahi::discover_printers_into_cache(task_context.clone()).await;
-                fill_cached_discovered_attrs(task_context.clone()).await;
-
-                let mut model = task_context.model.lock().await;
-                model.discovery_running = false;
-            });
-        }
-        printers
-    };
+    if context.start_discovery_if_idle().await {
+        tokio::spawn(async move {
+            crate::avahi::discover_printers_into_cache(task_context.clone()).await;
+            fill_cached_discovered_attrs(task_context.clone()).await;
+            task_context.finish_discovery().await;
+        });
+    }
 
     Ok(printers)
 }
@@ -71,7 +64,7 @@ pub async fn add_discovered_printer(mut printer: PrinterEntry) -> Result<(), Err
 }
 
 async fn fill_cached_discovered_attrs(context: Context) {
-    let printers = context.model.lock().await.discovered_printers.clone();
+    let printers = context.discovered_printers().await;
 
     let Ok(printers) = tokio::task::spawn_blocking(move || {
         printers
@@ -94,25 +87,9 @@ async fn fill_cached_discovered_attrs(context: Context) {
         return;
     };
 
-    let mut model = context.model.lock().await;
-    merge_cached_discovered_printers(&mut model.discovered_printers, printers);
-}
-
-fn merge_cached_discovered_printers(
-    printers: &mut Vec<PrinterEntry>,
-    incoming: impl IntoIterator<Item = PrinterEntry>,
-) {
-    for printer in incoming {
-        if let Some(existing) = printers
-            .iter_mut()
-            .find(|existing| existing.id == printer.id)
-        {
-            existing.merge_from(printer);
-        } else {
-            printers.push(printer);
-        }
-    }
-    printers.sort_by(|left, right| left.name.cmp(&right.name).then(left.id.cmp(&right.id)));
+    context
+        .merge_discovered_printers_by(printers, |existing, incoming| existing.id == incoming.id)
+        .await;
 }
 
 /// Converts a temporary local queue created by CUPS into a persistent queue.
