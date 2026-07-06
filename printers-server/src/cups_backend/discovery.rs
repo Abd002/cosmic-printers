@@ -6,12 +6,10 @@ use super::helpers::{
     CupsResultExt, LocalSocketGuard, PRINTER_ATTRIBUTES, add_requesting_user, configured_printers,
     ensure_success, fill_attrs_from_device, printer_queue_name, queue_name_from_printer_uri,
 };
-use super::metadata::{self, QueueMetadata};
 use super::polkit_helper;
-use crate::context::Context;
+use crate::{avahi::discovered_printers_match, context::Context};
 
 pub async fn list_discovered_printers(context: Context) -> Result<Vec<PrinterEntry>, Error> {
-    let printers = context.discovered_printers().await;
     let task_context = context.clone();
     if context.start_discovery_if_idle().await {
         tokio::spawn(async move {
@@ -21,18 +19,17 @@ pub async fn list_discovered_printers(context: Context) -> Result<Vec<PrinterEnt
         });
     }
 
-    Ok(printers)
+    Ok(context.discovered_printers().await)
 }
 
-pub async fn add_discovered_printer(mut printer: PrinterEntry) -> Result<(), Error> {
+pub async fn add_discovered_printer(mut printer: PrinterEntry) -> Result<String, Error> {
     let actual_queue_name = tokio::task::spawn_blocking(move || {
         if !printer.device_uri.is_empty() && !printer.options.contains_key("printer-make-and-model")
         {
             fill_attrs_from_device(&mut printer, PRINTER_ATTRIBUTES)?;
         }
 
-        let mut configured = configured_printers(250)?;
-        metadata::apply(&mut configured)?;
+        let configured = configured_printers(250)?;
         let device_uri = (!printer.device_uri.is_empty())
             .then(|| printer.device_uri.clone())
             .ok_or_else(|| Error::MissingDeviceUri {
@@ -41,18 +38,9 @@ pub async fn add_discovered_printer(mut printer: PrinterEntry) -> Result<(), Err
         let queue_name = available_queue_name(&printer, configured.values());
         let info = printer.name.clone();
         let location = printer.location.clone();
-        let device_uuid = printer.options.get("device-uuid").map(String::as_str);
-        let printer_more_info = printer.options.get("printer-more-info").map(String::as_str);
 
         let _guard = LocalSocketGuard::engage()?;
         let actual_queue_name = create_local_printer(&queue_name, &device_uri, &info, &location)?;
-        metadata::save(
-            &actual_queue_name,
-            QueueMetadata {
-                device_uuid: device_uuid.map(ToString::to_string),
-                printer_more_info: printer_more_info.map(ToString::to_string),
-            },
-        )?;
         Ok::<_, Error>(actual_queue_name)
     })
     .await
@@ -60,7 +48,8 @@ pub async fn add_discovered_printer(mut printer: PrinterEntry) -> Result<(), Err
         why: error.to_string(),
     })??;
 
-    make_printer_permanent(&actual_queue_name).await
+    make_printer_permanent(&actual_queue_name).await?;
+    Ok(actual_queue_name)
 }
 
 async fn fill_cached_discovered_attrs(context: Context) {
@@ -88,7 +77,7 @@ async fn fill_cached_discovered_attrs(context: Context) {
     };
 
     context
-        .merge_discovered_printers_by(printers, |existing, incoming| existing.id == incoming.id)
+        .merge_discovered_printers_by(printers, discovered_printers_match)
         .await;
 }
 
@@ -179,7 +168,7 @@ fn available_queue_name<'a>(
     let mut candidate = base_name.clone();
     let mut suffix = 2;
     while existing_names.contains(candidate.as_str()) {
-        candidate = format!("{base_name}-{suffix}");
+        candidate = format!("{base_name}_{suffix}");
         suffix += 1;
     }
 

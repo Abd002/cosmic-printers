@@ -145,7 +145,7 @@ pub async fn discover_printers_into_cache(context: Context) {
 
 async fn merge_printer_into_cache(context: &Context, printer: PrinterEntry) {
     context
-        .merge_discovered_printer_by(printer, entries_match)
+        .merge_discovered_printer_by(printer, discovered_printers_match)
         .await;
 }
 
@@ -253,10 +253,7 @@ fn service_to_partial_entry(service: &AvahiService) -> PrinterEntry {
     options.insert("dnssd-protocol".into(), service.protocol.to_string());
 
     PrinterEntry {
-        id: format!(
-            "dnssd:{}:{}:{}",
-            service.service_type, service.domain, service.name
-        ),
+        id: String::new(),
         name: service.name.clone(),
         is_default: false,
         printer_local_uri: String::new(),
@@ -289,11 +286,22 @@ fn parse_txt_records(records: Vec<Vec<u8>>) -> HashMap<String, String> {
         .collect()
 }
 
-fn entries_match(left: &PrinterEntry, right: &PrinterEntry) -> bool {
+pub(crate) fn discovered_printers_match(left: &PrinterEntry, right: &PrinterEntry) -> bool {
     match (discovery_name(left), discovery_name(right)) {
         (Some(left), Some(right)) => left == right,
         _ => false,
     }
+}
+
+pub(crate) fn discovered_printer_id(printer: &PrinterEntry) -> Option<String> {
+    if !printer.id.is_empty() {
+        return Some(printer.id.clone());
+    }
+
+    let service_type = printer.options.get("dnssd-service-type")?;
+    let domain = printer.options.get("dnssd-domain")?;
+    let name = printer.options.get("dnssd-service-name")?;
+    Some(format!("dnssd:{service_type}:{domain}:{name}"))
 }
 
 fn discovery_name(printer: &PrinterEntry) -> Option<String> {

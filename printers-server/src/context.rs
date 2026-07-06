@@ -1,4 +1,4 @@
-use crate::backend::Model;
+use crate::{avahi::discovered_printer_id, backend::Model};
 use cosmic_settings_printers_core::PrinterEntry;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -25,7 +25,7 @@ impl Context {
             .await
             .discovered_printers
             .iter()
-            .find(|printer| printer.id == printer_id)
+            .find(|printer| discovered_printer_id(printer).as_deref() == Some(printer_id))
             .cloned()
     }
 
@@ -53,6 +53,22 @@ impl Context {
         model
             .discovered_printers
             .sort_by(|left, right| left.name.cmp(&right.name).then(left.id.cmp(&right.id)));
+    }
+
+    pub async fn update_discovered_printer(
+        &self,
+        printer_id: &str,
+        update: impl FnOnce(&mut PrinterEntry),
+    ) {
+        self.update_discovered_printers(|printers| {
+            if let Some(printer) = printers
+                .iter_mut()
+                .find(|printer| discovered_printer_id(printer).as_deref() == Some(printer_id))
+            {
+                update(printer);
+            }
+        })
+        .await;
     }
 
     pub async fn merge_discovered_printer_by(

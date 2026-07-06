@@ -3,7 +3,7 @@ use cups_rs::{HttpConnection, IppResponse};
 use std::collections::HashMap;
 
 use super::conversion::refresh_printer_entry;
-use super::ipp::{ensure_success, printer_attrs_request, CupsResultExt};
+use super::ipp::{CupsResultExt, ensure_success, printer_attrs_request};
 
 pub(in crate::cups_backend) const PRINTER_ATTRIBUTES: &[&str] = &[
     "printer-more-info",

@@ -5,7 +5,7 @@ use super::helpers::{
     CupsResultExt, PRINTER_ATTRIBUTES, configured_printers, fill_missing_attrs,
     split_queue_instance,
 };
-use super::{metadata, polkit_helper};
+use super::polkit_helper;
 
 const TEST_PAGE_PDF: &str = "/usr/share/cups/data/default-testpage.pdf";
 
@@ -14,7 +14,6 @@ pub async fn list_printers() -> Result<Vec<PrinterEntry>, Error> {
         let mut printers = configured_printers(250)?;
 
         fill_printer_attrs(printers.values_mut());
-        metadata::apply(&mut printers)?;
 
         Ok::<Vec<PrinterEntry>, Error>(printers.into_values().collect())
     })
