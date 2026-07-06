@@ -21,7 +21,7 @@ pub enum Error {
     /// A discovered network/IPP device couldn't be reached directly.
     DeviceUnreachable { why: String },
 
-    /// Reading or writing queue metadata via cosmic-config failed.
+    /// Reading or writing printer configuration via cosmic-config failed.
     ConfigFailed { why: String },
 
     /// A blocking CUPS task panicked or was cancelled.
