@@ -208,14 +208,18 @@ pub fn printers_match(left: &PrinterEntry, right: &PrinterEntry) -> bool {
 fn printer_identity(printer: &PrinterEntry) -> DeviceIdentity {
     DeviceIdentity::new(
         non_empty_option(&printer.options, "device-uuid"),
-        printer
-            .hostname
-            .as_ref()
-            .zip(printer.port)
-            .map(|(host, port)| (host.clone(), port)),
+        printer_endpoint(printer),
         non_empty_option(&printer.options, "device-uri"),
         non_empty_option(&printer.options, "printer-uri-supported"),
     )
+}
+
+fn printer_endpoint(printer: &PrinterEntry) -> Option<(String, u16)> {
+    let host = non_empty_option(&printer.options, "dnssd-address")
+        .map(ToString::to_string)
+        .or_else(|| printer.hostname.clone())?;
+
+    Some((host, printer.port?))
 }
 
 fn non_empty_option<'a>(options: &'a HashMap<String, String>, name: &str) -> Option<&'a str> {
