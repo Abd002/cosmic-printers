@@ -1,6 +1,7 @@
 mod discovery;
 mod helpers;
 mod jobs;
+mod metadata;
 mod polkit_helper;
 mod printer;
 

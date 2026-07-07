@@ -5,7 +5,7 @@ use super::helpers::{
     CupsResultExt, PRINTER_ATTRIBUTES, configured_printers, fill_missing_attrs,
     split_queue_instance,
 };
-use super::polkit_helper;
+use super::{metadata, polkit_helper};
 
 const TEST_PAGE_PDF: &str = "/usr/share/cups/data/default-testpage.pdf";
 
@@ -13,6 +13,7 @@ pub async fn list_printers() -> Result<Vec<PrinterEntry>, Error> {
     tokio::task::spawn_blocking(|| {
         let mut printers = configured_printers(250)?;
 
+        metadata::apply(&mut printers)?;
         fill_printer_attrs(printers.values_mut());
 
         Ok::<Vec<PrinterEntry>, Error>(printers.into_values().collect())
@@ -40,7 +41,8 @@ fn fill_printer_attrs<'a>(printers: impl Iterator<Item = &'a mut PrinterEntry>) 
 
 pub async fn delete_printer(printer_id: &str) -> Result<(), Error> {
     let queue_name = split_queue_instance(printer_id).0;
-    polkit_helper::delete_printer(queue_name).await
+    polkit_helper::delete_printer(queue_name).await?;
+    metadata::remove(queue_name)
 }
 
 pub async fn set_printer_accept_jobs(
