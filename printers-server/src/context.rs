@@ -109,6 +109,18 @@ impl Context {
         .await;
     }
 
+    pub async fn retain_discovered_printers_by(
+        &self,
+        incoming: impl IntoIterator<Item = PrinterEntry>,
+        matches: impl Fn(&PrinterEntry, &PrinterEntry) -> bool,
+    ) {
+        let incoming = incoming.into_iter().collect::<Vec<_>>();
+        self.update_discovered_printers(|printers| {
+            printers.retain(|printer| incoming.iter().any(|other| matches(printer, other)));
+        })
+        .await;
+    }
+
     pub async fn start_discovery_if_idle(&self) -> bool {
         let mut model = self.model.lock().await;
         if model.discovery_running {
