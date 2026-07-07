@@ -141,11 +141,24 @@ pub async fn discover_printers_into_cache(context: Context) {
             }
         }
     }
+
+    retain_seen_printers(&context, services).await;
 }
 
 async fn merge_printer_into_cache(context: &Context, printer: PrinterEntry) {
     context
         .merge_discovered_printer_by(printer, discovered_printers_match)
+        .await;
+}
+
+async fn retain_seen_printers(context: &Context, services: HashSet<AvahiService>) {
+    context
+        .retain_discovered_printers_by(
+            services
+                .into_iter()
+                .map(|service| service_to_partial_entry(&service)),
+            discovered_printers_match,
+        )
         .await;
 }
 
