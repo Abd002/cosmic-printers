@@ -6,6 +6,7 @@ use super::helpers::{
     CupsResultExt, LocalSocketGuard, PRINTER_ATTRIBUTES, add_requesting_user, configured_printers,
     ensure_success, fill_attrs_from_device, printer_queue_name, queue_name_from_printer_uri,
 };
+use super::metadata::{self, QueueMetadata};
 use super::polkit_helper;
 use crate::{avahi::discovered_printers_match, context::Context};
 
@@ -38,9 +39,11 @@ pub async fn add_discovered_printer(mut printer: PrinterEntry) -> Result<String,
         let queue_name = available_queue_name(&printer, configured.values());
         let info = printer.name.clone();
         let location = printer.location.clone();
+        let metadata = QueueMetadata::from_discovered_printer(&printer);
 
         let _guard = LocalSocketGuard::engage()?;
         let actual_queue_name = create_local_printer(&queue_name, &device_uri, &info, &location)?;
+        metadata::save(&actual_queue_name, metadata)?;
         Ok::<_, Error>(actual_queue_name)
     })
     .await
