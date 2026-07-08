@@ -16,6 +16,12 @@ trait CupsPkHelper {
         reason: &str,
     ) -> zbus::Result<String>;
     async fn printer_set_default(&self, name: &str) -> zbus::Result<String>;
+    async fn printer_add_option_default(
+        &self,
+        name: &str,
+        option: &str,
+        values: &[&str],
+    ) -> zbus::Result<String>;
     async fn printer_set_enabled(&self, name: &str, enabled: bool) -> zbus::Result<String>;
     async fn printer_set_info(&self, name: &str, info: &str) -> zbus::Result<String>;
     async fn printer_set_location(&self, name: &str, location: &str) -> zbus::Result<String>;
@@ -43,6 +49,21 @@ pub(super) async fn set_printer_accept_jobs(
 pub(super) async fn set_printer_default(name: &str) -> Result<(), Error> {
     with_proxy("PrinterSetDefault", |proxy| async move {
         proxy.printer_set_default(name).await
+    })
+    .await
+}
+
+pub(super) async fn add_option_default(
+    name: &str,
+    option: &str,
+    values: &[String],
+) -> Result<(), Error> {
+    let values = values.iter().map(String::as_str).collect::<Vec<_>>();
+
+    with_proxy("PrinterAddOptionDefault", |proxy| async move {
+        proxy
+            .printer_add_option_default(name, option, &values)
+            .await
     })
     .await
 }

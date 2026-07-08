@@ -65,6 +65,18 @@ impl Server {
         Ok(())
     }
 
+    pub async fn set_printer_option_default(
+        &mut self,
+        printer_id: &str,
+        option: &str,
+        values: &[String],
+    ) -> Result<(), Error> {
+        self.printer_entry(printer_id).await?;
+        cups_backend::set_printer_option_default(printer_id, option, values).await?;
+        self.list_printers().await?;
+        Ok(())
+    }
+
     pub async fn set_printer_enabled(
         &mut self,
         printer_id: &str,

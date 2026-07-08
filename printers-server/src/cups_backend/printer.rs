@@ -61,6 +61,15 @@ pub async fn set_printer_default(printer_id: &str) -> Result<(), Error> {
     polkit_helper::set_printer_default(queue_name).await
 }
 
+pub async fn set_printer_option_default(
+    printer_id: &str,
+    option: &str,
+    values: &[String],
+) -> Result<(), Error> {
+    let queue_name = split_queue_instance(printer_id).0;
+    polkit_helper::add_option_default(queue_name, option, values).await
+}
+
 pub async fn set_printer_enabled(printer_id: &str, enabled: bool) -> Result<(), Error> {
     let queue_name = split_queue_instance(printer_id).0;
     polkit_helper::set_printer_enabled(queue_name, enabled).await
