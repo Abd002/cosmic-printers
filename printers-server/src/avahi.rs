@@ -307,10 +307,6 @@ pub(crate) fn discovered_printers_match(left: &PrinterEntry, right: &PrinterEntr
 }
 
 pub(crate) fn discovered_printer_id(printer: &PrinterEntry) -> Option<String> {
-    if !printer.id.is_empty() {
-        return Some(printer.id.clone());
-    }
-
     let service_type = printer.options.get("dnssd-service-type")?;
     let domain = printer.options.get("dnssd-domain")?;
     let name = printer.options.get("dnssd-service-name")?;
