@@ -121,6 +121,22 @@ impl Context {
         .await;
     }
 
+    pub async fn start_auto_add(&self, printer_id: String) -> bool {
+        self.model
+            .lock()
+            .await
+            .auto_add_in_progress
+            .insert(printer_id)
+    }
+
+    pub async fn finish_auto_add(&self, printer_id: &str) {
+        self.model
+            .lock()
+            .await
+            .auto_add_in_progress
+            .remove(printer_id);
+    }
+
     pub async fn start_discovery_if_idle(&self) -> bool {
         let mut model = self.model.lock().await;
         if model.discovery_running {

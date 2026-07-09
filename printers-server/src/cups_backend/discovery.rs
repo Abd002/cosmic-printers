@@ -8,7 +8,8 @@ use super::helpers::{
 };
 use super::metadata::{self, QueueMetadata};
 use super::polkit_helper;
-use crate::{avahi::discovered_printers_match, context::Context};
+use crate::avahi::{discovered_printer_id, discovered_printers_match};
+use crate::context::Context;
 
 pub async fn list_discovered_printers(context: Context) -> Result<Vec<PrinterEntry>, Error> {
     let task_context = context.clone();
@@ -53,6 +54,44 @@ pub async fn add_discovered_printer(mut printer: PrinterEntry) -> Result<String,
 
     make_printer_permanent(&actual_queue_name).await?;
     Ok(actual_queue_name)
+}
+
+pub(crate) async fn auto_add_discovered_printer(context: Context, printer: PrinterEntry) {
+    if printer.device_uri.is_empty() {
+        return;
+    }
+
+    let Some(printer_id) = discovered_printer_id(&printer) else {
+        return;
+    };
+
+    let already_configured = match metadata::contains_discovered_printer_id(&printer_id) {
+        Ok(already_configured) => already_configured,
+        Err(error) => {
+            eprintln!("failed to load discovered printer metadata: {error:?}");
+            false
+        }
+    };
+    if already_configured || !context.start_auto_add(printer_id.clone()).await {
+        return;
+    }
+
+    tokio::spawn(async move {
+        match add_discovered_printer(printer).await {
+            Ok(actual_queue_name) => {
+                context
+                    .update_discovered_printer(&printer_id, |printer| {
+                        printer.id = actual_queue_name;
+                    })
+                    .await;
+            }
+            Err(error) => {
+                eprintln!("failed to auto-add discovered printer {printer_id}: {error:?}");
+            }
+        }
+
+        context.finish_auto_add(&printer_id).await;
+    });
 }
 
 async fn fill_cached_discovered_attrs(context: Context) {
