@@ -12,8 +12,8 @@ const AVAHI_SERVICE: &str = "org.freedesktop.Avahi";
 const AVAHI_SERVICE_BROWSER_IFACE: &str = "org.freedesktop.Avahi.ServiceBrowser";
 const AVAHI_IF_UNSPEC: i32 = -1;
 const AVAHI_PROTO_UNSPEC: i32 = -1;
-const DISCOVERY_WINDOW: Duration = Duration::from_millis(900);
-const RESOLVE_TIMEOUT: Duration = Duration::from_millis(1_200);
+const DISCOVERY_WINDOW: Duration = Duration::from_millis(5000);
+const RESOLVE_TIMEOUT: Duration = Duration::from_millis(5000);
 
 const SERVICE_TYPES: &[&str] = &[
     "_ipp._tcp",
@@ -91,7 +91,7 @@ pub async fn discover_printers_into_cache(context: Context) {
         return;
     };
     let rule = rule_builder.build();
-    let Ok(mut stream) = MessageStream::for_match_rule(rule, &connection, Some(100)).await else {
+    let Ok(mut stream) = MessageStream::for_match_rule(rule, &connection, Some(5000)).await else {
         return;
     };
 
@@ -149,18 +149,25 @@ async fn merge_printer_into_cache(context: &Context, printer: PrinterEntry) {
     context
         .merge_discovered_printer_by(printer.clone(), discovered_printers_match)
         .await;
-    crate::cups_backend::auto_add_discovered_printer(context.clone(), printer).await;
+    if !is_printer_application(&printer) {
+        crate::cups_backend::auto_add_discovered_printer(context.clone(), printer).await;
+    }
 }
 
 async fn retain_seen_printers(context: &Context, services: HashSet<AvahiService>) {
+    let active_printers = services
+        .into_iter()
+        .map(|service| service_to_partial_entry(&service))
+        .collect::<Vec<_>>();
+    let active_printer_ids = active_printers
+        .iter()
+        .filter_map(discovered_printer_id)
+        .collect::<HashSet<_>>();
+
     context
-        .retain_discovered_printers_by(
-            services
-                .into_iter()
-                .map(|service| service_to_partial_entry(&service)),
-            discovered_printers_match,
-        )
+        .retain_discovered_printers_by(active_printers, discovered_printers_match)
         .await;
+    crate::cups_backend::delete_stale_discovered_printers(active_printer_ids).await;
 }
 
 async fn resolve_service_entry(
@@ -210,6 +217,7 @@ async fn resolve_service_entry(
         .cloned()
         .unwrap_or_else(|| "ipp/print".to_string());
     let device_uri = dnssd_device_uri(&service.service_type, &hostname, port, &resource_path);
+    let application_id = format!("{}:{port}", address.to_ascii_lowercase());
 
     printer.device_uri = device_uri.clone();
     printer.printer_local_uri = device_uri.clone();
@@ -242,14 +250,21 @@ async fn resolve_service_entry(
             .options
             .insert("printer-more-info".into(), admin_url.clone());
     }
-    for (source, destination) in [
-        ("UUID", "device-uuid"),
-        ("uuid", "device-uuid"),
-        ("device-uuid", "device-uuid"),
-        ("printer-uuid", "printer-uuid"),
-    ] {
-        if let Some(uuid) = txt.get(source).filter(|value| !value.is_empty()) {
-            printer.options.insert(destination.into(), uuid.clone());
+    if printer_application_service(&service.service_type) {
+        printer
+            .options
+            .insert("printer-application-uuid".into(), application_id.clone());
+        printer.options.insert("device-uuid".into(), application_id);
+    } else {
+        for (source, destination) in [
+            ("UUID", "device-uuid"),
+            ("uuid", "device-uuid"),
+            ("device-uuid", "device-uuid"),
+            ("printer-uuid", "printer-uuid"),
+        ] {
+            if let Some(uuid) = txt.get(source).filter(|value| !value.is_empty()) {
+                printer.options.insert(destination.into(), uuid.clone());
+            }
         }
     }
 
@@ -312,6 +327,17 @@ pub(crate) fn discovered_printer_id(printer: &PrinterEntry) -> Option<String> {
     let domain = printer.options.get("dnssd-domain")?;
     let name = printer.options.get("dnssd-service-name")?;
     Some(format!("dnssd:{service_type}:{domain}:{name}"))
+}
+
+pub(crate) fn is_printer_application(printer: &PrinterEntry) -> bool {
+    printer
+        .options
+        .get("dnssd-service-type")
+        .is_some_and(|service_type| printer_application_service(service_type))
+}
+
+fn printer_application_service(service_type: &str) -> bool {
+    matches!(service_type, "_ipp-system._tcp" | "_ipps-system._tcp")
 }
 
 fn discovery_name(printer: &PrinterEntry) -> Option<String> {

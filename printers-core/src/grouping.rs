@@ -184,14 +184,26 @@ fn normalize_uuid(uuid: Option<&str>) -> Option<String> {
 impl GroupedDevice {
     fn new(printer: PrinterEntry) -> Self {
         let identity = printer_identity(&printer);
-        Self {
-            identity,
-            queues: vec![printer],
+        if is_printer_application(&printer) {
+            Self {
+                identity,
+                application: Some(printer),
+                queues: Vec::new(),
+            }
+        } else {
+            Self {
+                identity,
+                application: None,
+                queues: vec![printer],
+            }
         }
     }
 
     fn absorb(&mut self, other: Self) {
         self.identity.fill_missing_from(other.identity);
+        if self.application.is_none() {
+            self.application = other.application;
+        }
         self.queues.extend(other.queues);
     }
 }
@@ -262,6 +274,10 @@ fn non_empty_option<'a>(options: &'a HashMap<String, String>, name: &str) -> Opt
         .map(String::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
+}
+
+fn is_printer_application(printer: &PrinterEntry) -> bool {
+    non_empty_option(&printer.options, "printer-application-uuid").is_some()
 }
 
 fn find(parent: &[Cell<usize>], index: usize) -> usize {
@@ -545,6 +561,35 @@ mod tests {
         }
     }
 
+    fn printer_application(id: &str, host: &str, port: u16) -> PrinterEntry {
+        let mut printer = printer(id, "", "", Some(&format!("{host}:{port}")));
+        printer.hostname = Some(host.to_string());
+        printer.port = Some(port);
+        printer
+            .options
+            .insert("dnssd-address".to_string(), host.to_string());
+        printer.options.insert(
+            "printer-application-uuid".to_string(),
+            format!("{host}:{port}"),
+        );
+        printer
+    }
+
+    fn printer_queue(id: &str, host: &str, port: u16) -> PrinterEntry {
+        let mut printer = printer(
+            id,
+            &format!("ipp://{host}:{port}/ipp/print/{id}"),
+            "",
+            Some(&format!("{host}:{port}")),
+        );
+        printer.hostname = Some(host.to_string());
+        printer.port = Some(port);
+        printer
+            .options
+            .insert("dnssd-address".to_string(), host.to_string());
+        printer
+    }
+
     #[test]
     fn groups_print_and_fax_from_same_multi_function_device() {
         let printers = vec![
@@ -574,6 +619,49 @@ mod tests {
         ];
         let groups = group_printers(printers);
         assert_eq!(groups.len(), 2);
+    }
+
+    #[test]
+    fn moves_printer_application_into_group_metadata() {
+        let groups = group_printers(vec![
+            printer_application("LPrint", "10.255.255.254", 8000),
+            printer_queue("SocketLabel", "10.255.255.254", 8000),
+        ]);
+
+        assert_eq!(groups.len(), 1);
+        assert_eq!(
+            groups[0]
+                .printer_application()
+                .map(|printer| printer.id.as_str()),
+            Some("LPrint")
+        );
+        assert_eq!(groups[0].queues().len(), 1);
+        assert_eq!(groups[0].queues()[0].id, "SocketLabel");
+    }
+
+    #[test]
+    fn returns_app_only_group_without_queue() {
+        let groups = group_printers(vec![printer_application("LPrint", "10.255.255.254", 8000)]);
+
+        assert_eq!(groups.len(), 1);
+        assert!(groups[0].printer_application().is_some());
+        assert!(groups[0].queues().is_empty());
+    }
+
+    #[test]
+    fn keeps_printer_applications_on_different_ports_separate() {
+        let groups = group_printers(vec![
+            printer_application("LPrint", "localhost", 8000),
+            printer_application("PostScript Printer Application", "localhost", 8001),
+        ]);
+
+        assert_eq!(groups.len(), 2);
+        assert!(
+            groups
+                .iter()
+                .all(|group| group.printer_application().is_some())
+        );
+        assert!(groups.iter().all(|group| group.queues().is_empty()));
     }
 
     #[test]

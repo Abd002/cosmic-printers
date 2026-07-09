@@ -57,6 +57,42 @@ pub(super) fn contains_discovered_printer_id(printer_id: &str) -> Result<bool, E
     }))
 }
 
+pub(super) fn refresh_discovered_printer(
+    printer_id: &str,
+    printer: &PrinterEntry,
+) -> Result<(), Error> {
+    let config = config()?;
+    let mut entries = load_from(&config);
+
+    if let Some(metadata) = entries.values_mut().find(|metadata| {
+        discovered_printer_id(&metadata.discovered_printer).as_deref() == Some(printer_id)
+    }) {
+        *metadata = QueueMetadata::from_discovered_printer(printer);
+        config
+            .set(METADATA_KEY, entries)
+            .map_err(|error| Error::ConfigFailed {
+                why: error.to_string(),
+            })?;
+    }
+
+    Ok(())
+}
+
+pub(super) fn stale_discovered_queue_names(
+    active_printer_ids: &HashSet<String>,
+) -> Result<Vec<String>, Error> {
+    let config = config()?;
+    let entries = load_from(&config);
+
+    Ok(entries
+        .into_iter()
+        .filter_map(|(queue_name, metadata)| {
+            let printer_id = discovered_printer_id(&metadata.discovered_printer)?;
+            (!active_printer_ids.contains(&printer_id)).then_some(queue_name)
+        })
+        .collect())
+}
+
 pub(super) fn retain_for_configured_queues<'a>(
     queue_names: impl IntoIterator<Item = &'a str>,
 ) -> Result<(), Error> {

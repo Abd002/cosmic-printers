@@ -2,7 +2,7 @@ use cosmic_settings_printers_core::{Error, JobInfo, PrinterEntry, PrintersEvent}
 use futures_util::{Stream, StreamExt};
 use tokio::sync::broadcast;
 
-use crate::{context::Context, cups_backend};
+use crate::{avahi::is_printer_application, context::Context, cups_backend};
 
 #[derive(Debug)]
 pub struct Server {
@@ -22,6 +22,16 @@ impl Server {
 
     pub async fn list_discovered_printers(&mut self) -> Result<Vec<PrinterEntry>, Error> {
         cups_backend::list_discovered_printers(self.context.clone()).await
+    }
+
+    pub async fn list_printer_applications(&mut self) -> Result<Vec<PrinterEntry>, Error> {
+        Ok(self
+            .context
+            .discovered_printers()
+            .await
+            .into_iter()
+            .filter(is_printer_application)
+            .collect())
     }
 
     pub fn watch_printers(
@@ -52,6 +62,9 @@ impl Server {
             .discovered_printer(printer_id)
             .await
             .ok_or(Error::PrinterNotFound)?;
+        if is_printer_application(&printer) {
+            return Err(Error::PrinterNotFound);
+        }
         let actual_queue_name = cups_backend::add_discovered_printer(printer).await?;
         self.context
             .update_discovered_printer(printer_id, |printer| {

@@ -8,7 +8,7 @@ use super::helpers::{
 };
 use super::metadata::{self, QueueMetadata};
 use super::polkit_helper;
-use crate::avahi::{discovered_printer_id, discovered_printers_match};
+use crate::avahi::{discovered_printer_id, discovered_printers_match, is_printer_application};
 use crate::context::Context;
 
 pub async fn list_discovered_printers(context: Context) -> Result<Vec<PrinterEntry>, Error> {
@@ -72,7 +72,14 @@ pub(crate) async fn auto_add_discovered_printer(context: Context, printer: Print
             false
         }
     };
-    if already_configured || !context.start_auto_add(printer_id.clone()).await {
+    if already_configured {
+        if let Err(error) = metadata::refresh_discovered_printer(&printer_id, &printer) {
+            eprintln!("failed to refresh discovered printer metadata: {error:?}");
+        }
+        return;
+    }
+
+    if !context.start_auto_add(printer_id.clone()).await {
         return;
     }
 
@@ -94,6 +101,29 @@ pub(crate) async fn auto_add_discovered_printer(context: Context, printer: Print
     });
 }
 
+pub(crate) async fn delete_stale_discovered_printers(active_printer_ids: HashSet<String>) {
+    let stale_queue_names = match metadata::stale_discovered_queue_names(&active_printer_ids) {
+        Ok(queue_names) => queue_names,
+        Err(error) => {
+            eprintln!("failed to load discovered printer metadata: {error:?}");
+            return;
+        }
+    };
+
+    for queue_name in stale_queue_names {
+        match polkit_helper::delete_printer(&queue_name).await {
+            Ok(()) => {
+                if let Err(error) = metadata::remove(&queue_name) {
+                    eprintln!("failed to remove discovered printer metadata: {error:?}");
+                }
+            }
+            Err(error) => {
+                eprintln!("failed to delete stale discovered printer {queue_name}: {error:?}");
+            }
+        }
+    }
+}
+
 async fn fill_cached_discovered_attrs(context: Context) {
     let printers = context.discovered_printers().await;
 
@@ -101,7 +131,8 @@ async fn fill_cached_discovered_attrs(context: Context) {
         printers
             .into_iter()
             .map(|mut printer| {
-                if !printer.device_uri.is_empty()
+                if !is_printer_application(&printer)
+                    && !printer.device_uri.is_empty()
                     && fill_attrs_from_device(&mut printer, PRINTER_ATTRIBUTES).is_ok()
                 {
                     printer.options.insert(

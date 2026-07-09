@@ -28,6 +28,10 @@ pub trait CosmicPrintersProxy {
         &mut self,
     ) -> zlink::Result<Result<ListDiscoveredPrintersReply, Error>>;
 
+    async fn list_printer_applications(
+        &mut self,
+    ) -> zlink::Result<Result<ListPrinterApplicationsReply, Error>>;
+
     #[zlink(more)]
     async fn watch_printers(
         &mut self,
