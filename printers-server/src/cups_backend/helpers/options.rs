@@ -24,7 +24,7 @@ pub(super) fn option_values(options: &HashMap<String, String>, name: &str) -> Ve
         .unwrap_or_default()
 }
 
-pub(super) fn parse_uri_endpoint(uri: &str) -> Option<(String, u16)> {
+pub(in crate::cups_backend) fn parse_uri_endpoint(uri: &str) -> Option<(String, u16)> {
     let (scheme, rest) = uri.split_once("://")?;
     let authority = rest.split('/').next()?.rsplit('@').next()?.trim();
     if authority.is_empty() {
@@ -55,6 +55,35 @@ pub(super) fn parse_uri_endpoint(uri: &str) -> Option<(String, u16)> {
     };
 
     Some((host.to_ascii_lowercase(), port?))
+}
+
+pub(in crate::cups_backend) fn uri_resource_path(uri: &str) -> Option<String> {
+    let (_, rest) = uri.split_once("://")?;
+    let path = rest
+        .find('/')
+        .map(|index| &rest[index..])
+        .unwrap_or("/")
+        .split(['?', '#'])
+        .next()
+        .unwrap_or("/");
+
+    Some(if path.is_empty() {
+        "/".to_string()
+    } else {
+        path.to_string()
+    })
+}
+
+pub(in crate::cups_backend) fn is_local_scheduler_uri(uri: &str) -> bool {
+    let Some((host, _)) = parse_uri_endpoint(uri) else {
+        return false;
+    };
+    let resource = uri_resource_path(uri).unwrap_or_default();
+
+    is_loopback_host(&host)
+        && (resource == "/"
+            || resource.starts_with("/printers/")
+            || resource.starts_with("/classes/"))
 }
 
 pub(in crate::cups_backend) fn queue_name_from_printer_uri(uri: &str) -> Option<String> {

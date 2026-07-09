@@ -1,18 +1,8 @@
 use cosmic_settings_printers_core::{PrinterEntry, PrinterStatus};
 use cups_rs::{Destination, PrinterState as CupsPrinterState};
 
+use super::identity::local_printer_uri;
 use super::options::{is_loopback_host, is_printer_class, option_values, parse_uri_endpoint};
-
-/// Constructs the local scheduler URI for a queue or printer class.
-fn local_printer_uri(destination: &Destination) -> String {
-    let path = if is_printer_class(&destination.options) {
-        "classes"
-    } else {
-        "printers"
-    };
-
-    format!("ipp://localhost/{path}/{}", destination.name)
-}
 
 /// Derives a simple web interface URL from a device URI hostname.
 fn web_page_from_device_uri(device_uri: &str) -> Option<String> {
@@ -23,10 +13,9 @@ fn web_page_from_device_uri(device_uri: &str) -> Option<String> {
 /// Converts a cups-rs destination into the type exposed by the printer API.
 pub(super) fn destination_to_printer_entry(mut destination: Destination) -> PrinterEntry {
     let queue_status = destination.state().to_string();
-    let printer_local_uri = destination
-        .uri()
-        .cloned()
-        .unwrap_or_else(|| local_printer_uri(&destination));
+    let printer_local_uri = destination.uri().cloned().unwrap_or_else(|| {
+        local_printer_uri(&destination.name, is_printer_class(&destination.options))
+    });
     let device_uri = destination.device_uri().cloned().unwrap_or_default();
     destination
         .options

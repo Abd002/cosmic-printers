@@ -1,5 +1,9 @@
 use cosmic_settings_printers_core::Error;
-use cups_rs::{IppOperation, IppRequest, IppResponse, IppStatus, IppTag, IppValueTag};
+use cups_rs::{
+    HttpConnection, IppOperation, IppRequest, IppResponse, IppStatus, IppTag, IppValueTag,
+};
+
+use super::options::{is_local_scheduler_uri, parse_uri_endpoint, uri_resource_path};
 
 const LOCAL_CUPS_SOCKET: &str = "/run/cups/cups.sock";
 
@@ -64,6 +68,49 @@ pub(in crate::cups_backend) fn ensure_success(
                 why: format!("{operation} failed with status {status:?}"),
             }),
         }
+    }
+}
+
+pub(in crate::cups_backend) fn is_ipp_uri(uri: &str) -> bool {
+    uri.starts_with("ipp://") || uri.starts_with("ipps://")
+}
+
+fn ipp_endpoint(uri: &str) -> Result<(String, u16, String), Error> {
+    if !is_ipp_uri(uri) {
+        return Err(Error::Internal {
+            why: format!("not an IPP URI: {uri}"),
+        });
+    }
+
+    let (host, port) = parse_uri_endpoint(uri).ok_or_else(|| Error::Internal {
+        why: format!("invalid IPP URI endpoint: {uri}"),
+    })?;
+    let resource = uri_resource_path(uri).ok_or_else(|| Error::Internal {
+        why: format!("invalid IPP URI resource: {uri}"),
+    })?;
+
+    Ok((host, port, resource))
+}
+
+pub(in crate::cups_backend) fn send_ipp_request_to_printer_uri(
+    request: IppRequest,
+    printer_uri: &str,
+) -> Result<IppResponse, Error> {
+    let (_, _, resource) = ipp_endpoint(printer_uri)?;
+
+    if is_local_scheduler_uri(printer_uri) {
+        request.send_default(&resource).cups_err()
+    } else {
+        let (host, port, resource) = ipp_endpoint(printer_uri)?;
+        let connection =
+            HttpConnection::connect_host(&host, port, &resource, Some(250)).map_err(|error| {
+                Error::DeviceUnreachable {
+                    why: format!("{printer_uri}: {error}"),
+                }
+            })?;
+        request
+            .send(&connection, connection.resource_path())
+            .cups_err()
     }
 }
 
