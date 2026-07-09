@@ -1,6 +1,7 @@
 use zlink::Connection;
 
 pub use cosmic_settings_printers_core::*;
+use futures_util::Stream;
 use std::path::PathBuf;
 
 pub async fn connect() -> zlink::Result<Client> {
@@ -26,6 +27,11 @@ pub trait CosmicPrintersProxy {
     async fn list_discovered_printers(
         &mut self,
     ) -> zlink::Result<Result<ListDiscoveredPrintersReply, Error>>;
+
+    #[zlink(more)]
+    async fn watch_printers(
+        &mut self,
+    ) -> zlink::Result<impl Stream<Item = zlink::Result<Result<PrintersEvent, Error>>>>;
 
     async fn add_discovered_printer(
         &mut self,

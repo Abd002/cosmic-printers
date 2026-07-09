@@ -1,4 +1,6 @@
-use cosmic_settings_printers_core::{Error, JobInfo, PrinterEntry};
+use cosmic_settings_printers_core::{Error, JobInfo, PrinterEntry, PrintersEvent};
+use futures_util::{Stream, StreamExt};
+use tokio::sync::broadcast;
 
 use crate::{context::Context, cups_backend};
 
@@ -20,6 +22,28 @@ impl Server {
 
     pub async fn list_discovered_printers(&mut self) -> Result<Vec<PrinterEntry>, Error> {
         cups_backend::list_discovered_printers(self.context.clone()).await
+    }
+
+    pub fn watch_printers(
+        &self,
+    ) -> impl Stream<Item = zlink::Reply<PrintersEvent>> + Unpin + use<> {
+        let receiver = self.context.subscribe_events();
+
+        futures_util::stream::unfold(receiver, |mut receiver| async move {
+            loop {
+                match receiver.recv().await {
+                    Ok(event) => {
+                        return Some((
+                            zlink::Reply::new(Some(event)).set_continues(Some(true)),
+                            receiver,
+                        ));
+                    }
+                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(broadcast::error::RecvError::Closed) => return None,
+                }
+            }
+        })
+        .boxed()
     }
 
     pub async fn add_discovered_printer(&mut self, printer_id: &str) -> Result<(), Error> {
