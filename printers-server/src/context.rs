@@ -1,17 +1,20 @@
 use crate::{avahi::discovered_printer_id, backend::Model};
-use cosmic_settings_printers_core::PrinterEntry;
+use cosmic_settings_printers_core::{PrinterEntry, PrintersEvent, PrintersEventKind};
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, broadcast};
 
 #[derive(Clone, Debug)]
 pub struct Context {
     model: Arc<Mutex<Model>>,
+    events: broadcast::Sender<PrintersEvent>,
 }
 
 impl Context {
     pub async fn new() -> Self {
+        let (events, _) = broadcast::channel(32);
         Self {
             model: Arc::new(Mutex::new(Model::new())),
+            events,
         }
     }
 
@@ -55,6 +58,10 @@ impl Context {
             .sort_by(|left, right| left.name.cmp(&right.name).then(left.id.cmp(&right.id)));
     }
 
+    pub fn subscribe_events(&self) -> broadcast::Receiver<PrintersEvent> {
+        self.events.subscribe()
+    }
+
     pub async fn update_discovered_printer(
         &self,
         printer_id: &str,
@@ -76,6 +83,7 @@ impl Context {
         printer: PrinterEntry,
         matches: impl Fn(&PrinterEntry, &PrinterEntry) -> bool,
     ) {
+        let mut added = false;
         self.update_discovered_printers(|printers| {
             if let Some(index) = printers
                 .iter()
@@ -84,9 +92,14 @@ impl Context {
                 printers[index].merge_from(printer);
             } else {
                 printers.push(printer);
+                added = true;
             }
         })
         .await;
+
+        if added {
+            self.emit_discovered_printers_changed();
+        }
     }
 
     pub async fn merge_discovered_printers_by(
@@ -94,6 +107,7 @@ impl Context {
         incoming: impl IntoIterator<Item = PrinterEntry>,
         matches: impl Fn(&PrinterEntry, &PrinterEntry) -> bool,
     ) {
+        let mut added = false;
         self.update_discovered_printers(|printers| {
             for printer in incoming {
                 if let Some(index) = printers
@@ -103,10 +117,21 @@ impl Context {
                     printers[index].merge_from(printer);
                 } else {
                     printers.push(printer);
+                    added = true;
                 }
             }
         })
         .await;
+
+        if added {
+            self.emit_discovered_printers_changed();
+        }
+    }
+
+    fn emit_discovered_printers_changed(&self) {
+        let _ = self.events.send(PrintersEvent {
+            kind: PrintersEventKind::DiscoveredPrintersChanged,
+        });
     }
 
     pub async fn retain_discovered_printers_by(

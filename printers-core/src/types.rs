@@ -132,6 +132,16 @@ pub struct ListDiscoveredPrintersReply {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, zlink::introspect::Type)]
+pub enum PrintersEventKind {
+    DiscoveredPrintersChanged,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, zlink::introspect::Type)]
+pub struct PrintersEvent {
+    pub kind: PrintersEventKind,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, zlink::introspect::Type)]
 pub struct GetJobsReply {
     pub jobs: Vec<JobInfo>,
 }

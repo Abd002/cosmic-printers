@@ -343,6 +343,7 @@ version = "0.1.0"
 dependencies = [
  "cosmic-settings-printers-core",
  "dirs",
+ "futures-util",
  "serde",
  "tokio",
  "zlink",
