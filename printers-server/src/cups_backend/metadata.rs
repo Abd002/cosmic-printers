@@ -1,6 +1,6 @@
 use cosmic_config::{ConfigGet, ConfigSet};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use cosmic_settings_printers_core::{Error, PrinterEntry};
 
@@ -55,6 +55,21 @@ pub(super) fn contains_discovered_printer_id(printer_id: &str) -> Result<bool, E
     Ok(entries.values().any(|metadata| {
         discovered_printer_id(&metadata.discovered_printer).as_deref() == Some(printer_id)
     }))
+}
+
+pub(super) fn retain_for_configured_queues<'a>(
+    queue_names: impl IntoIterator<Item = &'a str>,
+) -> Result<(), Error> {
+    let config = config()?;
+    let mut entries = load_from(&config);
+    let queue_names = queue_names.into_iter().collect::<HashSet<_>>();
+    entries.retain(|queue_name, _| queue_names.contains(queue_name.as_str()));
+
+    config
+        .set(METADATA_KEY, entries)
+        .map_err(|error| Error::ConfigFailed {
+            why: error.to_string(),
+        })
 }
 
 pub(super) fn apply(printers: &mut HashMap<String, PrinterEntry>) -> Result<(), Error> {
