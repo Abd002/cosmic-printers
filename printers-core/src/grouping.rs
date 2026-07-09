@@ -3,6 +3,8 @@ use std::collections::HashMap;
 use std::net::IpAddr;
 
 use crate::{GroupedDevice, PrinterEntry};
+use nix::ifaddrs::getifaddrs;
+use nix::sys::socket::SockaddrStorage;
 
 /// Normalized identity evidence used to decide whether queues share a device.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -23,7 +25,7 @@ impl DeviceIdentity {
         let uri = device_uri.or(fallback_uri);
         Self {
             uuid: normalize_uuid(uuid),
-            endpoint,
+            endpoint: endpoint.map(normalize_endpoint),
             uri: uri.map(uri_identity),
         }
     }
@@ -100,11 +102,11 @@ fn endpoints_match(left: &(String, u16), right: &(String, u16)) -> bool {
         return false;
     }
 
-    !is_loopback_host(host_left) || port_left == port_right
+    !is_local_host(host_left) || port_left == port_right
 }
 
 fn hosts_match(left: &str, right: &str) -> bool {
-    if is_loopback_host(left) && is_loopback_host(right) {
+    if is_local_host(left) && is_local_host(right) {
         return true;
     }
 
@@ -114,13 +116,14 @@ fn hosts_match(left: &str, right: &str) -> bool {
     }
 }
 
-fn is_loopback_host(host: &str) -> bool {
-    host.eq_ignore_ascii_case("localhost") || parse_ip(host).is_some_and(|ip| ip.is_loopback())
+fn is_local_host(host: &str) -> bool {
+    host.eq_ignore_ascii_case("localhost")
+        || parse_ip(host).is_some_and(|ip| ip.is_loopback() || is_ip_on_local_interface(ip))
 }
 
 fn endpoint_match_key(host: &str, port: u16) -> String {
-    if is_loopback_host(host) {
-        return format!("loopback:{port}");
+    if is_local_host(host) {
+        return format!("local:{port}");
     }
 
     parse_ip(host)
@@ -134,6 +137,37 @@ fn parse_ip(host: &str) -> Option<IpAddr> {
         .and_then(|rest| rest.strip_suffix(']'))
         .unwrap_or(host);
     bare.parse().ok()
+}
+
+fn normalize_endpoint((host, port): (String, u16)) -> (String, u16) {
+    if is_local_host(&host) {
+        ("localhost".to_string(), port)
+    } else {
+        (host, port)
+    }
+}
+
+fn is_ip_on_local_interface(target: IpAddr) -> bool {
+    let Ok(addrs) = getifaddrs() else {
+        return false;
+    };
+
+    addrs
+        .filter_map(|ifaddr| ifaddr.address)
+        .filter_map(|address| sockaddr_to_ip(&address))
+        .any(|address| address == target)
+}
+
+fn sockaddr_to_ip(addr: &SockaddrStorage) -> Option<IpAddr> {
+    if let Some(addr) = addr.as_sockaddr_in() {
+        return Some(IpAddr::V4(addr.ip()));
+    }
+
+    if let Some(addr) = addr.as_sockaddr_in6() {
+        return Some(IpAddr::V6(addr.ip()));
+    }
+
+    None
 }
 
 fn normalize_uuid(uuid: Option<&str>) -> Option<String> {
