@@ -91,10 +91,16 @@ impl PrinterEntry {
 #[derive(Debug, Clone)]
 pub struct GroupedDevice {
     pub(crate) identity: DeviceIdentity,
+    pub(crate) application: Option<PrinterEntry>,
     pub(crate) queues: Vec<PrinterEntry>,
 }
 
 impl GroupedDevice {
+    /// Returns Printer Application metadata for this device, when discovered.
+    pub fn printer_application(&self) -> Option<&PrinterEntry> {
+        self.application.as_ref()
+    }
+
     /// Returns every configured queue associated with this physical device.
     pub fn queues(&self) -> &[PrinterEntry] {
         &self.queues
@@ -129,6 +135,11 @@ pub struct ListPrintersReply {
 #[derive(Debug, Clone, Deserialize, Serialize, zlink::introspect::Type)]
 pub struct ListDiscoveredPrintersReply {
     pub printers: Vec<PrinterEntry>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, zlink::introspect::Type)]
+pub struct ListPrinterApplicationsReply {
+    pub printer_applications: Vec<PrinterEntry>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, zlink::introspect::Type)]
