@@ -150,10 +150,11 @@ fn add_operation_defaults(request: &mut IppRequest) -> Result<(), Error> {
 }
 
 fn resolve_job_printer_uri(printer: &PrinterEntry) -> String {
-    match Some(printer.device_uri.as_str()).filter(|uri| is_ipp_uri(uri)) {
-        Some(uri) => uri.to_string(),
-        None => local_printer_uri(&printer.id, false),
-    }
+    // match Some(printer.device_uri.as_str()).filter(|uri| is_ipp_uri(uri)) {
+    //     Some(uri) => uri.to_string(),
+    //     None => local_printer_uri(&printer.id, false),
+    // }
+    local_printer_uri(&printer.id, false)
 }
 
 fn parse_jobs(attributes: Vec<IppAttribute>, fallback_printer_id: &str) -> Vec<JobInfo> {
