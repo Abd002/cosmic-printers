@@ -13,6 +13,7 @@ pub async fn list_printers() -> Result<Vec<PrinterEntry>, Error> {
     tokio::task::spawn_blocking(|| {
         let mut printers = configured_printers(250)?;
 
+        metadata::retain_for_configured_queues(printers.keys().map(String::as_str))?;
         metadata::apply(&mut printers)?;
         fill_printer_attrs(printers.values_mut());
 
