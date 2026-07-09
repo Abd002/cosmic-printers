@@ -147,8 +147,9 @@ pub async fn discover_printers_into_cache(context: Context) {
 
 async fn merge_printer_into_cache(context: &Context, printer: PrinterEntry) {
     context
-        .merge_discovered_printer_by(printer, discovered_printers_match)
+        .merge_discovered_printer_by(printer.clone(), discovered_printers_match)
         .await;
+    crate::cups_backend::auto_add_discovered_printer(context.clone(), printer).await;
 }
 
 async fn retain_seen_printers(context: &Context, services: HashSet<AvahiService>) {
