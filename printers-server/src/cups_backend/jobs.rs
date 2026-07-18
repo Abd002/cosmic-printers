@@ -3,7 +3,7 @@ use cups_rs::{IppAttribute, IppOperation, IppRequest, IppTag, IppValueTag};
 
 use super::helpers::{
     CupsResultExt, add_requesting_user, ensure_success, is_ipp_uri, local_printer_uri,
-    send_ipp_request_to_printer_uri,
+    send_ipp_request,
 };
 
 const JOB_ATTRIBUTES: &[&str] = &[
@@ -29,7 +29,7 @@ pub async fn get_jobs(printer: &PrinterEntry, filter: &str) -> Result<Vec<JobInf
 
     tokio::task::spawn_blocking(move || {
         let request = get_jobs_request(&printer_uri, which_jobs(&filter))?;
-        let response = send_ipp_request_to_printer_uri(request, &printer_uri)?;
+        let response = send_ipp_request(request, &printer_uri)?;
         ensure_success(&response, "Get-Jobs")?;
 
         Ok::<Vec<JobInfo>, Error>(parse_jobs(response.attributes(), &printer_id))
@@ -120,7 +120,7 @@ async fn send_job_request(
             .cups_err()?;
         add_requesting_user(&mut request)?;
 
-        let response = send_ipp_request_to_printer_uri(request, &printer_uri)?;
+        let response = send_ipp_request(request, &printer_uri)?;
 
         ensure_success(&response, "job operation")
     })

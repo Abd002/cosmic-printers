@@ -1,6 +1,8 @@
-use cosmic_settings_printers_core::{PrinterEntry, PrinterStatus};
+use cosmic_settings_printers_core::{
+    PrinterApplication, PrinterApplicationState, PrinterEntry, PrinterStatus,
+};
 use futures_util::TryStreamExt;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::time::Duration;
 use zbus::message::Type;
 use zbus::zvariant::OwnedObjectPath;
@@ -46,10 +48,10 @@ trait AvahiServer {
         domain: &str,
         aprotocol: i32,
         flags: u32,
-    ) -> zbus::Result<ResolvedService>;
+    ) -> zbus::Result<RawResolvedService>;
 }
 
-type ResolvedService = (
+type RawResolvedService = (
     i32,
     i32,
     String,
@@ -70,6 +72,17 @@ struct AvahiService {
     name: String,
     service_type: String,
     domain: String,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ResolvedServiceKind {
+    Printer,
+    PrinterApplication,
+}
+
+enum ResolvedServiceEntry {
+    Printer(PrinterEntry),
+    PrinterApplication(PrinterApplication),
 }
 
 pub async fn discover_printers_into_cache(context: Context) {
@@ -102,6 +115,7 @@ pub async fn discover_printers_into_cache(context: Context) {
     }
 
     let mut services = HashSet::<AvahiService>::new();
+    let mut active_application_ids = HashSet::<String>::new();
     let deadline = tokio::time::sleep(DISCOVERY_WINDOW);
     tokio::pin!(deadline);
 
@@ -130,33 +144,53 @@ pub async fn discover_printers_into_cache(context: Context) {
                 };
 
                 if services.insert(service.clone()) {
-                    merge_printer_into_cache(&context, service_to_partial_entry(&service)).await;
+                    if service_kind(&service.service_type) == Some(ResolvedServiceKind::Printer) {
+                        merge_printer_into_cache(&context, service_to_partial_entry(&service)).await;
+                    }
                     let Ok(server) = AvahiServerProxy::new(&connection).await else {
                         continue;
                     };
-                    if let Some(printer) = resolve_service_entry(server, service).await {
-                        merge_printer_into_cache(&context, printer).await;
+                    match resolve_service_entry(server, service).await {
+                        Some(ResolvedServiceEntry::Printer(printer)) => {
+                            merge_printer_into_cache(&context, printer).await;
+                        }
+                        Some(ResolvedServiceEntry::PrinterApplication(application)) => {
+                            active_application_ids.insert(application.id.clone());
+                            let inserted = context
+                                .upsert_printer_application(application.clone())
+                                .await;
+                            if inserted {
+                                crate::printer_application_backend::spawn_system_probe(
+                                    context.clone(),
+                                    application,
+                                );
+                            }
+                        }
+                        None => {}
                     }
                 }
             }
         }
     }
 
-    retain_seen_printers(&context, services).await;
+    retain_seen_services(&context, services, active_application_ids).await;
 }
 
 async fn merge_printer_into_cache(context: &Context, printer: PrinterEntry) {
     context
         .merge_discovered_printer_by(printer.clone(), discovered_printers_match)
         .await;
-    if !is_printer_application(&printer) {
-        crate::cups_backend::auto_add_discovered_printer(context.clone(), printer).await;
-    }
+    crate::cups_backend::auto_add_discovered_printer(context.clone(), printer).await;
 }
 
-async fn retain_seen_printers(context: &Context, services: HashSet<AvahiService>) {
+async fn retain_seen_services(
+    context: &Context,
+    services: HashSet<AvahiService>,
+    active_application_ids: HashSet<String>,
+) {
     let active_printers = services
         .into_iter()
+        .filter(|service| service_kind(&service.service_type) == Some(ResolvedServiceKind::Printer))
         .map(|service| service_to_partial_entry(&service))
         .collect::<Vec<_>>();
     let active_printer_ids = active_printers
@@ -167,13 +201,16 @@ async fn retain_seen_printers(context: &Context, services: HashSet<AvahiService>
     context
         .retain_discovered_printers_by(active_printers, discovered_printers_match)
         .await;
+    context
+        .retain_printer_applications(&active_application_ids)
+        .await;
     crate::cups_backend::delete_stale_discovered_printers(active_printer_ids).await;
 }
 
 async fn resolve_service_entry(
     server: AvahiServerProxy<'_>,
     service: AvahiService,
-) -> Option<PrinterEntry> {
+) -> Option<ResolvedServiceEntry> {
     let resolved = tokio::time::timeout(
         RESOLVE_TIMEOUT,
         server.resolve_service(
@@ -204,20 +241,38 @@ async fn resolve_service_entry(
         _flags,
     ) = resolved;
 
-    let mut printer = service_to_partial_entry(&AvahiService {
+    let service = AvahiService {
         interface,
         protocol,
         name,
         service_type,
         domain,
-    });
+    };
     let txt = parse_txt_records(txt);
+
+    match service_kind(&service.service_type)? {
+        ResolvedServiceKind::Printer => Some(ResolvedServiceEntry::Printer(
+            resolved_printer_entry(service, hostname, address, port, txt),
+        )),
+        ResolvedServiceKind::PrinterApplication => Some(ResolvedServiceEntry::PrinterApplication(
+            resolved_printer_application(service, hostname, address, port, txt),
+        )),
+    }
+}
+
+fn resolved_printer_entry(
+    service: AvahiService,
+    hostname: String,
+    address: String,
+    port: u16,
+    txt: BTreeMap<String, String>,
+) -> PrinterEntry {
+    let mut printer = service_to_partial_entry(&service);
     let resource_path = txt
         .get("rp")
         .cloned()
         .unwrap_or_else(|| "ipp/print".to_string());
     let device_uri = dnssd_device_uri(&service.service_type, &hostname, port, &resource_path);
-    let application_id = format!("{}:{port}", address.to_ascii_lowercase());
 
     printer.device_uri = device_uri.clone();
     printer.printer_local_uri = device_uri.clone();
@@ -250,25 +305,50 @@ async fn resolve_service_entry(
             .options
             .insert("printer-more-info".into(), admin_url.clone());
     }
-    if printer_application_service(&service.service_type) {
-        printer
-            .options
-            .insert("printer-application-uuid".into(), application_id.clone());
-        printer.options.insert("device-uuid".into(), application_id);
-    } else {
-        for (source, destination) in [
-            ("UUID", "device-uuid"),
-            ("uuid", "device-uuid"),
-            ("device-uuid", "device-uuid"),
-            ("printer-uuid", "printer-uuid"),
-        ] {
-            if let Some(uuid) = txt.get(source).filter(|value| !value.is_empty()) {
-                printer.options.insert(destination.into(), uuid.clone());
-            }
+    for (source, destination) in [
+        ("UUID", "device-uuid"),
+        ("uuid", "device-uuid"),
+        ("device-uuid", "device-uuid"),
+        ("printer-uuid", "printer-uuid"),
+    ] {
+        if let Some(uuid) = txt.get(source).filter(|value| !value.is_empty()) {
+            printer.options.insert(destination.into(), uuid.clone());
         }
     }
 
-    Some(printer)
+    printer
+}
+
+fn resolved_printer_application(
+    service: AvahiService,
+    hostname: String,
+    address: String,
+    port: u16,
+    txt: BTreeMap<String, String>,
+) -> PrinterApplication {
+    let system_uri = dnssd_device_uri(&service.service_type, &hostname, port, "ipp/system");
+    let system_uuid = txt
+        .get("UUID")
+        .or_else(|| txt.get("uuid"))
+        .filter(|value| !value.is_empty())
+        .cloned();
+    let make_and_model = txt.get("ty").filter(|value| !value.is_empty()).cloned();
+
+    PrinterApplication {
+        id: printer_application_id(&service.name, &service.domain, &hostname, port),
+        service_name: service.name,
+        service_type: service.service_type,
+        domain: service.domain,
+        hostname,
+        port,
+        addresses: vec![address],
+        system_uri,
+        system_uuid,
+        make_and_model,
+        operations_supported: Vec::new(),
+        txt,
+        state: PrinterApplicationState::Discovered,
+    }
 }
 
 fn service_to_partial_entry(service: &AvahiService) -> PrinterEntry {
@@ -304,7 +384,7 @@ fn service_to_partial_entry(service: &AvahiService) -> PrinterEntry {
     }
 }
 
-fn parse_txt_records(records: Vec<Vec<u8>>) -> HashMap<String, String> {
+fn parse_txt_records(records: Vec<Vec<u8>>) -> BTreeMap<String, String> {
     records
         .into_iter()
         .filter_map(|record| String::from_utf8(record).ok())
@@ -329,15 +409,22 @@ pub(crate) fn discovered_printer_id(printer: &PrinterEntry) -> Option<String> {
     Some(format!("dnssd:{service_type}:{domain}:{name}"))
 }
 
-pub(crate) fn is_printer_application(printer: &PrinterEntry) -> bool {
-    printer
-        .options
-        .get("dnssd-service-type")
-        .is_some_and(|service_type| printer_application_service(service_type))
+fn service_kind(service_type: &str) -> Option<ResolvedServiceKind> {
+    match service_type {
+        "_ipp._tcp" | "_ipps._tcp" => Some(ResolvedServiceKind::Printer),
+        "_ipp-system._tcp" | "_ipps-system._tcp" => Some(ResolvedServiceKind::PrinterApplication),
+        _ => None,
+    }
 }
 
-fn printer_application_service(service_type: &str) -> bool {
-    matches!(service_type, "_ipp-system._tcp" | "_ipps-system._tcp")
+fn printer_application_id(name: &str, domain: &str, hostname: &str, port: u16) -> String {
+    let normalize = |value: &str| value.trim().trim_end_matches('.').to_ascii_lowercase();
+    format!(
+        "dnssd-system:{}:{}:{}:{port}",
+        normalize(name),
+        normalize(domain),
+        normalize(hostname)
+    )
 }
 
 fn discovery_name(printer: &PrinterEntry) -> Option<String> {
@@ -372,5 +459,36 @@ mod tests {
         let parsed = parse_txt_records(records);
         assert_eq!(parsed.get("rp").map(String::as_str), Some("ipp/print"));
         assert_eq!(parsed.get("note").map(String::as_str), Some("Office"));
+    }
+
+    #[test]
+    fn classifies_printers_and_systems_separately() {
+        assert_eq!(
+            service_kind("_ipp._tcp"),
+            Some(ResolvedServiceKind::Printer)
+        );
+        assert_eq!(
+            service_kind("_ipps._tcp"),
+            Some(ResolvedServiceKind::Printer)
+        );
+        assert_eq!(
+            service_kind("_ipp-system._tcp"),
+            Some(ResolvedServiceKind::PrinterApplication)
+        );
+        assert_eq!(
+            service_kind("_ipps-system._tcp"),
+            Some(ResolvedServiceKind::PrinterApplication)
+        );
+    }
+
+    #[test]
+    fn application_identity_uses_dns_sd_name_host_and_port() {
+        let first = printer_application_id("LPrint", "local.", "DESKTOP-96VEKVC-2.local.", 8000);
+        let second = printer_application_id("lprint", "LOCAL", "desktop-96vekvc-2.LOCAL", 8000);
+        assert_eq!(first, second);
+        assert_ne!(
+            first,
+            printer_application_id("LPrint", "local", "desktop-96vekvc-2.local", 8001)
+        );
     }
 }
