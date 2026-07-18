@@ -2,7 +2,7 @@ use std::cell::Cell;
 use std::collections::HashMap;
 use std::net::IpAddr;
 
-use crate::{GroupedDevice, PrinterEntry};
+use crate::{GroupedDevice, PrinterApplication, PrinterEntry};
 use nix::ifaddrs::getifaddrs;
 use nix::sys::socket::SockaddrStorage;
 
@@ -181,21 +181,34 @@ fn normalize_uuid(uuid: Option<&str>) -> Option<String> {
     )
 }
 
+enum GroupingItem {
+    Printer(PrinterEntry),
+    Application(PrinterApplication),
+}
+
+impl GroupingItem {
+    fn identity(&self) -> DeviceIdentity {
+        match self {
+            Self::Printer(printer) => printer_identity(printer),
+            Self::Application(application) => application_identity(application),
+        }
+    }
+}
+
 impl GroupedDevice {
-    fn new(printer: PrinterEntry) -> Self {
-        let identity = printer_identity(&printer);
-        if is_printer_application(&printer) {
-            Self {
-                identity,
-                application: Some(printer),
-                queues: Vec::new(),
-            }
-        } else {
-            Self {
+    fn new(item: GroupingItem) -> Self {
+        let identity = item.identity();
+        match item {
+            GroupingItem::Printer(printer) => Self {
                 identity,
                 application: None,
                 queues: vec![printer],
-            }
+            },
+            GroupingItem::Application(application) => Self {
+                identity,
+                application: Some(application),
+                queues: Vec::new(),
+            },
         }
     }
 
@@ -209,8 +222,20 @@ impl GroupedDevice {
 }
 
 /// Groups configured queues that appear to belong to the same physical device.
-pub fn group_printers(printers: Vec<PrinterEntry>) -> Vec<GroupedDevice> {
-    let identities: Vec<DeviceIdentity> = printers.iter().map(printer_identity).collect();
+pub fn group_printers(
+    printers: Vec<PrinterEntry>,
+    printer_applications: Vec<PrinterApplication>,
+) -> Vec<GroupedDevice> {
+    let items = printers
+        .into_iter()
+        .map(GroupingItem::Printer)
+        .chain(
+            printer_applications
+                .into_iter()
+                .map(GroupingItem::Application),
+        )
+        .collect::<Vec<_>>();
+    let identities: Vec<DeviceIdentity> = items.iter().map(GroupingItem::identity).collect();
     let printer_count = identities.len();
     let parent: Vec<Cell<usize>> = (0..printer_count).map(Cell::new).collect();
     let mut first_index_by_key = HashMap::<String, usize>::new();
@@ -228,13 +253,13 @@ pub fn group_printers(printers: Vec<PrinterEntry>) -> Vec<GroupedDevice> {
     let mut slot_of_root: HashMap<usize, usize> = HashMap::new();
     let mut devices = Vec::<GroupedDevice>::new();
 
-    for (index, printer) in printers.into_iter().enumerate() {
+    for (index, item) in items.into_iter().enumerate() {
         let root = find(&parent, index);
         if let Some(&slot) = slot_of_root.get(&root) {
-            devices[slot].absorb(GroupedDevice::new(printer));
+            devices[slot].absorb(GroupedDevice::new(item));
         } else {
             slot_of_root.insert(root, devices.len());
-            devices.push(GroupedDevice::new(printer));
+            devices.push(GroupedDevice::new(item));
         }
     }
 
@@ -260,6 +285,20 @@ fn printer_identity(printer: &PrinterEntry) -> DeviceIdentity {
     )
 }
 
+fn application_identity(application: &PrinterApplication) -> DeviceIdentity {
+    let host = application
+        .addresses
+        .first()
+        .cloned()
+        .unwrap_or_else(|| application.hostname.clone());
+    DeviceIdentity::new(
+        Some(&application.id),
+        Some((host, application.port)),
+        Some(&application.system_uri),
+        None,
+    )
+}
+
 fn printer_endpoint(printer: &PrinterEntry) -> Option<(String, u16)> {
     let host = non_empty_option(&printer.options, "dnssd-address")
         .map(ToString::to_string)
@@ -274,10 +313,6 @@ fn non_empty_option<'a>(options: &'a HashMap<String, String>, name: &str) -> Opt
         .map(String::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
-}
-
-fn is_printer_application(printer: &PrinterEntry) -> bool {
-    non_empty_option(&printer.options, "printer-application-uuid").is_some()
 }
 
 fn find(parent: &[Cell<usize>], index: usize) -> usize {
@@ -326,7 +361,8 @@ fn uri_identity(uri: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::PrinterStatus;
+    use crate::{PrinterApplicationState, PrinterStatus};
+    use std::collections::BTreeMap;
 
     fn insert_test_endpoint(options: &mut HashMap<String, String>, uri: &str) {
         let Some((host, port)) = parse_uri_endpoint(uri) else {
@@ -561,18 +597,22 @@ mod tests {
         }
     }
 
-    fn printer_application(id: &str, host: &str, port: u16) -> PrinterEntry {
-        let mut printer = printer(id, "", "", Some(&format!("{host}:{port}")));
-        printer.hostname = Some(host.to_string());
-        printer.port = Some(port);
-        printer
-            .options
-            .insert("dnssd-address".to_string(), host.to_string());
-        printer.options.insert(
-            "printer-application-uuid".to_string(),
-            format!("{host}:{port}"),
-        );
-        printer
+    fn typed_printer_application(id: &str, host: &str, port: u16) -> PrinterApplication {
+        PrinterApplication {
+            id: id.to_string(),
+            service_name: id.to_string(),
+            service_type: "_ipps-system._tcp".to_string(),
+            domain: "local".to_string(),
+            hostname: host.to_string(),
+            port,
+            addresses: vec![host.to_string()],
+            system_uri: format!("ipps://{host}:{port}/ipp/system"),
+            system_uuid: Some("shared-system-uuid".to_string()),
+            make_and_model: None,
+            operations_supported: vec![0x402b],
+            txt: BTreeMap::new(),
+            state: PrinterApplicationState::Ready,
+        }
     }
 
     fn printer_queue(id: &str, host: &str, port: u16) -> PrinterEntry {
@@ -606,7 +646,7 @@ mod tests {
                 Some("uuid-fax"),
             ),
         ];
-        let groups = group_printers(printers);
+        let groups = group_printers(printers, Vec::new());
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].queues().len(), 2);
     }
@@ -617,16 +657,16 @@ mod tests {
             printer("app-a-print", "ipp://localhost:60001/ipp/print", "", None),
             printer("app-b-print", "ipp://localhost:60002/ipp/print", "", None),
         ];
-        let groups = group_printers(printers);
+        let groups = group_printers(printers, Vec::new());
         assert_eq!(groups.len(), 2);
     }
 
     #[test]
     fn moves_printer_application_into_group_metadata() {
-        let groups = group_printers(vec![
-            printer_application("LPrint", "10.255.255.254", 8000),
-            printer_queue("SocketLabel", "10.255.255.254", 8000),
-        ]);
+        let groups = group_printers(
+            vec![printer_queue("SocketLabel", "10.255.255.254", 8000)],
+            vec![typed_printer_application("LPrint", "10.255.255.254", 8000)],
+        );
 
         assert_eq!(groups.len(), 1);
         assert_eq!(
@@ -641,7 +681,10 @@ mod tests {
 
     #[test]
     fn returns_app_only_group_without_queue() {
-        let groups = group_printers(vec![printer_application("LPrint", "10.255.255.254", 8000)]);
+        let groups = group_printers(
+            Vec::new(),
+            vec![typed_printer_application("LPrint", "10.255.255.254", 8000)],
+        );
 
         assert_eq!(groups.len(), 1);
         assert!(groups[0].printer_application().is_some());
@@ -650,10 +693,13 @@ mod tests {
 
     #[test]
     fn keeps_printer_applications_on_different_ports_separate() {
-        let groups = group_printers(vec![
-            printer_application("LPrint", "localhost", 8000),
-            printer_application("PostScript Printer Application", "localhost", 8001),
-        ]);
+        let groups = group_printers(
+            Vec::new(),
+            vec![
+                typed_printer_application("LPrint", "localhost", 8000),
+                typed_printer_application("PostScript Printer Application", "localhost", 8001),
+            ],
+        );
 
         assert_eq!(groups.len(), 2);
         assert!(
@@ -688,12 +734,12 @@ mod tests {
         let mut reversed = make();
         reversed.reverse();
 
-        assert_eq!(group_printers(forward.clone()).len(), 1);
-        assert_eq!(group_printers(reversed.clone()).len(), 1);
+        assert_eq!(group_printers(forward.clone(), Vec::new()).len(), 1);
+        assert_eq!(group_printers(reversed.clone(), Vec::new()).len(), 1);
 
         forward.swap(1, 2);
-        assert_eq!(group_printers(forward).len(), 1);
+        assert_eq!(group_printers(forward, Vec::new()).len(), 1);
         reversed.swap(0, 2);
-        assert_eq!(group_printers(reversed).len(), 1);
+        assert_eq!(group_printers(reversed, Vec::new()).len(), 1);
     }
 }

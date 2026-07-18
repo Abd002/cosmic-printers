@@ -8,10 +8,16 @@ use super::helpers::{
 };
 use super::metadata::{self, QueueMetadata};
 use super::polkit_helper;
-use crate::avahi::{discovered_printer_id, discovered_printers_match, is_printer_application};
+use crate::avahi::{discovered_printer_id, discovered_printers_match};
 use crate::context::Context;
 
 pub async fn list_discovered_printers(context: Context) -> Result<Vec<PrinterEntry>, Error> {
+    start_discovery(context.clone()).await;
+
+    Ok(context.discovered_printers().await)
+}
+
+pub(crate) async fn start_discovery(context: Context) {
     let task_context = context.clone();
     if context.start_discovery_if_idle().await {
         tokio::spawn(async move {
@@ -20,8 +26,6 @@ pub async fn list_discovered_printers(context: Context) -> Result<Vec<PrinterEnt
             task_context.finish_discovery().await;
         });
     }
-
-    Ok(context.discovered_printers().await)
 }
 
 pub async fn add_discovered_printer(mut printer: PrinterEntry) -> Result<String, Error> {
@@ -131,8 +135,7 @@ async fn fill_cached_discovered_attrs(context: Context) {
         printers
             .into_iter()
             .map(|mut printer| {
-                if !is_printer_application(&printer)
-                    && !printer.device_uri.is_empty()
+                if !printer.device_uri.is_empty()
                     && fill_attrs_from_device(&mut printer, PRINTER_ATTRIBUTES).is_ok()
                 {
                     printer.options.insert(

@@ -3,9 +3,7 @@ use cups_rs::IppResponse;
 use std::collections::HashMap;
 
 use super::conversion::refresh_printer_entry;
-use super::ipp::{
-    CupsResultExt, ensure_success, printer_attrs_request, send_ipp_request_to_printer_uri,
-};
+use crate::ipp::{CupsResultExt, ensure_success, printer_attrs_request, send_ipp_request};
 
 pub(in crate::cups_backend) const PRINTER_ATTRIBUTES: &[&str] = &[
     "printer-more-info",
@@ -75,13 +73,12 @@ fn fill_attrs_from_device_uri(printer: &mut PrinterEntry, attrs: &[&str]) -> Res
 
     let printer_uri = device_uri;
     let request = printer_attrs_request(&printer_uri, attrs)?;
-    let response =
-        send_ipp_request_to_printer_uri(request, &printer_uri).map_err(|error| match error {
-            Error::DeviceUnreachable { why } => Error::DeviceUnreachable {
-                why: format!("{queue_name}: {why}"),
-            },
-            error => error,
-        })?;
+    let response = send_ipp_request(request, &printer_uri).map_err(|error| match error {
+        Error::DeviceUnreachable { why } => Error::DeviceUnreachable {
+            why: format!("{queue_name}: {why}"),
+        },
+        error => error,
+    })?;
     ensure_success(&response, "Get-Printer-Attributes")?;
 
     merge_response_attrs(&mut printer.options, &response, attrs);

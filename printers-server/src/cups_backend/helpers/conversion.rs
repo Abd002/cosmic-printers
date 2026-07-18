@@ -2,7 +2,8 @@ use cosmic_settings_printers_core::{PrinterEntry, PrinterStatus};
 use cups_rs::{Destination, PrinterState as CupsPrinterState};
 
 use super::identity::local_printer_uri;
-use super::options::{is_loopback_host, is_printer_class, option_values, parse_uri_endpoint};
+use super::options::{is_printer_class, option_values};
+use crate::ipp::{is_loopback_host, parse_uri_endpoint};
 
 /// Derives a simple web interface URL from a device URI hostname.
 fn web_page_from_device_uri(device_uri: &str) -> Option<String> {

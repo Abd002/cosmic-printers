@@ -1,6 +1,6 @@
 use crate::DeviceIdentity;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 #[derive(Debug, Clone, Deserialize, Serialize, zlink::introspect::Type)]
 pub struct SupplyLevel {
@@ -13,6 +13,52 @@ pub enum PrinterStatus {
     Ready,
     Offline,
     LowToner,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize, zlink::introspect::Type)]
+pub enum PrinterApplicationState {
+    Discovered,
+    Ready,
+    Unsupported,
+    AuthenticationRequired,
+    Unreachable,
+    Failed,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize, zlink::introspect::Type)]
+pub struct PrinterApplication {
+    pub id: String,
+    pub service_name: String,
+    pub service_type: String,
+    pub domain: String,
+    pub hostname: String,
+    pub port: u16,
+    pub addresses: Vec<String>,
+    pub system_uri: String,
+    pub system_uuid: Option<String>,
+    pub make_and_model: Option<String>,
+    pub operations_supported: Vec<u16>,
+    pub txt: BTreeMap<String, String>,
+    pub state: PrinterApplicationState,
+}
+
+impl PrinterApplication {
+    pub fn merge_from(&mut self, incoming: Self) {
+        self.service_name = incoming.service_name;
+        self.service_type = incoming.service_type;
+        self.domain = incoming.domain;
+        self.hostname = incoming.hostname;
+        self.port = incoming.port;
+        self.system_uri = incoming.system_uri;
+        self.txt = incoming.txt;
+
+        for address in incoming.addresses {
+            if !self.addresses.contains(&address) {
+                self.addresses.push(address);
+            }
+        }
+        self.addresses.sort();
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, zlink::introspect::Type)]
@@ -91,13 +137,13 @@ impl PrinterEntry {
 #[derive(Debug, Clone)]
 pub struct GroupedDevice {
     pub(crate) identity: DeviceIdentity,
-    pub(crate) application: Option<PrinterEntry>,
+    pub(crate) application: Option<PrinterApplication>,
     pub(crate) queues: Vec<PrinterEntry>,
 }
 
 impl GroupedDevice {
     /// Returns Printer Application metadata for this device, when discovered.
-    pub fn printer_application(&self) -> Option<&PrinterEntry> {
+    pub fn printer_application(&self) -> Option<&PrinterApplication> {
         self.application.as_ref()
     }
 
@@ -139,12 +185,13 @@ pub struct ListDiscoveredPrintersReply {
 
 #[derive(Debug, Clone, Deserialize, Serialize, zlink::introspect::Type)]
 pub struct ListPrinterApplicationsReply {
-    pub printer_applications: Vec<PrinterEntry>,
+    pub printer_applications: Vec<PrinterApplication>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, zlink::introspect::Type)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, zlink::introspect::Type)]
 pub enum PrintersEventKind {
     DiscoveredPrintersChanged,
+    PrinterApplicationsChanged,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, zlink::introspect::Type)]
