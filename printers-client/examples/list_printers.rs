@@ -1,23 +1,16 @@
-use cosmic_settings_printers_client::{CosmicPrintersProxy, connect};
+use cosmic_settings_printers_client::connect;
 
 #[tokio::main(flavor = "current_thread")]
-async fn main() -> zlink::Result<()> {
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut client = connect().await?;
-    let reply = client.conn.list_printers().await?;
+    let printers = client.printers().await?;
 
-    match reply {
-        Ok(reply) => {
-            println!("found {} printer(s)", reply.printers.len());
-            for printer in reply.printers {
-                println!(
-                    "{} | {:?} | {} | {}",
-                    printer.name, printer.status, printer.queue_status, printer.device_uri
-                );
-            }
-        }
-        Err(err) => {
-            eprintln!("printer service error: {err:?}");
-        }
+    println!("found {} printer(s)", printers.len());
+    for printer in printers {
+        println!(
+            "{} | {:?} | {} | {}",
+            printer.name, printer.status, printer.queue_status, printer.device_uri
+        );
     }
 
     Ok(())

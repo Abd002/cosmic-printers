@@ -209,6 +209,16 @@ pub struct PrintTestPageReply {
     pub job_id: i32,
 }
 
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize, zlink::introspect::Type,
+)]
+pub enum JobFilter {
+    #[default]
+    Active,
+    Completed,
+    All,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, zlink::introspect::Type)]
 pub struct JobInfo {
     pub id: i32,
