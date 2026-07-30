@@ -118,7 +118,7 @@ pub(super) fn apply(printers: &mut HashMap<String, PrinterEntry>) -> Result<(), 
             continue;
         };
 
-        printer.merge_from(metadata.discovered_printer.clone());
+        printer.apply_discovery_metadata(&metadata.discovered_printer);
     }
 
     Ok(())

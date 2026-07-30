@@ -27,21 +27,24 @@ impl Server {
     }
 
     /// Lists the configured CUPS printers.
-    pub async fn list_printers(&mut self) -> Result<Vec<PrinterEntry>, Error> {
-        let printers = cups_backend::list_printers().await?;
-        self.context.set_printers(printers.clone()).await;
-        Ok(printers)
+    pub async fn list_printers(&self) -> Result<Vec<PrinterEntry>, Error> {
+        cups_backend::list_printers().await
     }
 
-    /// Lists printers discovered from network discovery.
-    pub async fn list_discovered_printers(&mut self) -> Result<Vec<PrinterEntry>, Error> {
-        cups_backend::list_discovered_printers(self.context.clone()).await
-    }
-
-    /// Lists discovered Printer Applications.
-    pub async fn list_printer_applications(&mut self) -> Result<Vec<PrinterApplication>, Error> {
+    /// Starts a background DNS-SD discovery refresh when one is not already running.
+    pub async fn start_discovery(&self) -> Result<(), Error> {
         cups_backend::start_discovery(self.context.clone()).await;
-        Ok(self.context.list_printer_applications().await)
+        Ok(())
+    }
+
+    /// Lists the currently cached discovered printers.
+    pub async fn list_discovered_printers(&self) -> Result<Vec<PrinterEntry>, Error> {
+        Ok(self.context.discovered_printers_cached().await)
+    }
+
+    /// Lists the currently cached Printer Applications.
+    pub async fn list_printer_applications(&self) -> Result<Vec<PrinterApplication>, Error> {
+        Ok(self.context.printer_applications_cached().await)
     }
 
     /// Streams printer and discovery changes.
@@ -68,7 +71,7 @@ impl Server {
     }
 
     /// Adds a discovered printer to the configured CUPS queues.
-    pub async fn add_discovered_printer(&mut self, printer_id: &str) -> Result<(), Error> {
+    pub async fn add_discovered_printer(&self, printer_id: &str) -> Result<(), Error> {
         let printer = self
             .context
             .discovered_printer(printer_id)
@@ -81,132 +84,103 @@ impl Server {
             })
             .await;
 
-        self.list_printers().await?;
         Ok(())
     }
 
     /// Deletes a configured printer.
-    pub async fn delete_printer(&mut self, printer_id: &str) -> Result<(), Error> {
+    pub async fn delete_printer(&self, printer_id: &str) -> Result<(), Error> {
         self.printer_entry(printer_id).await?;
-        cups_backend::delete_printer(printer_id).await?;
-        self.list_printers().await?;
-        Ok(())
+        cups_backend::delete_printer(printer_id).await
     }
 
     /// Enables or disables accepting jobs for a printer.
     pub async fn set_printer_accept_jobs(
-        &mut self,
+        &self,
         printer_id: &str,
         enabled: bool,
         reason: &str,
     ) -> Result<(), Error> {
         self.printer_entry(printer_id).await?;
-        cups_backend::set_printer_accept_jobs(printer_id, enabled, reason).await?;
-        self.list_printers().await?;
-        Ok(())
+        cups_backend::set_printer_accept_jobs(printer_id, enabled, reason).await
     }
 
     /// Sets the system default printer.
-    pub async fn set_printer_default(&mut self, printer_id: &str) -> Result<(), Error> {
+    pub async fn set_printer_default(&self, printer_id: &str) -> Result<(), Error> {
         self.printer_entry(printer_id).await?;
-        cups_backend::set_printer_default(printer_id).await?;
-        self.list_printers().await?;
-        Ok(())
+        cups_backend::set_printer_default(printer_id).await
     }
 
     /// Sets a default printer option value.
     pub async fn set_printer_option_default(
-        &mut self,
+        &self,
         printer_id: &str,
         option: &str,
         values: &[String],
     ) -> Result<(), Error> {
         self.printer_entry(printer_id).await?;
-        cups_backend::set_printer_option_default(printer_id, option, values).await?;
-        self.list_printers().await?;
-        Ok(())
+        cups_backend::set_printer_option_default(printer_id, option, values).await
     }
 
     /// Enables or disables a printer.
-    pub async fn set_printer_enabled(
-        &mut self,
-        printer_id: &str,
-        enabled: bool,
-    ) -> Result<(), Error> {
+    pub async fn set_printer_enabled(&self, printer_id: &str, enabled: bool) -> Result<(), Error> {
         self.printer_entry(printer_id).await?;
-        cups_backend::set_printer_enabled(printer_id, enabled).await?;
-        self.list_printers().await?;
-        Ok(())
+        cups_backend::set_printer_enabled(printer_id, enabled).await
     }
 
     /// Sets the printer information string.
-    pub async fn set_printer_info(&mut self, printer_id: &str, info: &str) -> Result<(), Error> {
+    pub async fn set_printer_info(&self, printer_id: &str, info: &str) -> Result<(), Error> {
         self.printer_entry(printer_id).await?;
-        cups_backend::set_printer_info(printer_id, info).await?;
-        self.list_printers().await?;
-        Ok(())
+        cups_backend::set_printer_info(printer_id, info).await
     }
 
     /// Sets the printer location.
     pub async fn set_printer_location(
-        &mut self,
+        &self,
         printer_id: &str,
         location: &str,
     ) -> Result<(), Error> {
         self.printer_entry(printer_id).await?;
-        cups_backend::set_printer_location(printer_id, location).await?;
-        self.list_printers().await?;
-        Ok(())
+        cups_backend::set_printer_location(printer_id, location).await
     }
 
     /// Enables or disables printer sharing.
-    pub async fn set_printer_shared(
-        &mut self,
-        printer_id: &str,
-        shared: bool,
-    ) -> Result<(), Error> {
+    pub async fn set_printer_shared(&self, printer_id: &str, shared: bool) -> Result<(), Error> {
         self.printer_entry(printer_id).await?;
-        cups_backend::set_printer_shared(printer_id, shared).await?;
-        self.list_printers().await?;
-        Ok(())
+        cups_backend::set_printer_shared(printer_id, shared).await
     }
 
     /// Prints a test page and returns its job ID.
-    pub async fn print_test_page(&mut self, printer_id: &str) -> Result<i32, Error> {
+    pub async fn print_test_page(&self, printer_id: &str) -> Result<i32, Error> {
         let printer = self.printer_entry(printer_id).await?;
 
         cups_backend::print_test_page(printer).await
     }
 
     /// Lists jobs for a configured printer.
-    pub async fn get_jobs(
-        &mut self,
-        printer_id: &str,
-        filter: &str,
-    ) -> Result<Vec<JobInfo>, Error> {
+    pub async fn get_jobs(&self, printer_id: &str, filter: &str) -> Result<Vec<JobInfo>, Error> {
         let printer = self.printer_entry(printer_id).await?;
         cups_backend::get_jobs(&printer, filter).await
     }
 
     /// Pauses a job.
-    pub async fn pause_job(&mut self, printer_id: &str, job_id: i32) -> Result<(), Error> {
+    pub async fn pause_job(&self, printer_id: &str, job_id: i32) -> Result<(), Error> {
         let printer = self.printer_entry(printer_id).await?;
         cups_backend::pause_job(&printer, job_id).await
     }
 
     /// Resumes a job.
-    pub async fn resume_job(&mut self, printer_id: &str, job_id: i32) -> Result<(), Error> {
+    pub async fn resume_job(&self, printer_id: &str, job_id: i32) -> Result<(), Error> {
         let printer = self.printer_entry(printer_id).await?;
         cups_backend::resume_job(&printer, job_id).await
     }
 
     /// Cancels a job.
-    pub async fn cancel_job(&mut self, printer_id: &str, job_id: i32) -> Result<(), Error> {
+    pub async fn cancel_job(&self, printer_id: &str, job_id: i32) -> Result<(), Error> {
         let printer = self.printer_entry(printer_id).await?;
         cups_backend::cancel_job(&printer, job_id).await
     }
 
-    async fn printer_entry(&mut self, printer_id: &str) -> Result<PrinterEntry, Error> {
+    async fn printer_entry(&self, printer_id: &str) -> Result<PrinterEntry, Error> {
         self.list_printers()
             .await?
             .into_iter()

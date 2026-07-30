@@ -80,12 +80,22 @@ impl Client {
         Ok(reply.printers)
     }
 
+    /// Starts a background discovery refresh.
+    ///
+    /// Watch [`Self::printer_events`] and read the cache again to observe
+    /// results that arrive after this call returns.
+    pub async fn start_discovery(&mut self) -> ClientResult<()> {
+        flatten(protocol::CosmicPrintersProxy::start_discovery(&mut self.conn).await)
+    }
+
+    /// Returns the current discovered-printer cache without starting discovery.
     pub async fn discovered_printers(&mut self) -> ClientResult<Vec<PrinterEntry>> {
         let reply =
             flatten(protocol::CosmicPrintersProxy::list_discovered_printers(&mut self.conn).await)?;
         Ok(reply.printers)
     }
 
+    /// Returns the current Printer Application cache without starting discovery.
     pub async fn printer_applications(&mut self) -> ClientResult<Vec<PrinterApplication>> {
         let reply = flatten(
             protocol::CosmicPrintersProxy::list_printer_applications(&mut self.conn).await,

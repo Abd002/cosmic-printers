@@ -43,7 +43,11 @@ pub struct PrinterApplication {
 }
 
 impl PrinterApplication {
-    pub fn merge_from(&mut self, incoming: Self) {
+    /// Merges a repeated DNS-SD resolution of this Printer Application.
+    ///
+    /// Probe-derived fields and state are preserved. DNS-SD fields are
+    /// refreshed, while addresses are accumulated across interfaces.
+    pub fn merge_discovery_record(&mut self, incoming: Self) {
         self.service_name = incoming.service_name;
         self.service_type = incoming.service_type;
         self.domain = incoming.domain;
@@ -287,13 +291,18 @@ impl PrinterEntry {
             .unwrap_or_default()
     }
 
-    /// Merges a refreshed destination snapshot into this destination.
-    pub fn merge_from(&mut self, incoming: Self) {
+    /// Merges a partial or resolved DNS-SD record into this discovered printer.
+    pub fn merge_discovery_record(&mut self, incoming: Self) {
         if self.name.is_empty() {
             self.name = incoming.name;
         }
 
         self.merge_options(incoming.options);
+    }
+
+    /// Applies stored discovery options to a configured CUPS destination.
+    pub fn apply_discovery_metadata(&mut self, metadata: &Self) {
+        self.merge_options(metadata.options.clone());
     }
 }
 
@@ -407,4 +416,94 @@ pub enum JobState {
     Stopped,
     Failed,
     Unknown,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn printer(id: &str, name: &str, options: &[(&str, &str)]) -> PrinterEntry {
+        PrinterEntry::new(
+            id,
+            name,
+            false,
+            options
+                .iter()
+                .map(|(key, value)| ((*key).into(), (*value).into()))
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn discovery_merge_fills_name_and_refreshes_options() {
+        let mut existing = printer("", "", &[("dnssd-address", "192.0.2.1")]);
+        let incoming = printer(
+            "",
+            "Office Printer",
+            &[
+                ("dnssd-address", "192.0.2.2"),
+                ("printer-location", "Office"),
+            ],
+        );
+
+        existing.merge_discovery_record(incoming);
+
+        assert_eq!(existing.name(), "Office Printer");
+        assert_eq!(existing.dnssd_address(), Some("192.0.2.2"));
+        assert_eq!(existing.location(), Some("Office"));
+    }
+
+    #[test]
+    fn applying_discovery_metadata_preserves_configured_identity() {
+        let mut configured = printer("office_queue", "Configured Name", &[]);
+        let metadata = printer(
+            "dnssd:_ipp._tcp:local:Office",
+            "Discovered Name",
+            &[("device-uri", "ipp://printer.local/ipp/print")],
+        );
+
+        configured.apply_discovery_metadata(&metadata);
+
+        assert_eq!(configured.id(), "office_queue");
+        assert_eq!(configured.name(), "Configured Name");
+        assert_eq!(
+            configured.device_uri(),
+            Some("ipp://printer.local/ipp/print")
+        );
+    }
+
+    #[test]
+    fn printer_application_discovery_merge_preserves_probe_results() {
+        let mut existing = PrinterApplication {
+            id: "app".into(),
+            service_name: "LPrint".into(),
+            service_type: "_ipps-system._tcp".into(),
+            domain: "local".into(),
+            hostname: "printer.local".into(),
+            port: 8000,
+            addresses: vec!["192.0.2.1".into()],
+            system_uri: "ipps://printer.local:8000/ipp/system".into(),
+            system_uuid: Some("urn:uuid:system".into()),
+            make_and_model: Some("LPrint".into()),
+            operations_supported: vec![0x402b],
+            txt: BTreeMap::new(),
+            state: PrinterApplicationState::Ready,
+        };
+        let mut incoming = existing.clone();
+        incoming.addresses = vec!["2001:db8::1".into()];
+        incoming.system_uuid = None;
+        incoming.make_and_model = None;
+        incoming.operations_supported.clear();
+        incoming.state = PrinterApplicationState::Discovered;
+
+        existing.merge_discovery_record(incoming);
+
+        assert_eq!(
+            existing.addresses,
+            vec!["192.0.2.1".to_string(), "2001:db8::1".to_string()]
+        );
+        assert_eq!(existing.system_uuid.as_deref(), Some("urn:uuid:system"));
+        assert_eq!(existing.operations_supported, vec![0x402b]);
+        assert_eq!(existing.state, PrinterApplicationState::Ready);
+    }
 }

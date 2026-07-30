@@ -1,10 +1,18 @@
-use crate::{avahi::discovered_printer_id, backend::Model};
+use crate::avahi::discovered_printer_id;
 use cosmic_settings_printers_core::{
     PrinterApplication, PrinterEntry, PrintersEvent, PrintersEventKind,
 };
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::{Mutex, broadcast};
+
+#[derive(Debug, Default)]
+struct Model {
+    discovered_printers: Vec<PrinterEntry>,
+    printer_applications: HashMap<String, PrinterApplication>,
+    discovery_running: bool,
+    auto_add_in_progress: HashSet<String>,
+}
 
 #[derive(Clone, Debug)]
 pub(crate) struct Context {
@@ -16,16 +24,16 @@ impl Context {
     pub(crate) fn new() -> Self {
         let (events, _) = broadcast::channel(32);
         Self {
-            model: Arc::new(Mutex::new(Model::new())),
+            model: Arc::new(Mutex::new(Model::default())),
             events,
         }
     }
 
-    pub(crate) async fn discovered_printers(&self) -> Vec<PrinterEntry> {
+    pub(crate) async fn discovered_printers_cached(&self) -> Vec<PrinterEntry> {
         self.model.lock().await.discovered_printers.clone()
     }
 
-    pub(crate) async fn list_printer_applications(&self) -> Vec<PrinterApplication> {
+    pub(crate) async fn printer_applications_cached(&self) -> Vec<PrinterApplication> {
         let mut applications = self
             .model
             .lock()
@@ -42,12 +50,15 @@ impl Context {
         applications
     }
 
-    pub(crate) async fn upsert_printer_application(&self, application: PrinterApplication) -> bool {
+    pub(crate) async fn merge_printer_application_discovery(
+        &self,
+        application: PrinterApplication,
+    ) -> bool {
         let mut model = self.model.lock().await;
         let inserted = !model.printer_applications.contains_key(&application.id);
         let changed = if let Some(existing) = model.printer_applications.get_mut(&application.id) {
             let before = existing.clone();
-            existing.merge_from(application);
+            existing.merge_discovery_record(application);
             *existing != before
         } else {
             model
@@ -63,7 +74,7 @@ impl Context {
         inserted
     }
 
-    pub(crate) async fn update_printer_application(
+    pub(crate) async fn update_printer_application_probe(
         &self,
         application_id: &str,
         update: impl FnOnce(&mut PrinterApplication),
@@ -80,20 +91,6 @@ impl Context {
         drop(model);
 
         if changed {
-            self.emit_printer_applications_changed();
-        }
-    }
-
-    #[allow(dead_code)]
-    pub(crate) async fn remove_printer_application(&self, application_id: &str) {
-        let removed = self
-            .model
-            .lock()
-            .await
-            .printer_applications
-            .remove(application_id)
-            .is_some();
-        if removed {
             self.emit_printer_applications_changed();
         }
     }
@@ -120,10 +117,6 @@ impl Context {
             .iter()
             .find(|printer| discovered_printer_id(printer).as_deref() == Some(printer_id))
             .cloned()
-    }
-
-    pub(crate) async fn set_printers(&self, printers: Vec<PrinterEntry>) {
-        self.model.lock().await.printers = printers;
     }
 
     pub(crate) async fn update_discovered_printers(
@@ -170,7 +163,7 @@ impl Context {
                 .iter()
                 .position(|existing| matches(existing, &printer))
             {
-                printers[index].merge_from(printer);
+                printers[index].merge_discovery_record(printer);
             } else {
                 printers.push(printer);
                 added = true;
@@ -195,7 +188,7 @@ impl Context {
                     .iter()
                     .position(|existing| matches(existing, &printer))
                 {
-                    printers[index].merge_from(printer);
+                    printers[index].merge_discovery_record(printer);
                 } else {
                     printers.push(printer);
                     added = true;
@@ -293,36 +286,58 @@ mod tests {
         let context = Context::new();
         let mut events = context.subscribe_events();
 
-        assert!(context.upsert_printer_application(application("app")).await);
-        assert!(context.discovered_printers().await.is_empty());
-        assert_eq!(context.list_printer_applications().await.len(), 1);
+        assert!(
+            context
+                .merge_printer_application_discovery(application("app"))
+                .await
+        );
+        assert!(context.discovered_printers_cached().await.is_empty());
+        assert_eq!(context.printer_applications_cached().await.len(), 1);
         assert_eq!(
             events.recv().await.unwrap().kind,
             PrintersEventKind::PrinterApplicationsChanged
         );
 
-        context.remove_printer_application("app").await;
-        assert!(context.list_printer_applications().await.is_empty());
-        assert!(context.discovered_printers().await.is_empty());
+        context.retain_printer_applications(&HashSet::new()).await;
+        assert!(context.printer_applications_cached().await.is_empty());
+        assert!(context.discovered_printers_cached().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn repeated_application_discovery_merges_without_requesting_another_probe() {
+        let context = Context::new();
+        let mut first = application("app");
+        first.addresses = vec!["192.0.2.1".into()];
+        let mut repeated = application("app");
+        repeated.addresses = vec!["2001:db8::1".into()];
+
+        assert!(context.merge_printer_application_discovery(first).await);
+        assert!(!context.merge_printer_application_discovery(repeated).await);
+
+        let applications = context.printer_applications_cached().await;
+        assert_eq!(
+            applications[0].addresses,
+            vec!["192.0.2.1".to_string(), "2001:db8::1".to_string()]
+        );
     }
 
     #[tokio::test]
     async fn retaining_applications_does_not_change_discovered_printers() {
         let context = Context::new();
         context
-            .upsert_printer_application(application("keep"))
+            .merge_printer_application_discovery(application("keep"))
             .await;
         context
-            .upsert_printer_application(application("remove"))
+            .merge_printer_application_discovery(application("remove"))
             .await;
 
         context
             .retain_printer_applications(&HashSet::from(["keep".to_string()]))
             .await;
 
-        let applications = context.list_printer_applications().await;
+        let applications = context.printer_applications_cached().await;
         assert_eq!(applications.len(), 1);
         assert_eq!(applications[0].id, "keep");
-        assert!(context.discovered_printers().await.is_empty());
+        assert!(context.discovered_printers_cached().await.is_empty());
     }
 }

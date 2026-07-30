@@ -156,15 +156,11 @@ pub async fn discover_printers_into_cache(context: Context) {
                         }
                         Some(ResolvedServiceEntry::PrinterApplication(application)) => {
                             active_application_ids.insert(application.id.clone());
-                            let inserted = context
-                                .upsert_printer_application(application.clone())
-                                .await;
-                            if inserted {
-                                crate::printer_application_backend::spawn_system_probe(
-                                    context.clone(),
-                                    application,
-                                );
-                            }
+                            crate::printer_application_backend::record_discovery(
+                                context.clone(),
+                                application,
+                            )
+                            .await;
                         }
                         None => {}
                     }
