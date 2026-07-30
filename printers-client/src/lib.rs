@@ -2,7 +2,12 @@ use futures_util::{Stream, StreamExt};
 use std::path::PathBuf;
 use zlink::Connection;
 
-pub use cosmic_settings_printers_core::*;
+pub use cosmic_settings_printers_core::{
+    DeviceIdentity, Error, GetJobsReply, GroupedDevice, JobFilter, JobInfo, JobState,
+    ListDiscoveredPrintersReply, ListPrinterApplicationsReply, ListPrintersReply,
+    PrintTestPageReply, PrinterApplication, PrinterApplicationState, PrinterEntry, PrinterStatus,
+    PrintersEvent, PrintersEventKind, SupplyLevel, group_printers, printers_match,
+};
 
 mod protocol;
 

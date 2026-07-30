@@ -7,13 +7,13 @@ use std::sync::Arc;
 use tokio::sync::{Mutex, broadcast};
 
 #[derive(Clone, Debug)]
-pub struct Context {
+pub(crate) struct Context {
     model: Arc<Mutex<Model>>,
     events: broadcast::Sender<PrintersEvent>,
 }
 
 impl Context {
-    pub async fn new() -> Self {
+    pub(crate) fn new() -> Self {
         let (events, _) = broadcast::channel(32);
         Self {
             model: Arc::new(Mutex::new(Model::new())),
@@ -21,11 +21,11 @@ impl Context {
         }
     }
 
-    pub async fn discovered_printers(&self) -> Vec<PrinterEntry> {
+    pub(crate) async fn discovered_printers(&self) -> Vec<PrinterEntry> {
         self.model.lock().await.discovered_printers.clone()
     }
 
-    pub async fn list_printer_applications(&self) -> Vec<PrinterApplication> {
+    pub(crate) async fn list_printer_applications(&self) -> Vec<PrinterApplication> {
         let mut applications = self
             .model
             .lock()
@@ -42,7 +42,7 @@ impl Context {
         applications
     }
 
-    pub async fn upsert_printer_application(&self, application: PrinterApplication) -> bool {
+    pub(crate) async fn upsert_printer_application(&self, application: PrinterApplication) -> bool {
         let mut model = self.model.lock().await;
         let inserted = !model.printer_applications.contains_key(&application.id);
         let changed = if let Some(existing) = model.printer_applications.get_mut(&application.id) {
@@ -63,7 +63,7 @@ impl Context {
         inserted
     }
 
-    pub async fn update_printer_application(
+    pub(crate) async fn update_printer_application(
         &self,
         application_id: &str,
         update: impl FnOnce(&mut PrinterApplication),
@@ -84,7 +84,8 @@ impl Context {
         }
     }
 
-    pub async fn remove_printer_application(&self, application_id: &str) {
+    #[allow(dead_code)]
+    pub(crate) async fn remove_printer_application(&self, application_id: &str) {
         let removed = self
             .model
             .lock()
@@ -97,7 +98,7 @@ impl Context {
         }
     }
 
-    pub async fn retain_printer_applications(&self, active_ids: &HashSet<String>) {
+    pub(crate) async fn retain_printer_applications(&self, active_ids: &HashSet<String>) {
         let mut model = self.model.lock().await;
         let previous_len = model.printer_applications.len();
         model
@@ -111,7 +112,7 @@ impl Context {
         }
     }
 
-    pub async fn discovered_printer(&self, printer_id: &str) -> Option<PrinterEntry> {
+    pub(crate) async fn discovered_printer(&self, printer_id: &str) -> Option<PrinterEntry> {
         self.model
             .lock()
             .await
@@ -121,25 +122,14 @@ impl Context {
             .cloned()
     }
 
-    pub async fn printers(&self) -> Vec<PrinterEntry> {
-        self.model.lock().await.printers.clone()
-    }
-
-    pub async fn printer(&self, printer_id: &str) -> Option<PrinterEntry> {
-        self.model
-            .lock()
-            .await
-            .printers
-            .iter()
-            .find(|printer| printer.id == printer_id)
-            .cloned()
-    }
-
-    pub async fn set_printers(&self, printers: Vec<PrinterEntry>) {
+    pub(crate) async fn set_printers(&self, printers: Vec<PrinterEntry>) {
         self.model.lock().await.printers = printers;
     }
 
-    pub async fn update_discovered_printers(&self, update: impl FnOnce(&mut Vec<PrinterEntry>)) {
+    pub(crate) async fn update_discovered_printers(
+        &self,
+        update: impl FnOnce(&mut Vec<PrinterEntry>),
+    ) {
         let mut model = self.model.lock().await;
         update(&mut model.discovered_printers);
         model
@@ -147,11 +137,11 @@ impl Context {
             .sort_by(|left, right| left.name.cmp(&right.name).then(left.id.cmp(&right.id)));
     }
 
-    pub fn subscribe_events(&self) -> broadcast::Receiver<PrintersEvent> {
+    pub(crate) fn subscribe_events(&self) -> broadcast::Receiver<PrintersEvent> {
         self.events.subscribe()
     }
 
-    pub async fn update_discovered_printer(
+    pub(crate) async fn update_discovered_printer(
         &self,
         printer_id: &str,
         update: impl FnOnce(&mut PrinterEntry),
@@ -167,7 +157,7 @@ impl Context {
         .await;
     }
 
-    pub async fn merge_discovered_printer_by(
+    pub(crate) async fn merge_discovered_printer_by(
         &self,
         printer: PrinterEntry,
         matches: impl Fn(&PrinterEntry, &PrinterEntry) -> bool,
@@ -191,7 +181,7 @@ impl Context {
         }
     }
 
-    pub async fn merge_discovered_printers_by(
+    pub(crate) async fn merge_discovered_printers_by(
         &self,
         incoming: impl IntoIterator<Item = PrinterEntry>,
         matches: impl Fn(&PrinterEntry, &PrinterEntry) -> bool,
@@ -229,7 +219,7 @@ impl Context {
         });
     }
 
-    pub async fn retain_discovered_printers_by(
+    pub(crate) async fn retain_discovered_printers_by(
         &self,
         incoming: impl IntoIterator<Item = PrinterEntry>,
         matches: impl Fn(&PrinterEntry, &PrinterEntry) -> bool,
@@ -241,7 +231,7 @@ impl Context {
         .await;
     }
 
-    pub async fn start_auto_add(&self, printer_id: String) -> bool {
+    pub(crate) async fn start_auto_add(&self, printer_id: String) -> bool {
         self.model
             .lock()
             .await
@@ -249,7 +239,7 @@ impl Context {
             .insert(printer_id)
     }
 
-    pub async fn finish_auto_add(&self, printer_id: &str) {
+    pub(crate) async fn finish_auto_add(&self, printer_id: &str) {
         self.model
             .lock()
             .await
@@ -257,7 +247,7 @@ impl Context {
             .remove(printer_id);
     }
 
-    pub async fn start_discovery_if_idle(&self) -> bool {
+    pub(crate) async fn start_discovery_if_idle(&self) -> bool {
         let mut model = self.model.lock().await;
         if model.discovery_running {
             false
@@ -267,7 +257,7 @@ impl Context {
         }
     }
 
-    pub async fn finish_discovery(&self) {
+    pub(crate) async fn finish_discovery(&self) {
         self.model.lock().await.discovery_running = false;
     }
 }
@@ -298,7 +288,7 @@ mod tests {
 
     #[tokio::test]
     async fn printer_applications_use_a_separate_cache_and_event() {
-        let context = Context::new().await;
+        let context = Context::new();
         let mut events = context.subscribe_events();
 
         assert!(context.upsert_printer_application(application("app")).await);
@@ -316,7 +306,7 @@ mod tests {
 
     #[tokio::test]
     async fn retaining_applications_does_not_change_discovered_printers() {
-        let context = Context::new().await;
+        let context = Context::new();
         context
             .upsert_printer_application(application("keep"))
             .await;

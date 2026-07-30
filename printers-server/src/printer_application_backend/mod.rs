@@ -77,7 +77,7 @@ mod tests {
 
     #[tokio::test]
     async fn find_devices_support_marks_application_ready() {
-        let context = Context::new().await;
+        let context = Context::new();
         context.upsert_printer_application(application()).await;
         apply_probe_result(
             &context,
@@ -100,7 +100,7 @@ mod tests {
 
     #[tokio::test]
     async fn missing_find_devices_support_marks_application_unsupported() {
-        let context = Context::new().await;
+        let context = Context::new();
         context.upsert_printer_application(application()).await;
         apply_probe_result(
             &context,
@@ -130,7 +130,7 @@ mod tests {
             ),
             (system::ProbeError::Failed, PrinterApplicationState::Failed),
         ] {
-            let context = Context::new().await;
+            let context = Context::new();
             context.upsert_printer_application(application()).await;
             apply_probe_result(&context, "app", Err(error)).await;
 

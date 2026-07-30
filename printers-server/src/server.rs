@@ -7,30 +7,44 @@ use tokio::sync::broadcast;
 use crate::{context::Context, cups_backend};
 
 #[derive(Debug)]
+/// The server-side implementation of the COSMIC printers interface.
 pub struct Server {
-    pub context: Context,
+    context: Context,
+}
+
+impl Default for Server {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Server {
-    pub async fn new(context: Context) -> Self {
-        Self { context }
+    /// Creates a printer service with an empty in-memory context.
+    pub fn new() -> Self {
+        Self {
+            context: Context::new(),
+        }
     }
 
+    /// Lists the configured CUPS printers.
     pub async fn list_printers(&mut self) -> Result<Vec<PrinterEntry>, Error> {
         let printers = cups_backend::list_printers().await?;
         self.context.set_printers(printers.clone()).await;
         Ok(printers)
     }
 
+    /// Lists printers discovered from network discovery.
     pub async fn list_discovered_printers(&mut self) -> Result<Vec<PrinterEntry>, Error> {
         cups_backend::list_discovered_printers(self.context.clone()).await
     }
 
+    /// Lists discovered Printer Applications.
     pub async fn list_printer_applications(&mut self) -> Result<Vec<PrinterApplication>, Error> {
         cups_backend::start_discovery(self.context.clone()).await;
         Ok(self.context.list_printer_applications().await)
     }
 
+    /// Streams printer and discovery changes.
     pub fn watch_printers(
         &self,
     ) -> impl Stream<Item = zlink::Reply<PrintersEvent>> + Unpin + use<> {
@@ -53,6 +67,7 @@ impl Server {
         .boxed()
     }
 
+    /// Adds a discovered printer to the configured CUPS queues.
     pub async fn add_discovered_printer(&mut self, printer_id: &str) -> Result<(), Error> {
         let printer = self
             .context
@@ -70,6 +85,7 @@ impl Server {
         Ok(())
     }
 
+    /// Deletes a configured printer.
     pub async fn delete_printer(&mut self, printer_id: &str) -> Result<(), Error> {
         self.printer_entry(printer_id).await?;
         cups_backend::delete_printer(printer_id).await?;
@@ -77,6 +93,7 @@ impl Server {
         Ok(())
     }
 
+    /// Enables or disables accepting jobs for a printer.
     pub async fn set_printer_accept_jobs(
         &mut self,
         printer_id: &str,
@@ -89,6 +106,7 @@ impl Server {
         Ok(())
     }
 
+    /// Sets the system default printer.
     pub async fn set_printer_default(&mut self, printer_id: &str) -> Result<(), Error> {
         self.printer_entry(printer_id).await?;
         cups_backend::set_printer_default(printer_id).await?;
@@ -96,6 +114,7 @@ impl Server {
         Ok(())
     }
 
+    /// Sets a default printer option value.
     pub async fn set_printer_option_default(
         &mut self,
         printer_id: &str,
@@ -108,6 +127,7 @@ impl Server {
         Ok(())
     }
 
+    /// Enables or disables a printer.
     pub async fn set_printer_enabled(
         &mut self,
         printer_id: &str,
@@ -119,6 +139,7 @@ impl Server {
         Ok(())
     }
 
+    /// Sets the printer information string.
     pub async fn set_printer_info(&mut self, printer_id: &str, info: &str) -> Result<(), Error> {
         self.printer_entry(printer_id).await?;
         cups_backend::set_printer_info(printer_id, info).await?;
@@ -126,6 +147,7 @@ impl Server {
         Ok(())
     }
 
+    /// Sets the printer location.
     pub async fn set_printer_location(
         &mut self,
         printer_id: &str,
@@ -137,6 +159,7 @@ impl Server {
         Ok(())
     }
 
+    /// Enables or disables printer sharing.
     pub async fn set_printer_shared(
         &mut self,
         printer_id: &str,
@@ -148,12 +171,14 @@ impl Server {
         Ok(())
     }
 
+    /// Prints a test page and returns its job ID.
     pub async fn print_test_page(&mut self, printer_id: &str) -> Result<i32, Error> {
         let printer = self.printer_entry(printer_id).await?;
 
         cups_backend::print_test_page(printer).await
     }
 
+    /// Lists jobs for a configured printer.
     pub async fn get_jobs(
         &mut self,
         printer_id: &str,
@@ -163,16 +188,19 @@ impl Server {
         cups_backend::get_jobs(&printer, filter).await
     }
 
+    /// Pauses a job.
     pub async fn pause_job(&mut self, printer_id: &str, job_id: i32) -> Result<(), Error> {
         let printer = self.printer_entry(printer_id).await?;
         cups_backend::pause_job(&printer, job_id).await
     }
 
+    /// Resumes a job.
     pub async fn resume_job(&mut self, printer_id: &str, job_id: i32) -> Result<(), Error> {
         let printer = self.printer_entry(printer_id).await?;
         cups_backend::resume_job(&printer, job_id).await
     }
 
+    /// Cancels a job.
     pub async fn cancel_job(&mut self, printer_id: &str, job_id: i32) -> Result<(), Error> {
         let printer = self.printer_entry(printer_id).await?;
         cups_backend::cancel_job(&printer, job_id).await

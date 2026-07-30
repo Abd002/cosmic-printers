@@ -16,18 +16,6 @@ pub(in crate::cups_backend) fn configured_printers(
     Ok(printer_entry_set(destinations))
 }
 
-/// Discovers network and temporary CUPS destinations as normalized printer entries.
-pub(in crate::cups_backend) fn discovered_printers(
-    timeout_ms: i32,
-) -> Result<HashMap<String, PrinterEntry>, Error> {
-    let destinations = enum_destination_set(
-        cups_rs::PRINTER_DISCOVERED,
-        cups_rs::PRINTER_DISCOVERED,
-        timeout_ms,
-    )?;
-    Ok(printer_entry_set(destinations))
-}
-
 /// Collects `cupsEnumDests` callbacks into a map keyed by destination full name.
 fn enum_destination_set(
     printer_type: u32,

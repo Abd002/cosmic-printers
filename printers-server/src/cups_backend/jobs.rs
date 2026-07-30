@@ -2,8 +2,7 @@ use cosmic_settings_printers_core::{Error, JobInfo, JobState, PrinterEntry};
 use cups_rs::{IppAttribute, IppOperation, IppRequest, IppTag, IppValueTag};
 
 use super::helpers::{
-    CupsResultExt, add_requesting_user, ensure_success, is_ipp_uri, local_printer_uri,
-    send_ipp_request,
+    CupsResultExt, add_requesting_user, ensure_success, local_printer_uri, send_ipp_request,
 };
 
 const JOB_ATTRIBUTES: &[&str] = &[
