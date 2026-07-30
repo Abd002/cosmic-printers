@@ -1,6 +1,6 @@
-use cosmic_settings_printers_core::{
-    PrinterApplication, PrinterApplicationState, PrinterEntry, PrinterStatus,
-};
+#![allow(clippy::too_many_arguments)]
+
+use cosmic_settings_printers_core::{PrinterApplication, PrinterApplicationState, PrinterEntry};
 use futures_util::TryStreamExt;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::time::Duration;
@@ -274,36 +274,19 @@ fn resolved_printer_entry(
         .unwrap_or_else(|| "ipp/print".to_string());
     let device_uri = dnssd_device_uri(&service.service_type, &hostname, port, &resource_path);
 
-    printer.device_uri = device_uri.clone();
-    printer.printer_local_uri = device_uri.clone();
-    printer.hostname = Some(hostname.clone());
-    printer.port = Some(port);
-    printer
-        .options
-        .insert("device-uri".into(), device_uri.clone());
-    printer
-        .options
-        .insert("printer-uri-supported".into(), device_uri);
-    printer.options.insert("dnssd-hostname".into(), hostname);
-    printer.options.insert("dnssd-address".into(), address);
-    printer
-        .options
-        .insert("dnssd-resource-path".into(), resource_path);
-    printer
-        .options
-        .insert("cosmic-discovery-detail-state".into(), "resolved".into());
+    printer.set_option("device-uri", device_uri.clone());
+    printer.set_option("printer-uri-supported", device_uri);
+    printer.set_option("dnssd-hostname", hostname);
+    printer.set_option("dnssd-address", address);
+    printer.set_option("dnssd-port", port.to_string());
+    printer.set_option("dnssd-resource-path", resource_path);
+    printer.set_option("cosmic-discovery-detail-state", "resolved");
 
     if let Some(location) = txt.get("note") {
-        printer.location = location.clone();
-        printer
-            .options
-            .insert("printer-location".into(), location.clone());
+        printer.set_option("printer-location", location);
     }
     if let Some(admin_url) = txt.get("adminurl").filter(|value| !value.is_empty()) {
-        printer.web_page = Some(admin_url.clone());
-        printer
-            .options
-            .insert("printer-more-info".into(), admin_url.clone());
+        printer.set_option("printer-more-info", admin_url);
     }
     for (source, destination) in [
         ("UUID", "device-uuid"),
@@ -312,7 +295,7 @@ fn resolved_printer_entry(
         ("printer-uuid", "printer-uuid"),
     ] {
         if let Some(uuid) = txt.get(source).filter(|value| !value.is_empty()) {
-            printer.options.insert(destination.into(), uuid.clone());
+            printer.set_option(destination, uuid);
         }
     }
 
@@ -361,27 +344,7 @@ fn service_to_partial_entry(service: &AvahiService) -> PrinterEntry {
     options.insert("dnssd-interface".into(), service.interface.to_string());
     options.insert("dnssd-protocol".into(), service.protocol.to_string());
 
-    PrinterEntry {
-        id: String::new(),
-        name: service.name.clone(),
-        is_default: false,
-        printer_local_uri: String::new(),
-        status: PrinterStatus::Ready,
-        queue_status: String::new(),
-        location: String::new(),
-        model: String::new(),
-        device_uri: String::new(),
-        hostname: None,
-        port: None,
-        web_page: None,
-        driver_version: String::new(),
-        paper_size_idx: 0,
-        print_sides_idx: 0,
-        options,
-        supplies: Vec::new(),
-        paper_sizes: Vec::new(),
-        print_sides: Vec::new(),
-    }
+    PrinterEntry::new(String::new(), service.name.clone(), false, options)
 }
 
 fn parse_txt_records(records: Vec<Vec<u8>>) -> BTreeMap<String, String> {
@@ -403,9 +366,9 @@ pub(crate) fn discovered_printers_match(left: &PrinterEntry, right: &PrinterEntr
 }
 
 pub(crate) fn discovered_printer_id(printer: &PrinterEntry) -> Option<String> {
-    let service_type = printer.options.get("dnssd-service-type")?;
-    let domain = printer.options.get("dnssd-domain")?;
-    let name = printer.options.get("dnssd-service-name")?;
+    let service_type = printer.option("dnssd-service-type")?;
+    let domain = printer.option("dnssd-domain")?;
+    let name = printer.option("dnssd-service-name")?;
     Some(format!("dnssd:{service_type}:{domain}:{name}"))
 }
 
@@ -429,10 +392,8 @@ fn printer_application_id(name: &str, domain: &str, hostname: &str, port: u16) -
 
 fn discovery_name(printer: &PrinterEntry) -> Option<String> {
     let name = printer
-        .options
-        .get("dnssd-service-name")
-        .map(String::as_str)
-        .unwrap_or(&printer.name)
+        .option("dnssd-service-name")
+        .unwrap_or(printer.name())
         .trim()
         .to_ascii_lowercase();
 

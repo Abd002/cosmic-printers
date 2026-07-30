@@ -32,7 +32,7 @@ fn fill_printer_attrs<'a>(printers: impl Iterator<Item = &'a mut PrinterEntry>) 
                 if fill_missing_attrs(printer, PRINTER_ATTRIBUTES).is_err() {
                     eprintln!(
                         "failed to load optional attributes for printer {}",
-                        printer.id
+                        printer.id()
                     );
                 }
             });
@@ -110,14 +110,17 @@ pub async fn print_test_page(printer: PrinterEntry) -> Result<i32, Error> {
 /// Converts the normalized printer entry to the raw CUPS type required by `cupsCreateJob`.
 fn destination_for_print_job(printer: PrinterEntry) -> cups_rs::Destination {
     let (name, instance) = {
-        let (name, instance) = split_queue_instance(&printer.id);
+        let (name, instance) = split_queue_instance(printer.id());
         (name.to_string(), instance.map(ToString::to_string))
     };
 
     cups_rs::Destination {
         name,
         instance,
-        is_default: printer.is_default,
-        options: printer.options,
+        is_default: printer.is_default(),
+        options: printer
+            .options()
+            .map(|(name, value)| (name.to_string(), value.to_string()))
+            .collect(),
     }
 }

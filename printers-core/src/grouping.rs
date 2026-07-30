@@ -264,7 +264,9 @@ pub fn group_printers(
     }
 
     for device in &mut devices {
-        device.queues.sort_by(|left, right| left.id.cmp(&right.id));
+        device
+            .queues
+            .sort_by(|left, right| left.id().cmp(right.id()));
     }
 
     devices
@@ -278,10 +280,10 @@ pub fn printers_match(left: &PrinterEntry, right: &PrinterEntry) -> bool {
 
 fn printer_identity(printer: &PrinterEntry) -> DeviceIdentity {
     DeviceIdentity::new(
-        non_empty_option(&printer.options, "device-uuid"),
+        printer.device_uuid(),
         printer_endpoint(printer),
-        non_empty_option(&printer.options, "device-uri"),
-        non_empty_option(&printer.options, "printer-uri-supported"),
+        printer.device_uri(),
+        printer.printer_local_uri(),
     )
 }
 
@@ -300,19 +302,12 @@ fn application_identity(application: &PrinterApplication) -> DeviceIdentity {
 }
 
 fn printer_endpoint(printer: &PrinterEntry) -> Option<(String, u16)> {
-    let host = non_empty_option(&printer.options, "dnssd-address")
-        .map(ToString::to_string)
-        .or_else(|| printer.hostname.clone())?;
+    let host = printer
+        .dnssd_address()
+        .or_else(|| printer.hostname())
+        .map(ToString::to_string)?;
 
-    Some((host, printer.port?))
-}
-
-fn non_empty_option<'a>(options: &'a HashMap<String, String>, name: &str) -> Option<&'a str> {
-    options
-        .get(name)
-        .map(String::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
+    Some((host, printer.port()?))
 }
 
 fn find(parent: &[Cell<usize>], index: usize) -> usize {
@@ -361,7 +356,7 @@ fn uri_identity(uri: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{PrinterApplicationState, PrinterStatus};
+    use crate::PrinterApplicationState;
     use std::collections::BTreeMap;
 
     fn insert_test_endpoint(options: &mut HashMap<String, String>, uri: &str) {
@@ -571,29 +566,15 @@ mod tests {
         let endpoint = options.get("test-endpoint-host").cloned().zip(
             options
                 .get("test-endpoint-port")
-                .and_then(|port| port.parse().ok()),
+                .and_then(|port| port.parse::<u16>().ok()),
         );
 
-        PrinterEntry {
-            id: id.to_string(),
-            name: id.to_string(),
-            is_default: false,
-            printer_local_uri: fallback_uri.to_string(),
-            status: PrinterStatus::Ready,
-            queue_status: String::new(),
-            location: String::new(),
-            model: String::new(),
-            device_uri: device_uri.to_string(),
-            hostname: endpoint.as_ref().map(|(host, _)| host.clone()),
-            port: endpoint.map(|(_, port)| port),
-            web_page: None,
-            driver_version: String::new(),
-            paper_size_idx: 0,
-            print_sides_idx: 0,
-            options,
-            supplies: Vec::new(),
-            paper_sizes: Vec::new(),
-            print_sides: Vec::new(),
+        {
+            if let Some((host, port)) = endpoint {
+                options.insert("endpoint-hostname".to_string(), host);
+                options.insert("endpoint-port".to_string(), port.to_string());
+            }
+            PrinterEntry::new(id, id, false, options)
         }
     }
 
@@ -622,11 +603,9 @@ mod tests {
             "",
             Some(&format!("{host}:{port}")),
         );
-        printer.hostname = Some(host.to_string());
-        printer.port = Some(port);
-        printer
-            .options
-            .insert("dnssd-address".to_string(), host.to_string());
+        printer.set_option("dnssd-address", host);
+        printer.set_option("endpoint-hostname", host);
+        printer.set_option("endpoint-port", port.to_string());
         printer
     }
 
@@ -676,7 +655,7 @@ mod tests {
             Some("LPrint")
         );
         assert_eq!(groups[0].queues().len(), 1);
-        assert_eq!(groups[0].queues()[0].id, "SocketLabel");
+        assert_eq!(groups[0].queues()[0].id(), "SocketLabel");
     }
 
     #[test]

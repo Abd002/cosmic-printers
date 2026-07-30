@@ -30,20 +30,20 @@ pub(crate) async fn start_discovery(context: Context) {
 
 pub async fn add_discovered_printer(mut printer: PrinterEntry) -> Result<String, Error> {
     let actual_queue_name = tokio::task::spawn_blocking(move || {
-        if !printer.device_uri.is_empty() && !printer.options.contains_key("printer-make-and-model")
-        {
+        if printer.device_uri().is_some() && printer.model().is_none() {
             fill_attrs_from_device(&mut printer, PRINTER_ATTRIBUTES)?;
         }
 
         let configured = configured_printers(250)?;
-        let device_uri = (!printer.device_uri.is_empty())
-            .then(|| printer.device_uri.clone())
+        let device_uri = printer
+            .device_uri()
             .ok_or_else(|| Error::MissingDeviceUri {
-                queue: printer.id.clone(),
-            })?;
+                queue: printer.id().to_string(),
+            })?
+            .to_string();
         let queue_name = available_queue_name(&printer, configured.values());
-        let info = printer.name.clone();
-        let location = printer.location.clone();
+        let info = printer.name().to_string();
+        let location = printer.location().unwrap_or_default().to_string();
         let metadata = QueueMetadata::from_discovered_printer(&printer);
 
         let _guard = LocalSocketGuard::engage()?;
@@ -61,7 +61,7 @@ pub async fn add_discovered_printer(mut printer: PrinterEntry) -> Result<String,
 }
 
 pub(crate) async fn auto_add_discovered_printer(context: Context, printer: PrinterEntry) {
-    if printer.device_uri.is_empty() {
+    if printer.device_uri().is_none() {
         return;
     }
 
@@ -92,7 +92,7 @@ pub(crate) async fn auto_add_discovered_printer(context: Context, printer: Print
             Ok(actual_queue_name) => {
                 context
                     .update_discovered_printer(&printer_id, |printer| {
-                        printer.id = actual_queue_name;
+                        printer.set_id(actual_queue_name);
                     })
                     .await;
             }
@@ -135,10 +135,10 @@ async fn fill_cached_discovered_attrs(context: Context) {
         printers
             .into_iter()
             .map(|mut printer| {
-                if !printer.device_uri.is_empty()
+                if printer.device_uri().is_some()
                     && fill_attrs_from_device(&mut printer, PRINTER_ATTRIBUTES).is_ok()
                 {
-                    printer.options.insert(
+                    printer.set_option(
                         "cosmic-discovery-detail-state".to_string(),
                         "enriched".to_string(),
                     );
@@ -302,13 +302,13 @@ fn queue_name(printer: &PrinterEntry) -> Option<String> {
 fn queue_name_base(printer: &PrinterEntry) -> Option<String> {
     device_id_tag(printer, "mdl")
         .or_else(|| device_id_tag(printer, "model"))
-        .or_else(|| non_empty_string(&printer.model))
+        .or_else(|| printer.model().and_then(non_empty_string))
         .or_else(|| non_empty_string(printer_queue_name(printer)))
-        .or_else(|| non_empty_string(&printer.name))
+        .or_else(|| non_empty_string(printer.name()))
 }
 
 fn device_id_tag(printer: &PrinterEntry, tag: &str) -> Option<String> {
-    let device_id = printer.options.get("device-id")?;
+    let device_id = printer.option("device-id")?;
 
     device_id.split(';').find_map(|field| {
         let (key, value) = field.split_once(':')?;
