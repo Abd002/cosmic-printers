@@ -1,12 +1,15 @@
-pub use cosmic_settings_printers_core::*;
+#![warn(missing_docs)]
+#![warn(rustdoc::broken_intra_doc_links)]
+#![deny(unsafe_code)]
 
-pub mod avahi;
-pub mod backend;
-pub mod context;
-pub mod cups_backend;
+//! Server-side implementation of the COSMIC printers service.
+
+mod avahi;
+mod backend;
+mod context;
+mod cups_backend;
 mod ipp;
 mod printer_application_backend;
-pub mod server;
+mod server;
 
-pub use context::Context;
 pub use server::Server;
