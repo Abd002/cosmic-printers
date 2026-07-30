@@ -1,10 +1,11 @@
-use cosmic_settings_printers_core::Error;
 use cups_rs::{
     HttpConnection, IppOperation, IppRequest, IppResponse, IppStatus, IppTag, IppValueTag,
     config::EncryptionMode,
 };
 use std::net::IpAddr;
 use url::Url;
+
+use crate::error::{BackendError, BackendResult};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum NetworkScheme {
@@ -107,18 +108,16 @@ impl ParsedUri {
 }
 
 pub(crate) trait CupsResultExt<T> {
-    fn cups_err(self) -> Result<T, Error>;
+    fn cups_err(self) -> BackendResult<T>;
 }
 
-impl<T, E: std::fmt::Display> CupsResultExt<T> for std::result::Result<T, E> {
-    fn cups_err(self) -> Result<T, Error> {
-        self.map_err(|error| Error::CupsFailed {
-            why: error.to_string(),
-        })
+impl<T> CupsResultExt<T> for cups_rs::Result<T> {
+    fn cups_err(self) -> BackendResult<T> {
+        self.map_err(BackendError::Cups)
     }
 }
 
-pub(crate) fn add_requesting_user(request: &mut IppRequest) -> Result<(), Error> {
+pub(crate) fn add_requesting_user(request: &mut IppRequest) -> BackendResult<()> {
     request
         .add_string(
             IppTag::Operation,
@@ -129,7 +128,7 @@ pub(crate) fn add_requesting_user(request: &mut IppRequest) -> Result<(), Error>
         .cups_err()
 }
 
-pub(crate) fn ensure_success(response: &IppResponse, operation: &str) -> Result<(), Error> {
+pub(crate) fn ensure_success(response: &IppResponse, operation: &str) -> BackendResult<()> {
     let status = response.status();
     if status.is_successful() {
         Ok(())
@@ -137,11 +136,12 @@ pub(crate) fn ensure_success(response: &IppResponse, operation: &str) -> Result<
         match status {
             IppStatus::ErrorNotAuthorized
             | IppStatus::ErrorForbidden
-            | IppStatus::ErrorNotAuthenticated => Err(Error::PermissionDenied {
+            | IppStatus::ErrorNotAuthenticated => Err(BackendError::PermissionDenied {
                 operation: operation.to_string(),
             }),
-            _ => Err(Error::CupsFailed {
-                why: format!("{operation} failed with status {status:?}"),
+            _ => Err(BackendError::IppStatus {
+                operation: operation.to_string(),
+                status: format!("{status:?}"),
             }),
         }
     }
@@ -176,12 +176,10 @@ pub(crate) fn is_local_scheduler_uri(uri: &str) -> bool {
     ParsedUri::parse(uri).is_some_and(|uri| uri.is_local_scheduler())
 }
 
-pub(crate) fn send_ipp_request(request: IppRequest, uri: &str) -> Result<IppResponse, Error> {
+pub(crate) fn send_ipp_request(request: IppRequest, uri: &str) -> BackendResult<IppResponse> {
     let uri_parts = ParsedUri::parse(uri)
         .filter(|uri| uri.scheme.is_ipp())
-        .ok_or_else(|| Error::Internal {
-            why: format!("invalid IPP URI: {uri}"),
-        })?;
+        .ok_or_else(|| BackendError::Internal(format!("invalid IPP URI: {uri}")))?;
     let resource = uri_parts.resource_path();
 
     if uri_parts.is_local_scheduler() {
@@ -194,8 +192,9 @@ pub(crate) fn send_ipp_request(request: IppRequest, uri: &str) -> Result<IppResp
             uri_parts.encryption(),
             Some(250),
         )
-        .map_err(|error| Error::DeviceUnreachable {
-            why: format!("{uri}: {error}"),
+        .map_err(|source| BackendError::DeviceUnreachable {
+            uri: uri.to_string(),
+            source,
         })?;
         request
             .send(&connection, connection.resource_path())
@@ -206,11 +205,11 @@ pub(crate) fn send_ipp_request(request: IppRequest, uri: &str) -> Result<IppResp
 pub(crate) fn printer_attrs_request(
     printer_uri: &str,
     requested_attrs: &[&str],
-) -> Result<IppRequest, Error> {
+) -> BackendResult<IppRequest> {
     if !is_ipp_uri(printer_uri) {
-        return Err(Error::Internal {
-            why: format!("invalid IPP URI: {printer_uri}"),
-        });
+        return Err(BackendError::Internal(format!(
+            "invalid IPP URI: {printer_uri}"
+        )));
     }
     let mut request = IppRequest::new(IppOperation::GetPrinterAttributes).cups_err()?;
 

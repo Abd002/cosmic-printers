@@ -1,13 +1,14 @@
-use cosmic_settings_printers_core::{Error, PrinterEntry};
+use cosmic_settings_printers_core::PrinterEntry;
 use cups_rs::{Destination, enum_destinations};
 use std::collections::HashMap;
 
 use super::conversion::destination_to_printer_entry;
+use crate::error::{BackendError, BackendResult};
 
 /// Lists queues configured in the local CUPS scheduler as normalized printer entries.
 pub(in crate::cups_backend) fn configured_printers(
     timeout_ms: i32,
-) -> Result<HashMap<String, PrinterEntry>, Error> {
+) -> BackendResult<HashMap<String, PrinterEntry>> {
     let destinations = enum_destination_set(
         cups_rs::PRINTER_LOCAL,
         cups_rs::PRINTER_DISCOVERED,
@@ -21,7 +22,7 @@ fn enum_destination_set(
     printer_type: u32,
     printer_mask: u32,
     timeout: i32,
-) -> Result<HashMap<String, Destination>, Error> {
+) -> BackendResult<HashMap<String, Destination>> {
     let mut destinations = HashMap::<String, Destination>::new();
 
     enum_destinations(
@@ -43,9 +44,7 @@ fn enum_destination_set(
         },
         &mut destinations,
     )
-    .map_err(|error| Error::FailedToGetPrinters {
-        why: error.to_string(),
-    })?;
+    .map_err(BackendError::FailedToGetPrinters)?;
 
     Ok(destinations)
 }

@@ -1,5 +1,5 @@
+use crate::error::{BackendError, BackendResult};
 use crate::ipp::CupsResultExt;
-use cosmic_settings_printers_core::Error;
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
 const LOCAL_CUPS_SOCKET: &str = "/run/cups/cups.sock";
@@ -16,10 +16,10 @@ pub(in crate::cups_backend) struct LocalSocketGuard {
 }
 
 impl LocalSocketGuard {
-    pub(in crate::cups_backend) fn engage() -> Result<Self, Error> {
-        let lock = cups_server_lock().lock().map_err(|_| Error::Internal {
-            why: "CUPS server lock was poisoned".to_string(),
-        })?;
+    pub(in crate::cups_backend) fn engage() -> BackendResult<Self> {
+        let lock = cups_server_lock()
+            .lock()
+            .map_err(|_| BackendError::Internal("CUPS server lock was poisoned".to_string()))?;
         let previous = cups_rs::config::get_server();
         cups_rs::config::set_server(Some(LOCAL_CUPS_SOCKET)).cups_err()?;
         Ok(Self {
@@ -29,7 +29,7 @@ impl LocalSocketGuard {
         })
     }
 
-    pub(in crate::cups_backend) fn restore(mut self) -> Result<(), Error> {
+    pub(in crate::cups_backend) fn restore(mut self) -> BackendResult<()> {
         cups_rs::config::set_server(Some(&self.previous)).cups_err()?;
         self.restored = true;
         Ok(())

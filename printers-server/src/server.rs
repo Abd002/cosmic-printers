@@ -4,7 +4,7 @@ use cosmic_settings_printers_core::{
 use futures_util::{Stream, StreamExt};
 use tokio::sync::broadcast;
 
-use crate::{context::Context, cups_backend};
+use crate::{context::Context, cups_backend, error::BackendError};
 
 #[derive(Debug)]
 /// The server-side implementation of the COSMIC printers interface.
@@ -28,7 +28,7 @@ impl Server {
 
     /// Lists the configured CUPS printers.
     pub async fn list_printers(&self) -> Result<Vec<PrinterEntry>, Error> {
-        cups_backend::list_printers().await
+        cups_backend::list_printers().await.map_err(service_error)
     }
 
     /// Starts a background DNS-SD discovery refresh when one is not already running.
@@ -77,7 +77,9 @@ impl Server {
             .discovered_printer(printer_id)
             .await
             .ok_or(Error::PrinterNotFound)?;
-        let actual_queue_name = cups_backend::add_discovered_printer(printer).await?;
+        let actual_queue_name = cups_backend::add_discovered_printer(printer)
+            .await
+            .map_err(service_error)?;
         self.context
             .update_discovered_printer(printer_id, |printer| {
                 printer.set_id(actual_queue_name);
@@ -90,7 +92,9 @@ impl Server {
     /// Deletes a configured printer.
     pub async fn delete_printer(&self, printer_id: &str) -> Result<(), Error> {
         self.printer_entry(printer_id).await?;
-        cups_backend::delete_printer(printer_id).await
+        cups_backend::delete_printer(printer_id)
+            .await
+            .map_err(service_error)
     }
 
     /// Enables or disables accepting jobs for a printer.
@@ -101,13 +105,17 @@ impl Server {
         reason: &str,
     ) -> Result<(), Error> {
         self.printer_entry(printer_id).await?;
-        cups_backend::set_printer_accept_jobs(printer_id, enabled, reason).await
+        cups_backend::set_printer_accept_jobs(printer_id, enabled, reason)
+            .await
+            .map_err(service_error)
     }
 
     /// Sets the system default printer.
     pub async fn set_printer_default(&self, printer_id: &str) -> Result<(), Error> {
         self.printer_entry(printer_id).await?;
-        cups_backend::set_printer_default(printer_id).await
+        cups_backend::set_printer_default(printer_id)
+            .await
+            .map_err(service_error)
     }
 
     /// Sets a default printer option value.
@@ -118,19 +126,25 @@ impl Server {
         values: &[String],
     ) -> Result<(), Error> {
         self.printer_entry(printer_id).await?;
-        cups_backend::set_printer_option_default(printer_id, option, values).await
+        cups_backend::set_printer_option_default(printer_id, option, values)
+            .await
+            .map_err(service_error)
     }
 
     /// Enables or disables a printer.
     pub async fn set_printer_enabled(&self, printer_id: &str, enabled: bool) -> Result<(), Error> {
         self.printer_entry(printer_id).await?;
-        cups_backend::set_printer_enabled(printer_id, enabled).await
+        cups_backend::set_printer_enabled(printer_id, enabled)
+            .await
+            .map_err(service_error)
     }
 
     /// Sets the printer information string.
     pub async fn set_printer_info(&self, printer_id: &str, info: &str) -> Result<(), Error> {
         self.printer_entry(printer_id).await?;
-        cups_backend::set_printer_info(printer_id, info).await
+        cups_backend::set_printer_info(printer_id, info)
+            .await
+            .map_err(service_error)
     }
 
     /// Sets the printer location.
@@ -140,44 +154,58 @@ impl Server {
         location: &str,
     ) -> Result<(), Error> {
         self.printer_entry(printer_id).await?;
-        cups_backend::set_printer_location(printer_id, location).await
+        cups_backend::set_printer_location(printer_id, location)
+            .await
+            .map_err(service_error)
     }
 
     /// Enables or disables printer sharing.
     pub async fn set_printer_shared(&self, printer_id: &str, shared: bool) -> Result<(), Error> {
         self.printer_entry(printer_id).await?;
-        cups_backend::set_printer_shared(printer_id, shared).await
+        cups_backend::set_printer_shared(printer_id, shared)
+            .await
+            .map_err(service_error)
     }
 
     /// Prints a test page and returns its job ID.
     pub async fn print_test_page(&self, printer_id: &str) -> Result<i32, Error> {
         let printer = self.printer_entry(printer_id).await?;
 
-        cups_backend::print_test_page(printer).await
+        cups_backend::print_test_page(printer)
+            .await
+            .map_err(service_error)
     }
 
     /// Lists jobs for a configured printer.
     pub async fn get_jobs(&self, printer_id: &str, filter: &str) -> Result<Vec<JobInfo>, Error> {
         let printer = self.printer_entry(printer_id).await?;
-        cups_backend::get_jobs(&printer, filter).await
+        cups_backend::get_jobs(&printer, filter)
+            .await
+            .map_err(service_error)
     }
 
     /// Pauses a job.
     pub async fn pause_job(&self, printer_id: &str, job_id: i32) -> Result<(), Error> {
         let printer = self.printer_entry(printer_id).await?;
-        cups_backend::pause_job(&printer, job_id).await
+        cups_backend::pause_job(&printer, job_id)
+            .await
+            .map_err(service_error)
     }
 
     /// Resumes a job.
     pub async fn resume_job(&self, printer_id: &str, job_id: i32) -> Result<(), Error> {
         let printer = self.printer_entry(printer_id).await?;
-        cups_backend::resume_job(&printer, job_id).await
+        cups_backend::resume_job(&printer, job_id)
+            .await
+            .map_err(service_error)
     }
 
     /// Cancels a job.
     pub async fn cancel_job(&self, printer_id: &str, job_id: i32) -> Result<(), Error> {
         let printer = self.printer_entry(printer_id).await?;
-        cups_backend::cancel_job(&printer, job_id).await
+        cups_backend::cancel_job(&printer, job_id)
+            .await
+            .map_err(service_error)
     }
 
     async fn printer_entry(&self, printer_id: &str) -> Result<PrinterEntry, Error> {
@@ -187,4 +215,9 @@ impl Server {
             .find(|printer| printer.id() == printer_id)
             .ok_or(Error::PrinterNotFound)
     }
+}
+
+fn service_error(error: BackendError) -> Error {
+    tracing::warn!(error = ?error, "printer backend request failed");
+    error.into()
 }
