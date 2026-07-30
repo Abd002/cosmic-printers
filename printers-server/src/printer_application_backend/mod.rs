@@ -4,7 +4,16 @@ use cosmic_settings_printers_core::{PrinterApplication, PrinterApplicationState}
 
 use crate::context::Context;
 
-pub(crate) fn spawn_system_probe(context: Context, application: PrinterApplication) {
+pub(crate) async fn record_discovery(context: Context, application: PrinterApplication) {
+    if context
+        .merge_printer_application_discovery(application.clone())
+        .await
+    {
+        spawn_system_probe(context, application);
+    }
+}
+
+fn spawn_system_probe(context: Context, application: PrinterApplication) {
     tokio::spawn(async move {
         let application_id = application.id.clone();
         let result = system::get_system_attributes(application.system_uri).await;
@@ -41,7 +50,7 @@ async fn apply_probe_result(
     }
 
     context
-        .update_printer_application(application_id, move |application| {
+        .update_printer_application_probe(application_id, move |application| {
             if let Some(probe) = probe {
                 application.system_uuid = probe.system_uuid;
                 application.make_and_model = probe.make_and_model;
@@ -78,7 +87,9 @@ mod tests {
     #[tokio::test]
     async fn find_devices_support_marks_application_ready() {
         let context = Context::new();
-        context.upsert_printer_application(application()).await;
+        context
+            .merge_printer_application_discovery(application())
+            .await;
         apply_probe_result(
             &context,
             "app",
@@ -90,7 +101,7 @@ mod tests {
         )
         .await;
 
-        let applications = context.list_printer_applications().await;
+        let applications = context.printer_applications_cached().await;
         assert_eq!(applications[0].state, PrinterApplicationState::Ready);
         assert_eq!(
             applications[0].system_uuid.as_deref(),
@@ -101,7 +112,9 @@ mod tests {
     #[tokio::test]
     async fn missing_find_devices_support_marks_application_unsupported() {
         let context = Context::new();
-        context.upsert_printer_application(application()).await;
+        context
+            .merge_printer_application_discovery(application())
+            .await;
         apply_probe_result(
             &context,
             "app",
@@ -113,7 +126,7 @@ mod tests {
         )
         .await;
 
-        let applications = context.list_printer_applications().await;
+        let applications = context.printer_applications_cached().await;
         assert_eq!(applications[0].state, PrinterApplicationState::Unsupported);
     }
 
@@ -131,10 +144,12 @@ mod tests {
             (system::ProbeError::Failed, PrinterApplicationState::Failed),
         ] {
             let context = Context::new();
-            context.upsert_printer_application(application()).await;
+            context
+                .merge_printer_application_discovery(application())
+                .await;
             apply_probe_result(&context, "app", Err(error)).await;
 
-            let applications = context.list_printer_applications().await;
+            let applications = context.printer_applications_cached().await;
             assert_eq!(applications.len(), 1);
             assert_eq!(applications[0].state, expected);
         }

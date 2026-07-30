@@ -11,12 +11,6 @@ use super::polkit_helper;
 use crate::avahi::{discovered_printer_id, discovered_printers_match};
 use crate::context::Context;
 
-pub async fn list_discovered_printers(context: Context) -> Result<Vec<PrinterEntry>, Error> {
-    start_discovery(context.clone()).await;
-
-    Ok(context.discovered_printers().await)
-}
-
 pub(crate) async fn start_discovery(context: Context) {
     let task_context = context.clone();
     if context.start_discovery_if_idle().await {
@@ -129,7 +123,7 @@ pub(crate) async fn delete_stale_discovered_printers(active_printer_ids: HashSet
 }
 
 async fn fill_cached_discovered_attrs(context: Context) {
-    let printers = context.discovered_printers().await;
+    let printers = context.discovered_printers_cached().await;
 
     let Ok(printers) = tokio::task::spawn_blocking(move || {
         printers
