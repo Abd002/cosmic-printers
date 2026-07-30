@@ -3,10 +3,11 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Mutex, OnceLock};
 
-use cosmic_settings_printers_core::{Error, PrinterEntry};
+use cosmic_settings_printers_core::PrinterEntry;
 
 use super::helpers::split_queue_instance;
 use crate::avahi::discovered_printer_id;
+use crate::error::{BackendError, BackendResult};
 
 const CONFIG_ID: &str = "com.system76.CosmicSettings.Printers";
 const CONFIG_VERSION: u64 = 1;
@@ -33,46 +34,44 @@ struct MetadataStore {
 }
 
 impl MetadataStore {
-    fn new() -> Result<Self, Error> {
+    fn new() -> BackendResult<Self> {
         Ok(Self {
             config: config()?,
             write_lock: Mutex::new(()),
         })
     }
 
-    fn lock(&self) -> Result<std::sync::MutexGuard<'_, ()>, Error> {
-        self.write_lock.lock().map_err(|_| Error::Internal {
-            why: "metadata store lock was poisoned".to_string(),
-        })
+    fn lock(&self) -> BackendResult<std::sync::MutexGuard<'_, ()>> {
+        self.write_lock
+            .lock()
+            .map_err(|_| BackendError::Internal("metadata store lock was poisoned".to_string()))
     }
 
-    fn load_unlocked(&self) -> Result<MetadataMap, Error> {
+    fn load_unlocked(&self) -> BackendResult<MetadataMap> {
         load_from(&self.config)
     }
 
-    fn write_unlocked(&self, entries: MetadataMap) -> Result<(), Error> {
+    fn write_unlocked(&self, entries: MetadataMap) -> BackendResult<()> {
         self.config
             .set(METADATA_KEY, entries)
-            .map_err(|error| Error::ConfigFailed {
-                why: error.to_string(),
-            })
+            .map_err(BackendError::Config)
     }
 
-    fn save(&self, queue_name: &str, metadata: QueueMetadata) -> Result<(), Error> {
+    fn save(&self, queue_name: &str, metadata: QueueMetadata) -> BackendResult<()> {
         let _lock = self.lock()?;
         let mut entries = self.load_unlocked()?;
         entries.insert(queue_name.to_string(), metadata);
         self.write_unlocked(entries)
     }
 
-    fn remove(&self, queue_name: &str) -> Result<(), Error> {
+    fn remove(&self, queue_name: &str) -> BackendResult<()> {
         let _lock = self.lock()?;
         let mut entries = self.load_unlocked()?;
         entries.remove(queue_name);
         self.write_unlocked(entries)
     }
 
-    fn contains_discovered_printer_id(&self, printer_id: &str) -> Result<bool, Error> {
+    fn contains_discovered_printer_id(&self, printer_id: &str) -> BackendResult<bool> {
         let _lock = self.lock()?;
         let entries = self.load_unlocked()?;
 
@@ -85,7 +84,7 @@ impl MetadataStore {
         &self,
         printer_id: &str,
         printer: &PrinterEntry,
-    ) -> Result<(), Error> {
+    ) -> BackendResult<()> {
         let _lock = self.lock()?;
         let mut entries = self.load_unlocked()?;
 
@@ -102,7 +101,7 @@ impl MetadataStore {
     fn stale_discovered_queue_names(
         &self,
         active_printer_ids: &HashSet<String>,
-    ) -> Result<Vec<String>, Error> {
+    ) -> BackendResult<Vec<String>> {
         let _lock = self.lock()?;
         let entries = self.load_unlocked()?;
 
@@ -118,7 +117,7 @@ impl MetadataStore {
     fn retain_for_configured_queues<'a>(
         &self,
         queue_names: impl IntoIterator<Item = &'a str>,
-    ) -> Result<(), Error> {
+    ) -> BackendResult<()> {
         let _lock = self.lock()?;
         let mut entries = self.load_unlocked()?;
         let queue_names = queue_names.into_iter().collect::<HashSet<_>>();
@@ -126,7 +125,7 @@ impl MetadataStore {
         self.write_unlocked(entries)
     }
 
-    fn apply(&self, printers: &mut HashMap<String, PrinterEntry>) -> Result<(), Error> {
+    fn apply(&self, printers: &mut HashMap<String, PrinterEntry>) -> BackendResult<()> {
         let _lock = self.lock()?;
         let entries = self.load_unlocked()?;
 
@@ -143,65 +142,62 @@ impl MetadataStore {
     }
 }
 
-fn store() -> Result<&'static MetadataStore, Error> {
-    static STORE: OnceLock<Result<MetadataStore, Error>> = OnceLock::new();
-    match STORE.get_or_init(MetadataStore::new) {
-        Ok(store) => Ok(store),
-        Err(error) => Err(Error::ConfigFailed {
-            why: error.to_string(),
-        }),
+fn store() -> BackendResult<&'static MetadataStore> {
+    static STORE: OnceLock<MetadataStore> = OnceLock::new();
+    if let Some(store) = STORE.get() {
+        return Ok(store);
     }
+
+    let candidate = MetadataStore::new()?;
+    let _ = STORE.set(candidate);
+    STORE
+        .get()
+        .ok_or_else(|| BackendError::Internal("metadata store initialization failed".to_string()))
 }
 
-pub(super) fn save(queue_name: &str, metadata: QueueMetadata) -> Result<(), Error> {
+pub(super) fn save(queue_name: &str, metadata: QueueMetadata) -> BackendResult<()> {
     store()?.save(queue_name, metadata)
 }
 
-pub(super) fn remove(queue_name: &str) -> Result<(), Error> {
+pub(super) fn remove(queue_name: &str) -> BackendResult<()> {
     store()?.remove(queue_name)
 }
 
-pub(super) fn contains_discovered_printer_id(printer_id: &str) -> Result<bool, Error> {
+pub(super) fn contains_discovered_printer_id(printer_id: &str) -> BackendResult<bool> {
     store()?.contains_discovered_printer_id(printer_id)
 }
 
 pub(super) fn refresh_discovered_printer(
     printer_id: &str,
     printer: &PrinterEntry,
-) -> Result<(), Error> {
+) -> BackendResult<()> {
     store()?.refresh_discovered_printer(printer_id, printer)
 }
 
 pub(super) fn stale_discovered_queue_names(
     active_printer_ids: &HashSet<String>,
-) -> Result<Vec<String>, Error> {
+) -> BackendResult<Vec<String>> {
     store()?.stale_discovered_queue_names(active_printer_ids)
 }
 
 pub(super) fn retain_for_configured_queues<'a>(
     queue_names: impl IntoIterator<Item = &'a str>,
-) -> Result<(), Error> {
+) -> BackendResult<()> {
     store()?.retain_for_configured_queues(queue_names)
 }
 
-pub(super) fn apply(printers: &mut HashMap<String, PrinterEntry>) -> Result<(), Error> {
+pub(super) fn apply(printers: &mut HashMap<String, PrinterEntry>) -> BackendResult<()> {
     store()?.apply(printers)
 }
 
-fn config() -> Result<cosmic_config::Config, Error> {
-    cosmic_config::Config::new_state(CONFIG_ID, CONFIG_VERSION).map_err(|error| {
-        Error::ConfigFailed {
-            why: error.to_string(),
-        }
-    })
+fn config() -> BackendResult<cosmic_config::Config> {
+    cosmic_config::Config::new_state(CONFIG_ID, CONFIG_VERSION).map_err(BackendError::Config)
 }
 
-fn load_from(config: &cosmic_config::Config) -> Result<MetadataMap, Error> {
+fn load_from(config: &cosmic_config::Config) -> BackendResult<MetadataMap> {
     match config.get(METADATA_KEY) {
         Ok(entries) => Ok(entries),
         Err(cosmic_config::Error::NotFound) => Ok(HashMap::new()),
-        Err(error) => Err(Error::ConfigFailed {
-            why: error.to_string(),
-        }),
+        Err(error) => Err(BackendError::Config(error)),
     }
 }

@@ -41,10 +41,20 @@ async fn apply_probe_result(
         Err(system::ProbeError::AuthenticationRequired) => {
             state = PrinterApplicationState::AuthenticationRequired;
         }
-        Err(system::ProbeError::Unreachable) => {
+        Err(system::ProbeError::Unreachable { why }) => {
+            tracing::warn!(
+                application_id,
+                why,
+                "printer application system probe was unreachable"
+            );
             state = PrinterApplicationState::Unreachable;
         }
-        Err(system::ProbeError::Failed) => {
+        Err(system::ProbeError::Failed { why }) => {
+            tracing::warn!(
+                application_id,
+                why,
+                "printer application system probe failed"
+            );
             state = PrinterApplicationState::Failed;
         }
     }
@@ -138,10 +148,17 @@ mod tests {
                 PrinterApplicationState::AuthenticationRequired,
             ),
             (
-                system::ProbeError::Unreachable,
+                system::ProbeError::Unreachable {
+                    why: "unreachable".into(),
+                },
                 PrinterApplicationState::Unreachable,
             ),
-            (system::ProbeError::Failed, PrinterApplicationState::Failed),
+            (
+                system::ProbeError::Failed {
+                    why: "failed".into(),
+                },
+                PrinterApplicationState::Failed,
+            ),
         ] {
             let context = Context::new();
             context

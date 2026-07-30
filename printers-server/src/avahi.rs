@@ -85,33 +85,86 @@ enum ResolvedServiceEntry {
     PrinterApplication(PrinterApplication),
 }
 
-pub async fn discover_printers_into_cache(context: Context) {
-    let Ok(connection) = Connection::system().await else {
-        return;
-    };
-    let Ok(server) = AvahiServerProxy::new(&connection).await else {
-        return;
-    };
+#[derive(Debug, Default)]
+pub(crate) struct DiscoverySummary {
+    pub services_seen: usize,
+    pub printers_resolved: usize,
+    pub applications_resolved: usize,
+    pub warnings: usize,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum DiscoveryError {
+    #[error("failed to initialize Avahi discovery at {stage}: {source}")]
+    Setup {
+        stage: &'static str,
+        #[source]
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
+
+    #[error("Avahi message stream failed: {0}")]
+    Stream(#[source] zbus::Error),
+}
+
+impl DiscoveryError {
+    fn setup(stage: &'static str, source: impl std::error::Error + Send + Sync + 'static) -> Self {
+        Self::Setup {
+            stage,
+            source: Box::new(source),
+        }
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+enum ResolveError {
+    #[error("service resolution timed out")]
+    Timeout,
+
+    #[error("Avahi service resolution failed: {0}")]
+    Zbus(#[source] zbus::Error),
+
+    #[error("unsupported DNS-SD service type '{0}'")]
+    UnsupportedServiceType(String),
+}
+
+pub(crate) async fn discover_printers_into_cache(
+    context: Context,
+) -> Result<DiscoverySummary, DiscoveryError> {
+    let connection = Connection::system()
+        .await
+        .map_err(|error| DiscoveryError::setup("system bus connection", error))?;
+    let server = AvahiServerProxy::new(&connection)
+        .await
+        .map_err(|error| DiscoveryError::setup("server proxy", error))?;
 
     let rule_builder = MatchRule::builder().msg_type(Type::Signal);
-    let Ok(rule_builder) = rule_builder.sender(AVAHI_SERVICE) else {
-        return;
-    };
-    let Ok(rule_builder) = rule_builder.interface(AVAHI_SERVICE_BROWSER_IFACE) else {
-        return;
-    };
-    let Ok(rule_builder) = rule_builder.member("ItemNew") else {
-        return;
-    };
+    let rule_builder = rule_builder
+        .sender(AVAHI_SERVICE)
+        .map_err(|error| DiscoveryError::setup("match-rule sender", error))?;
+    let rule_builder = rule_builder
+        .interface(AVAHI_SERVICE_BROWSER_IFACE)
+        .map_err(|error| DiscoveryError::setup("match-rule interface", error))?;
+    let rule_builder = rule_builder
+        .member("ItemNew")
+        .map_err(|error| DiscoveryError::setup("match-rule member", error))?;
     let rule = rule_builder.build();
-    let Ok(mut stream) = MessageStream::for_match_rule(rule, &connection, Some(5000)).await else {
-        return;
-    };
+    let mut stream = MessageStream::for_match_rule(rule, &connection, Some(5000))
+        .await
+        .map_err(|error| DiscoveryError::setup("message stream", error))?;
+    let mut summary = DiscoverySummary::default();
 
     for service_type in SERVICE_TYPES {
-        let _ = server
+        if let Err(error) = server
             .service_browser_new(AVAHI_IF_UNSPEC, AVAHI_PROTO_UNSPEC, service_type, "", 0)
-            .await;
+            .await
+        {
+            summary.warnings += 1;
+            tracing::warn!(
+                service_type,
+                error = ?error,
+                "failed to create Avahi service browser"
+            );
+        }
     }
 
     let mut services = HashSet::<AvahiService>::new();
@@ -123,13 +176,22 @@ pub async fn discover_printers_into_cache(context: Context) {
         tokio::select! {
             _ = &mut deadline => break,
             message = stream.try_next() => {
-                let Ok(Some(message)) = message else {
-                    break;
+                let message = match message {
+                    Ok(Some(message)) => message,
+                    Ok(None) => break,
+                    Err(error) => return Err(DiscoveryError::Stream(error)),
                 };
-                let Ok((interface, protocol, name, service_type, domain, _flags)) =
-                    message.body().deserialize::<(i32, i32, String, String, String, u32)>()
-                else {
-                    continue;
+                let (interface, protocol, name, service_type, domain, _flags) =
+                    match message.body().deserialize::<(i32, i32, String, String, String, u32)>() {
+                        Ok(body) => body,
+                        Err(error) => {
+                            summary.warnings += 1;
+                            tracing::warn!(
+                                error = ?error,
+                                "failed to deserialize Avahi service signal"
+                            );
+                            continue;
+                        }
                 };
                 if !SERVICE_TYPES.contains(&service_type.as_str()) {
                     continue;
@@ -144,17 +206,32 @@ pub async fn discover_printers_into_cache(context: Context) {
                 };
 
                 if services.insert(service.clone()) {
+                    summary.services_seen += 1;
                     if service_kind(&service.service_type) == Some(ResolvedServiceKind::Printer) {
                         merge_printer_into_cache(&context, service_to_partial_entry(&service)).await;
                     }
-                    let Ok(server) = AvahiServerProxy::new(&connection).await else {
-                        continue;
+                    let server = match AvahiServerProxy::new(&connection).await {
+                        Ok(server) => server,
+                        Err(error) => {
+                            summary.warnings += 1;
+                            tracing::warn!(
+                                service_name = service.name,
+                                service_type = service.service_type,
+                                error = ?error,
+                                "failed to create Avahi resolver proxy"
+                            );
+                            continue;
+                        }
                     };
+                    let service_name = service.name.clone();
+                    let service_type = service.service_type.clone();
                     match resolve_service_entry(server, service).await {
-                        Some(ResolvedServiceEntry::Printer(printer)) => {
+                        Ok(ResolvedServiceEntry::Printer(printer)) => {
+                            summary.printers_resolved += 1;
                             merge_printer_into_cache(&context, printer).await;
                         }
-                        Some(ResolvedServiceEntry::PrinterApplication(application)) => {
+                        Ok(ResolvedServiceEntry::PrinterApplication(application)) => {
+                            summary.applications_resolved += 1;
                             active_application_ids.insert(application.id.clone());
                             crate::printer_application_backend::record_discovery(
                                 context.clone(),
@@ -162,7 +239,15 @@ pub async fn discover_printers_into_cache(context: Context) {
                             )
                             .await;
                         }
-                        None => {}
+                        Err(error) => {
+                            summary.warnings += 1;
+                            tracing::warn!(
+                                service_name,
+                                service_type,
+                                error = ?error,
+                                "failed to resolve Avahi service"
+                            );
+                        }
                     }
                 }
             }
@@ -170,6 +255,7 @@ pub async fn discover_printers_into_cache(context: Context) {
     }
 
     retain_seen_services(&context, services, active_application_ids).await;
+    Ok(summary)
 }
 
 async fn merge_printer_into_cache(context: &Context, printer: PrinterEntry) {
@@ -206,8 +292,8 @@ async fn retain_seen_services(
 async fn resolve_service_entry(
     server: AvahiServerProxy<'_>,
     service: AvahiService,
-) -> Option<ResolvedServiceEntry> {
-    let resolved = tokio::time::timeout(
+) -> Result<ResolvedServiceEntry, ResolveError> {
+    let resolved = match tokio::time::timeout(
         RESOLVE_TIMEOUT,
         server.resolve_service(
             service.interface,
@@ -220,8 +306,11 @@ async fn resolve_service_entry(
         ),
     )
     .await
-    .ok()?
-    .ok()?;
+    {
+        Ok(Ok(resolved)) => resolved,
+        Ok(Err(error)) => return Err(ResolveError::Zbus(error)),
+        Err(_) => return Err(ResolveError::Timeout),
+    };
 
     let (
         interface,
@@ -246,11 +335,13 @@ async fn resolve_service_entry(
     };
     let txt = parse_txt_records(txt);
 
-    match service_kind(&service.service_type)? {
-        ResolvedServiceKind::Printer => Some(ResolvedServiceEntry::Printer(
-            resolved_printer_entry(service, hostname, address, port, txt),
-        )),
-        ResolvedServiceKind::PrinterApplication => Some(ResolvedServiceEntry::PrinterApplication(
+    match service_kind(&service.service_type)
+        .ok_or_else(|| ResolveError::UnsupportedServiceType(service.service_type.clone()))?
+    {
+        ResolvedServiceKind::Printer => Ok(ResolvedServiceEntry::Printer(resolved_printer_entry(
+            service, hostname, address, port, txt,
+        ))),
+        ResolvedServiceKind::PrinterApplication => Ok(ResolvedServiceEntry::PrinterApplication(
             resolved_printer_application(service, hostname, address, port, txt),
         )),
     }

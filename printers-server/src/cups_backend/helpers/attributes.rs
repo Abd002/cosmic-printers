@@ -1,6 +1,7 @@
 use super::conversion::refresh_printer_entry;
+use crate::error::{BackendError, BackendResult};
 use crate::ipp::{CupsResultExt, ensure_success, printer_attrs_request, send_ipp_request};
-use cosmic_settings_printers_core::{Error, PrinterEntry};
+use cosmic_settings_printers_core::PrinterEntry;
 use cups_rs::IppResponse;
 
 pub(in crate::cups_backend) const PRINTER_ATTRIBUTES: &[&str] = &[
@@ -30,7 +31,7 @@ pub(in crate::cups_backend) const PRINTER_ATTRIBUTES: &[&str] = &[
 pub(in crate::cups_backend) fn fill_missing_attrs(
     printer: &mut PrinterEntry,
     attrs: &[&str],
-) -> Result<(), Error> {
+) -> BackendResult<()> {
     let missing = attrs
         .iter()
         .copied()
@@ -41,11 +42,12 @@ pub(in crate::cups_backend) fn fill_missing_attrs(
         return Ok(());
     }
 
-    let printer_uri = printer
-        .printer_local_uri()
-        .ok_or_else(|| Error::MissingDeviceUri {
-            queue: printer.id().to_string(),
-        })?;
+    let printer_uri =
+        printer
+            .printer_local_uri()
+            .ok_or_else(|| BackendError::MissingDeviceUri {
+                queue: printer.id().to_string(),
+            })?;
     let request = printer_attrs_request(printer_uri, &missing)?;
     let response = request.send_default("/").cups_err()?;
     ensure_success(&response, "Get-Printer-Attributes")?;
@@ -59,9 +61,9 @@ pub(in crate::cups_backend) fn fill_missing_attrs(
 pub(in crate::cups_backend) fn fill_attrs_from_device(
     printer: &mut PrinterEntry,
     attrs: &[&str],
-) -> Result<(), Error> {
+) -> BackendResult<()> {
     let Some(device_uri) = printer.device_uri().map(str::to_owned) else {
-        return Err(Error::MissingDeviceUri {
+        return Err(BackendError::MissingDeviceUri {
             queue: printer.id().to_string(),
         });
     };
@@ -74,17 +76,10 @@ fn fill_attrs_from_device_uri(
     printer: &mut PrinterEntry,
     device_uri: &str,
     attrs: &[&str],
-) -> Result<(), Error> {
-    let queue_name = printer.id().to_string();
-
+) -> BackendResult<()> {
     let printer_uri = device_uri;
     let request = printer_attrs_request(printer_uri, attrs)?;
-    let response = send_ipp_request(request, printer_uri).map_err(|error| match error {
-        Error::DeviceUnreachable { why } => Error::DeviceUnreachable {
-            why: format!("{queue_name}: {why}"),
-        },
-        error => error,
-    })?;
+    let response = send_ipp_request(request, printer_uri)?;
     ensure_success(&response, "Get-Printer-Attributes")?;
 
     printer.merge_options(merge_response_attrs(&response, attrs));

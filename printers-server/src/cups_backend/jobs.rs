@@ -1,9 +1,10 @@
-use cosmic_settings_printers_core::{Error, JobInfo, JobState, PrinterEntry};
+use cosmic_settings_printers_core::{JobInfo, JobState, PrinterEntry};
 use cups_rs::{IppAttribute, IppOperation, IppRequest, IppTag, IppValueTag};
 
 use super::helpers::{
     CupsResultExt, add_requesting_user, ensure_success, local_printer_uri, send_ipp_request,
 };
+use crate::error::{BackendError, BackendResult};
 
 const JOB_ATTRIBUTES: &[&str] = &[
     "job-id",
@@ -21,7 +22,7 @@ const JOB_ATTRIBUTES: &[&str] = &[
     "time-at-completed",
 ];
 
-pub async fn get_jobs(printer: &PrinterEntry, filter: &str) -> Result<Vec<JobInfo>, Error> {
+pub async fn get_jobs(printer: &PrinterEntry, filter: &str) -> BackendResult<Vec<JobInfo>> {
     let printer_id = printer.id().to_string();
     let printer_uri = resolve_job_printer_uri(printer);
     let filter = filter.to_string();
@@ -31,15 +32,13 @@ pub async fn get_jobs(printer: &PrinterEntry, filter: &str) -> Result<Vec<JobInf
         let response = send_ipp_request(request, &printer_uri)?;
         ensure_success(&response, "Get-Jobs")?;
 
-        Ok::<Vec<JobInfo>, Error>(parse_jobs(response.attributes(), &printer_id))
+        Ok(parse_jobs(response.attributes(), &printer_id))
     })
     .await
-    .map_err(|error| Error::Internal {
-        why: error.to_string(),
-    })?
+    .map_err(BackendError::Join)?
 }
 
-fn get_jobs_request(printer_uri: &str, which_jobs: &str) -> Result<IppRequest, Error> {
+fn get_jobs_request(printer_uri: &str, which_jobs: &str) -> BackendResult<IppRequest> {
     let mut request = IppRequest::new(IppOperation::GetJobs).cups_err()?;
 
     add_operation_defaults(&mut request)?;
@@ -83,15 +82,15 @@ fn which_jobs(filter: &str) -> &str {
     }
 }
 
-pub async fn cancel_job(printer: &PrinterEntry, job_id: i32) -> Result<(), Error> {
+pub async fn cancel_job(printer: &PrinterEntry, job_id: i32) -> BackendResult<()> {
     send_job_request(IppOperation::CancelJob, printer, job_id).await
 }
 
-pub async fn pause_job(printer: &PrinterEntry, job_id: i32) -> Result<(), Error> {
+pub async fn pause_job(printer: &PrinterEntry, job_id: i32) -> BackendResult<()> {
     send_job_request(IppOperation::HoldJob, printer, job_id).await
 }
 
-pub async fn resume_job(printer: &PrinterEntry, job_id: i32) -> Result<(), Error> {
+pub async fn resume_job(printer: &PrinterEntry, job_id: i32) -> BackendResult<()> {
     send_job_request(IppOperation::ReleaseJob, printer, job_id).await
 }
 
@@ -99,7 +98,7 @@ async fn send_job_request(
     operation: IppOperation,
     printer: &PrinterEntry,
     job_id: i32,
-) -> Result<(), Error> {
+) -> BackendResult<()> {
     let printer_uri = resolve_job_printer_uri(printer);
 
     tokio::task::spawn_blocking(move || {
@@ -124,12 +123,10 @@ async fn send_job_request(
         ensure_success(&response, "job operation")
     })
     .await
-    .map_err(|error| Error::Internal {
-        why: error.to_string(),
-    })?
+    .map_err(BackendError::Join)?
 }
 
-fn add_operation_defaults(request: &mut IppRequest) -> Result<(), Error> {
+fn add_operation_defaults(request: &mut IppRequest) -> BackendResult<()> {
     request
         .add_string(
             IppTag::Operation,

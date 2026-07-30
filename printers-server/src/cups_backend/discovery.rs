@@ -1,4 +1,4 @@
-use cosmic_settings_printers_core::{Error, PrinterEntry};
+use cosmic_settings_printers_core::PrinterEntry;
 use cups_rs::{IppOperation, IppRequest, IppTag, IppValueTag};
 use std::collections::HashSet;
 
@@ -10,6 +10,7 @@ use super::metadata::{self, QueueMetadata};
 use super::polkit_helper;
 use crate::avahi::{discovered_printer_id, discovered_printers_match};
 use crate::context::Context;
+use crate::error::{BackendError, BackendResult};
 
 pub(crate) async fn start_discovery(context: Context) {
     let Some(discovery_lease) = context.try_start_discovery() else {
@@ -18,12 +19,25 @@ pub(crate) async fn start_discovery(context: Context) {
 
     tokio::spawn(async move {
         let _discovery_lease = discovery_lease;
-        crate::avahi::discover_printers_into_cache(context.clone()).await;
+        match crate::avahi::discover_printers_into_cache(context.clone()).await {
+            Ok(summary) => {
+                tracing::debug!(
+                    services_seen = summary.services_seen,
+                    printers_resolved = summary.printers_resolved,
+                    applications_resolved = summary.applications_resolved,
+                    warnings = summary.warnings,
+                    "printer discovery refresh completed"
+                );
+            }
+            Err(error) => {
+                tracing::warn!(error = ?error, "printer discovery refresh failed");
+            }
+        }
         fill_cached_discovered_attrs(context).await;
     });
 }
 
-pub async fn add_discovered_printer(mut printer: PrinterEntry) -> Result<String, Error> {
+pub async fn add_discovered_printer(mut printer: PrinterEntry) -> BackendResult<String> {
     let actual_queue_name = tokio::task::spawn_blocking(move || {
         if printer.device_uri().is_some() && printer.model().is_none() {
             fill_attrs_from_device(&mut printer, PRINTER_ATTRIBUTES)?;
@@ -32,7 +46,7 @@ pub async fn add_discovered_printer(mut printer: PrinterEntry) -> Result<String,
         let configured = configured_printers(250)?;
         let device_uri = printer
             .device_uri()
-            .ok_or_else(|| Error::MissingDeviceUri {
+            .ok_or_else(|| BackendError::MissingDeviceUri {
                 queue: printer.id().to_string(),
             })?
             .to_string();
@@ -45,12 +59,10 @@ pub async fn add_discovered_printer(mut printer: PrinterEntry) -> Result<String,
         let actual_queue_name = create_local_printer(&queue_name, &device_uri, &info, &location)?;
         guard.restore()?;
         metadata::save(&actual_queue_name, metadata)?;
-        Ok::<_, Error>(actual_queue_name)
+        Ok::<_, BackendError>(actual_queue_name)
     })
     .await
-    .map_err(|error| Error::Internal {
-        why: error.to_string(),
-    })??;
+    .map_err(BackendError::Join)??;
 
     make_printer_permanent(&actual_queue_name).await?;
     Ok(actual_queue_name)
@@ -73,11 +85,19 @@ pub(crate) async fn auto_add_discovered_printer(context: Context, printer: Print
     {
         Ok(Ok(already_configured)) => already_configured,
         Ok(Err(error)) => {
-            eprintln!("failed to load discovered printer metadata: {error:?}");
+            tracing::warn!(
+                printer_id,
+                error = ?error,
+                "failed to load discovered printer metadata"
+            );
             false
         }
         Err(error) => {
-            eprintln!("failed to load discovered printer metadata: {error:?}");
+            tracing::warn!(
+                printer_id,
+                error = ?error,
+                "metadata lookup task failed"
+            );
             false
         }
     };
@@ -88,12 +108,13 @@ pub(crate) async fn auto_add_discovered_printer(context: Context, printer: Print
             move || metadata::refresh_discovered_printer(&printer_id, &printer)
         })
         .await
-        .unwrap_or_else(|error| {
-            Err(Error::Internal {
-                why: error.to_string(),
-            })
-        }) {
-            eprintln!("failed to refresh discovered printer metadata: {error:?}");
+        .unwrap_or_else(|error| Err(BackendError::Join(error)))
+        {
+            tracing::warn!(
+                printer_id,
+                error = ?error,
+                "failed to refresh discovered printer metadata"
+            );
         }
         return;
     }
@@ -112,7 +133,11 @@ pub(crate) async fn auto_add_discovered_printer(context: Context, printer: Print
                     .await;
             }
             Err(error) => {
-                eprintln!("failed to auto-add discovered printer {printer_id}: {error:?}");
+                tracing::warn!(
+                    printer_id,
+                    error = ?error,
+                    "failed to auto-add discovered printer"
+                );
             }
         }
 
@@ -129,11 +154,14 @@ pub(crate) async fn delete_stale_discovered_printers(active_printer_ids: HashSet
     {
         Ok(Ok(queue_names)) => queue_names,
         Ok(Err(error)) => {
-            eprintln!("failed to load discovered printer metadata: {error:?}");
+            tracing::warn!(
+                error = ?error,
+                "failed to load stale discovered printer metadata"
+            );
             return;
         }
         Err(error) => {
-            eprintln!("failed to load discovered printer metadata: {error:?}");
+            tracing::warn!(error = ?error, "stale metadata lookup task failed");
             return;
         }
     };
@@ -146,16 +174,21 @@ pub(crate) async fn delete_stale_discovered_printers(active_printer_ids: HashSet
                     move || metadata::remove(&queue_name)
                 })
                 .await
-                .unwrap_or_else(|error| {
-                    Err(Error::Internal {
-                        why: error.to_string(),
-                    })
-                }) {
-                    eprintln!("failed to remove discovered printer metadata: {error:?}");
+                .unwrap_or_else(|error| Err(BackendError::Join(error)))
+                {
+                    tracing::warn!(
+                        queue_name,
+                        error = ?error,
+                        "failed to remove discovered printer metadata"
+                    );
                 }
             }
             Err(error) => {
-                eprintln!("failed to delete stale discovered printer {queue_name}: {error:?}");
+                tracing::warn!(
+                    queue_name,
+                    error = ?error,
+                    "failed to delete stale discovered printer"
+                );
             }
         }
     }
@@ -164,25 +197,34 @@ pub(crate) async fn delete_stale_discovered_printers(active_printer_ids: HashSet
 async fn fill_cached_discovered_attrs(context: Context) {
     let printers = context.discovered_printers_cached().await;
 
-    let Ok(printers) = tokio::task::spawn_blocking(move || {
+    let printers = match tokio::task::spawn_blocking(move || {
         printers
             .into_iter()
             .map(|mut printer| {
-                if printer.device_uri().is_some()
-                    && fill_attrs_from_device(&mut printer, PRINTER_ATTRIBUTES).is_ok()
-                {
-                    printer.set_option(
-                        "cosmic-discovery-detail-state".to_string(),
-                        "enriched".to_string(),
-                    );
+                if printer.device_uri().is_some() {
+                    match fill_attrs_from_device(&mut printer, PRINTER_ATTRIBUTES) {
+                        Ok(()) => printer.set_option(
+                            "cosmic-discovery-detail-state".to_string(),
+                            "enriched".to_string(),
+                        ),
+                        Err(error) => tracing::warn!(
+                            printer_id = printer.id(),
+                            error = ?error,
+                            "failed to enrich discovered printer"
+                        ),
+                    }
                 }
                 printer
             })
             .collect::<Vec<_>>()
     })
     .await
-    else {
-        return;
+    {
+        Ok(printers) => printers,
+        Err(error) => {
+            tracing::warn!(error = ?error, "discovered printer enrichment task failed");
+            return;
+        }
     };
 
     context
@@ -191,7 +233,7 @@ async fn fill_cached_discovered_attrs(context: Context) {
 }
 
 /// Converts a temporary local queue created by CUPS into a persistent queue.
-async fn make_printer_permanent(queue_name: &str) -> Result<(), Error> {
+async fn make_printer_permanent(queue_name: &str) -> BackendResult<()> {
     polkit_helper::set_printer_shared(queue_name, true).await?;
     polkit_helper::set_printer_shared(queue_name, false).await
 }
@@ -202,7 +244,7 @@ fn create_local_printer(
     device_uri: &str,
     info: &str,
     location: &str,
-) -> Result<String, Error> {
+) -> BackendResult<String> {
     let mut request = IppRequest::new(IppOperation::CupsCreateLocalPrinter).cups_err()?;
 
     request
@@ -230,12 +272,16 @@ fn create_local_printer(
     let printer_uri = response
         .find_attribute("printer-uri-supported", None)
         .and_then(|attr| attr.get_string(0))
-        .ok_or_else(|| Error::Internal {
-            why: "CUPS-Create-Local-Printer response missing printer-uri-supported".to_string(),
+        .ok_or_else(|| {
+            BackendError::Internal(
+                "CUPS-Create-Local-Printer response missing printer-uri-supported".to_string(),
+            )
         })?;
 
-    queue_name_from_printer_uri(&printer_uri).ok_or_else(|| Error::Internal {
-        why: format!("invalid printer-uri-supported returned by CUPS: {printer_uri}"),
+    queue_name_from_printer_uri(&printer_uri).ok_or_else(|| {
+        BackendError::Internal(format!(
+            "invalid printer-uri-supported returned by CUPS: {printer_uri}"
+        ))
     })
 }
 
@@ -245,7 +291,7 @@ fn add_printer_attributes(
     device_uri: &str,
     info: &str,
     location: &str,
-) -> Result<(), Error> {
+) -> BackendResult<()> {
     request
         .add_string(IppTag::Printer, IppValueTag::Uri, "device-uri", device_uri)
         .cups_err()?;

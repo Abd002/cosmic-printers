@@ -7,6 +7,7 @@
 mod avahi;
 mod context;
 mod cups_backend;
+mod error;
 mod ipp;
 mod printer_application_backend;
 mod server;
