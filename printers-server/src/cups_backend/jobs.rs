@@ -156,60 +156,94 @@ fn resolve_job_printer_uri(printer: &PrinterEntry) -> String {
     local_printer_uri(printer.id(), false)
 }
 
+struct JobBuilder<'a> {
+    printer_id: &'a str,
+    id: Option<i32>,
+    title: String,
+    state: JobState,
+    user: String,
+    size: i32,
+    priority: i32,
+    creation_time: i64,
+    processing_time: i64,
+    completed_time: i64,
+}
+
+impl<'a> JobBuilder<'a> {
+    fn new(printer_id: &'a str) -> Self {
+        Self {
+            printer_id,
+            id: None,
+            title: String::new(),
+            state: JobState::Unknown,
+            user: String::new(),
+            size: 0,
+            priority: 0,
+            creation_time: 0,
+            processing_time: 0,
+            completed_time: 0,
+        }
+    }
+
+    fn apply(&mut self, name: &str, attr: &IppAttribute) {
+        match name {
+            "job-id" => {
+                let id = attr.get_integer(0);
+                self.id = (id != 0).then_some(id);
+            }
+            "job-name" => self.title = attr.get_string(0).unwrap_or_default(),
+            "job-state" => self.state = job_state(attr.get_integer(0)),
+            "job-originating-user-name" => {
+                self.user = attr.get_string(0).unwrap_or_default();
+            }
+            "job-k-octets" => self.size = attr.get_integer(0),
+            "job-priority" => self.priority = attr.get_integer(0),
+            "time-at-creation" => self.creation_time = i64::from(attr.get_integer(0)),
+            "time-at-processing" => self.processing_time = i64::from(attr.get_integer(0)),
+            "time-at-completed" => self.completed_time = i64::from(attr.get_integer(0)),
+            _ => {}
+        }
+    }
+
+    fn finish(self) -> Option<JobInfo> {
+        Some(JobInfo {
+            id: self.id?,
+            printer_id: self.printer_id.to_string(),
+            title: self.title,
+            state: self.state,
+            user: self.user,
+            size: self.size,
+            priority: self.priority,
+            creation_time: self.creation_time,
+            processing_time: self.processing_time,
+            completed_time: self.completed_time,
+        })
+    }
+}
+
 fn parse_jobs(attributes: Vec<IppAttribute>, fallback_printer_id: &str) -> Vec<JobInfo> {
     // cups-rs does not expose IPP group tags/group boundaries yet. CUPS and IPP
     // Printer Applications return each job group starting with job-id, so use
     // that as the boundary while keeping the local destination id as ownership.
     let mut jobs = Vec::new();
-    let mut job = JobInfo {
-        id: 0,
-        printer_id: fallback_printer_id.to_string(),
-        title: String::new(),
-        state: JobState::Unknown,
-        user: String::new(),
-        size: 0,
-        priority: 0,
-        creation_time: 0,
-        processing_time: 0,
-        completed_time: 0,
-    };
+    let mut job = JobBuilder::new(fallback_printer_id);
 
     for attr in attributes {
         let Some(name) = attr.name() else {
             continue;
         };
 
-        if name == "job-id" && job.id != 0 {
-            jobs.push(job);
-            job = JobInfo {
-                id: 0,
-                printer_id: fallback_printer_id.to_string(),
-                title: String::new(),
-                state: JobState::Unknown,
-                user: String::new(),
-                size: 0,
-                priority: 0,
-                creation_time: 0,
-                processing_time: 0,
-                completed_time: 0,
-            };
+        if name == "job-id"
+            && let Some(previous) =
+                std::mem::replace(&mut job, JobBuilder::new(fallback_printer_id)).finish()
+        {
+            jobs.push(previous);
         }
 
-        match name.as_str() {
-            "job-id" => job.id = attr.get_integer(0),
-            "job-name" => job.title = attr.get_string(0).unwrap_or_default(),
-            "job-state" => job.state = job_state(attr.get_integer(0)),
-            "job-originating-user-name" => job.user = attr.get_string(0).unwrap_or_default(),
-            "job-k-octets" => job.size = attr.get_integer(0),
-            "job-priority" => job.priority = attr.get_integer(0),
-            "time-at-creation" => job.creation_time = i64::from(attr.get_integer(0)),
-            "time-at-processing" => job.processing_time = i64::from(attr.get_integer(0)),
-            "time-at-completed" => job.completed_time = i64::from(attr.get_integer(0)),
-            _ => {}
-        }
+        job.apply(&name, &attr);
     }
 
-    if job.id != 0 {
+    if let Some(job) = job.finish() {
         jobs.push(job);
     }
 
@@ -227,5 +261,25 @@ fn job_state(state: i32) -> JobState {
         8 => JobState::Aborted,
         9 => JobState::Completed,
         _ => JobState::Unknown,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn job_builder_discards_a_job_without_an_id() {
+        assert!(JobBuilder::new("printer").finish().is_none());
+    }
+
+    #[test]
+    fn job_builder_finishes_a_job_with_its_fallback_printer() {
+        let mut builder = JobBuilder::new("printer");
+        builder.id = Some(42);
+
+        let job = builder.finish().unwrap();
+        assert_eq!(job.id, 42);
+        assert_eq!(job.printer_id, "printer");
     }
 }
