@@ -9,7 +9,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     for printer in printers {
         println!(
             "{} | {:?} | {} | {}",
-            printer.name, printer.status, printer.queue_status, printer.device_uri
+            printer.name(),
+            printer.status(),
+            printer.queue_status().unwrap_or("-"),
+            printer.device_uri().unwrap_or("-"),
         );
     }
 

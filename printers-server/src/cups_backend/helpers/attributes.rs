@@ -1,9 +1,7 @@
-use cosmic_settings_printers_core::{Error, PrinterEntry};
-use cups_rs::IppResponse;
-use std::collections::HashMap;
-
 use super::conversion::refresh_printer_entry;
 use crate::ipp::{CupsResultExt, ensure_success, printer_attrs_request, send_ipp_request};
+use cosmic_settings_printers_core::{Error, PrinterEntry};
+use cups_rs::IppResponse;
 
 pub(in crate::cups_backend) const PRINTER_ATTRIBUTES: &[&str] = &[
     "printer-more-info",
@@ -36,18 +34,23 @@ pub(in crate::cups_backend) fn fill_missing_attrs(
     let missing = attrs
         .iter()
         .copied()
-        .filter(|attr| !printer.options.contains_key(*attr))
+        .filter(|attr| printer.option(attr).is_none())
         .collect::<Vec<_>>();
 
     if missing.is_empty() {
         return Ok(());
     }
 
-    let request = printer_attrs_request(&printer.printer_local_uri, &missing)?;
+    let printer_uri = printer
+        .printer_local_uri()
+        .ok_or_else(|| Error::MissingDeviceUri {
+            queue: printer.id().to_string(),
+        })?;
+    let request = printer_attrs_request(printer_uri, &missing)?;
     let response = request.send_default("/").cups_err()?;
     ensure_success(&response, "Get-Printer-Attributes")?;
 
-    merge_response_attrs(&mut printer.options, &response, &missing);
+    printer.merge_options(merge_response_attrs(&response, &missing));
     refresh_printer_entry(printer);
     Ok(())
 }
@@ -57,23 +60,26 @@ pub(in crate::cups_backend) fn fill_attrs_from_device(
     printer: &mut PrinterEntry,
     attrs: &[&str],
 ) -> Result<(), Error> {
-    if printer.device_uri.is_empty() {
+    let Some(device_uri) = printer.device_uri().map(str::to_owned) else {
         return Err(Error::MissingDeviceUri {
-            queue: printer.id.clone(),
+            queue: printer.id().to_string(),
         });
-    }
+    };
 
-    fill_attrs_from_device_uri(printer, attrs)
+    fill_attrs_from_device_uri(printer, &device_uri, attrs)
 }
 
 /// Sends the raw IPP request to an already-selected device URI.
-fn fill_attrs_from_device_uri(printer: &mut PrinterEntry, attrs: &[&str]) -> Result<(), Error> {
-    let queue_name = printer.id.clone();
-    let device_uri = printer.device_uri.clone();
+fn fill_attrs_from_device_uri(
+    printer: &mut PrinterEntry,
+    device_uri: &str,
+    attrs: &[&str],
+) -> Result<(), Error> {
+    let queue_name = printer.id().to_string();
 
     let printer_uri = device_uri;
-    let request = printer_attrs_request(&printer_uri, attrs)?;
-    let response = send_ipp_request(request, &printer_uri).map_err(|error| match error {
+    let request = printer_attrs_request(printer_uri, attrs)?;
+    let response = send_ipp_request(request, printer_uri).map_err(|error| match error {
         Error::DeviceUnreachable { why } => Error::DeviceUnreachable {
             why: format!("{queue_name}: {why}"),
         },
@@ -81,26 +87,24 @@ fn fill_attrs_from_device_uri(printer: &mut PrinterEntry, attrs: &[&str]) -> Res
     })?;
     ensure_success(&response, "Get-Printer-Attributes")?;
 
-    merge_response_attrs(&mut printer.options, &response, attrs);
+    printer.merge_options(merge_response_attrs(&response, attrs));
     refresh_printer_entry(printer);
     Ok(())
 }
 
 /// Copies requested response attributes into the destination option map.
-fn merge_response_attrs(
-    options: &mut HashMap<String, String>,
-    response: &IppResponse,
-    attrs: &[&str],
-) {
+fn merge_response_attrs(response: &IppResponse, attrs: &[&str]) -> Vec<(String, String)> {
+    let mut values = Vec::new();
     for name in attrs {
         let Some(attr) = response.find_attribute(name, None) else {
             continue;
         };
-        let values = attr_values(name, attr);
-        if !values.is_empty() {
-            options.insert((*name).to_string(), values.join(","));
+        let attr_values = attr_values(name, attr);
+        if !attr_values.is_empty() {
+            values.push(((*name).to_string(), attr_values.join(",")));
         }
     }
+    values
 }
 
 /// Converts all values of an IPP attribute into strings.

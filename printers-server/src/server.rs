@@ -77,7 +77,7 @@ impl Server {
         let actual_queue_name = cups_backend::add_discovered_printer(printer).await?;
         self.context
             .update_discovered_printer(printer_id, |printer| {
-                printer.id = actual_queue_name;
+                printer.set_id(actual_queue_name);
             })
             .await;
 
@@ -210,7 +210,7 @@ impl Server {
         self.list_printers()
             .await?
             .into_iter()
-            .find(|printer| printer.id == printer_id)
+            .find(|printer| printer.id() == printer_id)
             .ok_or(Error::PrinterNotFound)
     }
 }

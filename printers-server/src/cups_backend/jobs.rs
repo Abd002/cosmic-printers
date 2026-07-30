@@ -22,7 +22,7 @@ const JOB_ATTRIBUTES: &[&str] = &[
 ];
 
 pub async fn get_jobs(printer: &PrinterEntry, filter: &str) -> Result<Vec<JobInfo>, Error> {
-    let printer_id = printer.id.clone();
+    let printer_id = printer.id().to_string();
     let printer_uri = resolve_job_printer_uri(printer);
     let filter = filter.to_string();
 
@@ -149,11 +149,11 @@ fn add_operation_defaults(request: &mut IppRequest) -> Result<(), Error> {
 }
 
 fn resolve_job_printer_uri(printer: &PrinterEntry) -> String {
-    // match Some(printer.device_uri.as_str()).filter(|uri| is_ipp_uri(uri)) {
+    // match printer.device_uri().filter(|uri| is_ipp_uri(uri)) {
     //     Some(uri) => uri.to_string(),
-    //     None => local_printer_uri(&printer.id, false),
+    //     None => local_printer_uri(printer.id(), false),
     // }
-    local_printer_uri(&printer.id, false)
+    local_printer_uri(printer.id(), false)
 }
 
 fn parse_jobs(attributes: Vec<IppAttribute>, fallback_printer_id: &str) -> Vec<JobInfo> {
@@ -179,22 +179,20 @@ fn parse_jobs(attributes: Vec<IppAttribute>, fallback_printer_id: &str) -> Vec<J
             continue;
         };
 
-        if name == "job-id" {
-            if job.id != 0 {
-                jobs.push(job);
-                job = JobInfo {
-                    id: 0,
-                    printer_id: fallback_printer_id.to_string(),
-                    title: String::new(),
-                    state: JobState::Unknown,
-                    user: String::new(),
-                    size: 0,
-                    priority: 0,
-                    creation_time: 0,
-                    processing_time: 0,
-                    completed_time: 0,
-                };
-            }
+        if name == "job-id" && job.id != 0 {
+            jobs.push(job);
+            job = JobInfo {
+                id: 0,
+                printer_id: fallback_printer_id.to_string(),
+                title: String::new(),
+                state: JobState::Unknown,
+                user: String::new(),
+                size: 0,
+                priority: 0,
+                creation_time: 0,
+                processing_time: 0,
+                completed_time: 0,
+            };
         }
 
         match name.as_str() {

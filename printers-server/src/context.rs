@@ -132,9 +132,11 @@ impl Context {
     ) {
         let mut model = self.model.lock().await;
         update(&mut model.discovered_printers);
-        model
-            .discovered_printers
-            .sort_by(|left, right| left.name.cmp(&right.name).then(left.id.cmp(&right.id)));
+        model.discovered_printers.sort_by(|left, right| {
+            left.name()
+                .cmp(right.name())
+                .then(left.id().cmp(right.id()))
+        });
     }
 
     pub(crate) fn subscribe_events(&self) -> broadcast::Receiver<PrintersEvent> {

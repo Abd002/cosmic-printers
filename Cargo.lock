@@ -342,6 +342,7 @@ name = "cosmic-settings-printers-client"
 version = "0.1.0"
 dependencies = [
  "cosmic-settings-printers-core",
+ "cups_rs",
  "dirs",
  "futures-util",
  "serde",

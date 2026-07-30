@@ -11,7 +11,7 @@ pub(in crate::cups_backend) fn split_queue_instance(printer_id: &str) -> (&str, 
 
 /// Returns the CUPS queue name portion of a printer entry id.
 pub(in crate::cups_backend) fn printer_queue_name(printer: &PrinterEntry) -> &str {
-    split_queue_instance(&printer.id).0
+    split_queue_instance(printer.id()).0
 }
 
 /// Constructs the local scheduler URI for a queue or printer class.

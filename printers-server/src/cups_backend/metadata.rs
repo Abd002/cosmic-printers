@@ -113,7 +113,7 @@ pub(super) fn apply(printers: &mut HashMap<String, PrinterEntry>) -> Result<(), 
     let entries = load_from(&config);
 
     for printer in printers.values_mut() {
-        let (queue_name, _) = split_queue_instance(&printer.id);
+        let (queue_name, _) = split_queue_instance(printer.id());
         let Some(metadata) = entries.get(queue_name) else {
             continue;
         };

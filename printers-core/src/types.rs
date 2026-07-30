@@ -61,76 +61,239 @@ impl PrinterApplication {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, zlink::introspect::Type)]
+/// A configured or discovered CUPS destination.
+///
+/// The destination identity is structured data. CUPS attributes, discovery
+/// metadata, and capabilities are stored in the private options map and are
+/// exposed through typed methods.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, zlink::introspect::Type)]
 pub struct PrinterEntry {
-    pub id: String,
-    pub name: String,
-    pub is_default: bool,
-    pub printer_local_uri: String,
-    pub status: PrinterStatus,
-    pub queue_status: String,
-    pub location: String,
-    pub model: String,
-    pub device_uri: String,
-    pub hostname: Option<String>,
-    pub port: Option<u16>,
-    pub web_page: Option<String>,
-    pub driver_version: String,
-    pub paper_size_idx: usize,
-    pub print_sides_idx: usize,
-    pub options: HashMap<String, String>,
-    pub supplies: Vec<SupplyLevel>,
-    pub paper_sizes: Vec<String>,
-    pub print_sides: Vec<String>,
+    id: String,
+    name: String,
+    is_default: bool,
+    options: HashMap<String, String>,
 }
 
 impl PrinterEntry {
+    /// Creates a destination from its identity and normalized options.
+    pub fn new(
+        id: impl Into<String>,
+        name: impl Into<String>,
+        is_default: bool,
+        options: HashMap<String, String>,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            name: name.into(),
+            is_default,
+            options,
+        }
+    }
+
+    /// Returns the stable CUPS destination identifier.
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    /// Returns the display name reported by CUPS or discovery.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Returns whether this destination is the system default.
+    pub fn is_default(&self) -> bool {
+        self.is_default
+    }
+
+    /// Changes the destination identifier after CUPS creates a queue.
+    pub fn set_id(&mut self, id: impl Into<String>) {
+        self.id = id.into();
+    }
+
+    /// Returns a normalized option by its IPP/CUPS name.
+    pub fn option(&self, name: &str) -> Option<&str> {
+        self.options
+            .get(name)
+            .map(String::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+    }
+
+    /// Iterates normalized options for backend operations.
+    #[doc(hidden)]
+    pub fn options(&self) -> impl Iterator<Item = (&str, &str)> + '_ {
+        self.options
+            .iter()
+            .map(|(name, value)| (name.as_str(), value.as_str()))
+    }
+
+    /// Inserts or replaces a normalized option.
+    pub fn set_option(&mut self, name: impl Into<String>, value: impl Into<String>) {
+        self.options.insert(name.into(), value.into());
+    }
+
+    /// Merges normalized options into this destination.
+    pub fn merge_options<I>(&mut self, options: I)
+    where
+        I: IntoIterator<Item = (String, String)>,
+    {
+        for (name, value) in options {
+            if !value.is_empty() {
+                self.set_option(name, value);
+            }
+        }
+    }
+
+    /// Returns the local CUPS printer URI.
+    pub fn printer_local_uri(&self) -> Option<&str> {
+        self.option("printer-uri-supported")
+            .or_else(|| self.option("printer-local-uri"))
+    }
+
+    /// Returns the destination device URI.
+    pub fn device_uri(&self) -> Option<&str> {
+        self.option("device-uri")
+    }
+
+    /// Returns the configured web interface URL.
+    pub fn web_page(&self) -> Option<&str> {
+        self.option("printer-more-info")
+    }
+
+    /// Sets the printer location option.
+    pub fn set_location(&mut self, location: impl Into<String>) {
+        self.set_option("printer-location", location);
+    }
+
+    /// Returns the printer location.
+    pub fn location(&self) -> Option<&str> {
+        self.option("printer-location")
+    }
+
+    /// Returns the printer make and model.
+    pub fn model(&self) -> Option<&str> {
+        self.option("printer-make-and-model")
+    }
+
+    /// Returns the driver version, when reported by the backend.
+    pub fn driver_version(&self) -> Option<&str> {
+        self.option("printer-driver-version")
+    }
+
+    /// Returns the endpoint hostname.
+    pub fn hostname(&self) -> Option<&str> {
+        self.option("dnssd-hostname")
+            .or_else(|| self.option("endpoint-hostname"))
+    }
+
+    /// Returns the endpoint port.
+    pub fn port(&self) -> Option<u16> {
+        self.option("dnssd-port")
+            .or_else(|| self.option("endpoint-port"))
+            .and_then(|port| port.parse().ok())
+    }
+
+    /// Returns the current operational status.
+    pub fn status(&self) -> PrinterStatus {
+        if self
+            .option_values("printer-state-reasons")
+            .iter()
+            .any(|reason| reason.contains("toner-low") || reason.contains("toner-empty"))
+        {
+            return PrinterStatus::LowToner;
+        }
+
+        match self.option("printer-state") {
+            Some("5") => PrinterStatus::Offline,
+            Some("3" | "4") => PrinterStatus::Ready,
+            _ => PrinterStatus::Ready,
+        }
+    }
+
+    /// Returns a status message suitable for a queue row.
+    pub fn queue_status(&self) -> Option<&str> {
+        self.option("queue-status")
+            .or_else(|| self.option("printer-state-message"))
+    }
+
+    /// Returns supported media values.
+    pub fn paper_sizes(&self) -> Vec<String> {
+        self.option_values("media-supported")
+    }
+
+    /// Returns supported sides values.
+    pub fn print_sides(&self) -> Vec<String> {
+        self.option_values("sides-supported")
+    }
+
+    /// Returns the default media value.
+    pub fn default_paper_size(&self) -> Option<&str> {
+        self.option("media-default")
+    }
+
+    /// Sets the default media value.
+    pub fn set_default_paper_size(&mut self, paper_size: impl Into<String>) {
+        self.set_option("media-default", paper_size);
+    }
+
+    /// Returns the default sides value.
+    pub fn default_print_sides(&self) -> Option<&str> {
+        self.option("sides-default")
+    }
+
+    /// Sets the default sides value.
+    pub fn set_default_print_sides(&mut self, print_sides: impl Into<String>) {
+        self.set_option("sides-default", print_sides);
+    }
+
+    /// Returns the physical device UUID used by grouping.
+    pub fn device_uuid(&self) -> Option<&str> {
+        self.option("device-uuid")
+    }
+
+    /// Returns the DNS-SD address used by grouping.
+    pub fn dnssd_address(&self) -> Option<&str> {
+        self.option("dnssd-address")
+    }
+
+    /// Returns all reported supply levels.
+    pub fn supplies(&self) -> Vec<SupplyLevel> {
+        let names = self.option_values("marker-names");
+        let levels = self.option_values("marker-levels");
+
+        names
+            .into_iter()
+            .zip(levels)
+            .filter_map(|(name, level)| {
+                let level_percent = level.parse::<i32>().ok()?.clamp(0, 100) as u8;
+                Some(SupplyLevel {
+                    name,
+                    level_percent,
+                })
+            })
+            .collect()
+    }
+
+    fn option_values(&self, name: &str) -> Vec<String> {
+        self.option(name)
+            .map(|value| {
+                value
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(ToString::to_string)
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Merges a refreshed destination snapshot into this destination.
     pub fn merge_from(&mut self, incoming: Self) {
         if self.name.is_empty() {
             self.name = incoming.name;
         }
-        if self.printer_local_uri.is_empty() {
-            self.printer_local_uri = incoming.printer_local_uri;
-        }
-        if self.queue_status.is_empty() {
-            self.queue_status = incoming.queue_status;
-        }
-        if self.location.is_empty() {
-            self.location = incoming.location;
-        }
-        if self.model.is_empty() {
-            self.model = incoming.model;
-        }
-        if self.device_uri.is_empty() {
-            self.device_uri = incoming.device_uri;
-        }
-        if self.hostname.is_none() {
-            self.hostname = incoming.hostname;
-        }
-        if self.port.is_none() {
-            self.port = incoming.port;
-        }
-        if self.web_page.is_none() {
-            self.web_page = incoming.web_page;
-        }
-        if self.driver_version.is_empty() {
-            self.driver_version = incoming.driver_version;
-        }
-        if self.supplies.is_empty() {
-            self.supplies = incoming.supplies;
-        }
-        if self.paper_sizes.is_empty() {
-            self.paper_sizes = incoming.paper_sizes;
-        }
-        if self.print_sides.is_empty() {
-            self.print_sides = incoming.print_sides;
-        }
 
-        for (key, value) in incoming.options {
-            if !value.is_empty() {
-                self.options.insert(key, value);
-            }
-        }
+        self.merge_options(incoming.options);
     }
 }
 
