@@ -12,14 +12,15 @@ use crate::avahi::{discovered_printer_id, discovered_printers_match};
 use crate::context::Context;
 
 pub(crate) async fn start_discovery(context: Context) {
-    let task_context = context.clone();
-    if context.start_discovery_if_idle().await {
-        tokio::spawn(async move {
-            crate::avahi::discover_printers_into_cache(task_context.clone()).await;
-            fill_cached_discovered_attrs(task_context.clone()).await;
-            task_context.finish_discovery().await;
-        });
-    }
+    let Some(discovery_lease) = context.try_start_discovery() else {
+        return;
+    };
+
+    tokio::spawn(async move {
+        let _discovery_lease = discovery_lease;
+        crate::avahi::discover_printers_into_cache(context.clone()).await;
+        fill_cached_discovered_attrs(context).await;
+    });
 }
 
 pub async fn add_discovered_printer(mut printer: PrinterEntry) -> Result<String, Error> {
@@ -40,8 +41,9 @@ pub async fn add_discovered_printer(mut printer: PrinterEntry) -> Result<String,
         let location = printer.location().unwrap_or_default().to_string();
         let metadata = QueueMetadata::from_discovered_printer(&printer);
 
-        let _guard = LocalSocketGuard::engage()?;
+        let guard = LocalSocketGuard::engage()?;
         let actual_queue_name = create_local_printer(&queue_name, &device_uri, &info, &location)?;
+        guard.restore()?;
         metadata::save(&actual_queue_name, metadata)?;
         Ok::<_, Error>(actual_queue_name)
     })
