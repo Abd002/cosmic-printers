@@ -3,21 +3,34 @@ use cosmic_settings_printers_core::{
     PrinterApplication, PrinterEntry, PrintersEvent, PrintersEventKind,
 };
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 use tokio::sync::{Mutex, broadcast};
 
 #[derive(Debug, Default)]
 struct Model {
     discovered_printers: Vec<PrinterEntry>,
     printer_applications: HashMap<String, PrinterApplication>,
-    discovery_running: bool,
     auto_add_in_progress: HashSet<String>,
 }
 
 #[derive(Clone, Debug)]
 pub(crate) struct Context {
     model: Arc<Mutex<Model>>,
+    discovery_running: Arc<AtomicBool>,
     events: broadcast::Sender<PrintersEvent>,
+}
+
+pub(crate) struct DiscoveryLease {
+    running: Arc<AtomicBool>,
+}
+
+impl Drop for DiscoveryLease {
+    fn drop(&mut self) {
+        self.running.store(false, Ordering::Release);
+    }
 }
 
 impl Context {
@@ -25,6 +38,7 @@ impl Context {
         let (events, _) = broadcast::channel(32);
         Self {
             model: Arc::new(Mutex::new(Model::default())),
+            discovery_running: Arc::new(AtomicBool::new(false)),
             events,
         }
     }
@@ -242,18 +256,13 @@ impl Context {
             .remove(printer_id);
     }
 
-    pub(crate) async fn start_discovery_if_idle(&self) -> bool {
-        let mut model = self.model.lock().await;
-        if model.discovery_running {
-            false
-        } else {
-            model.discovery_running = true;
-            true
-        }
-    }
-
-    pub(crate) async fn finish_discovery(&self) {
-        self.model.lock().await.discovery_running = false;
+    pub(crate) fn try_start_discovery(&self) -> Option<DiscoveryLease> {
+        self.discovery_running
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+            .then(|| DiscoveryLease {
+                running: Arc::clone(&self.discovery_running),
+            })
     }
 }
 
@@ -339,5 +348,16 @@ mod tests {
         assert_eq!(applications.len(), 1);
         assert_eq!(applications[0].id, "keep");
         assert!(context.discovered_printers_cached().await.is_empty());
+    }
+
+    #[test]
+    fn discovery_lease_releases_on_drop() {
+        let context = Context::new();
+        let lease = context.try_start_discovery().unwrap();
+        assert!(context.try_start_discovery().is_none());
+
+        drop(lease);
+
+        assert!(context.try_start_discovery().is_some());
     }
 }
