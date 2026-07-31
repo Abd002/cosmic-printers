@@ -65,15 +65,34 @@ pub(crate) async fn auto_add_discovered_printer(context: Context, printer: Print
         return;
     };
 
-    let already_configured = match metadata::contains_discovered_printer_id(&printer_id) {
-        Ok(already_configured) => already_configured,
+    let already_configured = match tokio::task::spawn_blocking({
+        let printer_id = printer_id.clone();
+        move || metadata::contains_discovered_printer_id(&printer_id)
+    })
+    .await
+    {
+        Ok(Ok(already_configured)) => already_configured,
+        Ok(Err(error)) => {
+            eprintln!("failed to load discovered printer metadata: {error:?}");
+            false
+        }
         Err(error) => {
             eprintln!("failed to load discovered printer metadata: {error:?}");
             false
         }
     };
     if already_configured {
-        if let Err(error) = metadata::refresh_discovered_printer(&printer_id, &printer) {
+        if let Err(error) = tokio::task::spawn_blocking({
+            let printer_id = printer_id.clone();
+            let printer = printer.clone();
+            move || metadata::refresh_discovered_printer(&printer_id, &printer)
+        })
+        .await
+        .unwrap_or_else(|error| {
+            Err(Error::Internal {
+                why: error.to_string(),
+            })
+        }) {
             eprintln!("failed to refresh discovered printer metadata: {error:?}");
         }
         return;
@@ -102,8 +121,17 @@ pub(crate) async fn auto_add_discovered_printer(context: Context, printer: Print
 }
 
 pub(crate) async fn delete_stale_discovered_printers(active_printer_ids: HashSet<String>) {
-    let stale_queue_names = match metadata::stale_discovered_queue_names(&active_printer_ids) {
-        Ok(queue_names) => queue_names,
+    let stale_queue_names = match tokio::task::spawn_blocking({
+        let active_printer_ids = active_printer_ids.clone();
+        move || metadata::stale_discovered_queue_names(&active_printer_ids)
+    })
+    .await
+    {
+        Ok(Ok(queue_names)) => queue_names,
+        Ok(Err(error)) => {
+            eprintln!("failed to load discovered printer metadata: {error:?}");
+            return;
+        }
         Err(error) => {
             eprintln!("failed to load discovered printer metadata: {error:?}");
             return;
@@ -113,7 +141,16 @@ pub(crate) async fn delete_stale_discovered_printers(active_printer_ids: HashSet
     for queue_name in stale_queue_names {
         match polkit_helper::delete_printer(&queue_name).await {
             Ok(()) => {
-                if let Err(error) = metadata::remove(&queue_name) {
+                if let Err(error) = tokio::task::spawn_blocking({
+                    let queue_name = queue_name.clone();
+                    move || metadata::remove(&queue_name)
+                })
+                .await
+                .unwrap_or_else(|error| {
+                    Err(Error::Internal {
+                        why: error.to_string(),
+                    })
+                }) {
                     eprintln!("failed to remove discovered printer metadata: {error:?}");
                 }
             }
