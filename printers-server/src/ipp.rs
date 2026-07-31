@@ -4,6 +4,107 @@ use cups_rs::{
     config::EncryptionMode,
 };
 use std::net::IpAddr;
+use url::Url;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NetworkScheme {
+    Ipp,
+    Ipps,
+    Http,
+    Https,
+}
+
+impl NetworkScheme {
+    fn parse(scheme: &str) -> Option<Self> {
+        if scheme.eq_ignore_ascii_case("ipp") {
+            Some(Self::Ipp)
+        } else if scheme.eq_ignore_ascii_case("ipps") {
+            Some(Self::Ipps)
+        } else if scheme.eq_ignore_ascii_case("http") {
+            Some(Self::Http)
+        } else if scheme.eq_ignore_ascii_case("https") {
+            Some(Self::Https)
+        } else {
+            None
+        }
+    }
+
+    fn default_port(self) -> u16 {
+        match self {
+            Self::Ipp | Self::Ipps => 631,
+            Self::Http => 80,
+            Self::Https => 443,
+        }
+    }
+
+    fn is_ipp(self) -> bool {
+        matches!(self, Self::Ipp | Self::Ipps)
+    }
+
+    fn web_scheme(self) -> &'static str {
+        match self {
+            Self::Ipp | Self::Http => "http",
+            Self::Ipps | Self::Https => "https",
+        }
+    }
+}
+
+struct ParsedUri {
+    uri: Url,
+    scheme: NetworkScheme,
+    host: String,
+    port: u16,
+}
+
+impl ParsedUri {
+    fn parse(value: &str) -> Option<Self> {
+        let uri = Url::parse(value).ok()?;
+        let scheme = NetworkScheme::parse(uri.scheme())?;
+        let host = uri.host_str()?.to_ascii_lowercase();
+        if host.is_empty() {
+            return None;
+        }
+        let port = uri.port().unwrap_or_else(|| scheme.default_port());
+
+        Some(Self {
+            uri,
+            scheme,
+            host,
+            port,
+        })
+    }
+
+    fn resource_path(&self) -> &str {
+        let path = self.uri.path();
+        if path.is_empty() { "/" } else { path }
+    }
+
+    fn encryption(&self) -> EncryptionMode {
+        if self.scheme == NetworkScheme::Ipps {
+            EncryptionMode::Always
+        } else {
+            EncryptionMode::IfRequested
+        }
+    }
+
+    fn is_local_scheduler(&self) -> bool {
+        let resource = self.resource_path();
+        self.scheme == NetworkScheme::Ipp
+            && self.port == 631
+            && is_loopback_host(&self.host)
+            && (resource == "/"
+                || resource.starts_with("/printers/")
+                || resource.starts_with("/classes/"))
+    }
+
+    fn web_page(&self) -> Option<String> {
+        let mut web_page = Url::parse("http://localhost/").ok()?;
+        web_page.set_scheme(self.scheme.web_scheme()).ok()?;
+        web_page.set_host(self.uri.host_str()).ok()?;
+        web_page.set_port(self.uri.port()).ok()?;
+        Some(web_page.to_string())
+    }
+}
 
 pub(crate) trait CupsResultExt<T> {
     fn cups_err(self) -> Result<T, Error>;
@@ -47,57 +148,16 @@ pub(crate) fn ensure_success(response: &IppResponse, operation: &str) -> Result<
 }
 
 pub(crate) fn is_ipp_uri(uri: &str) -> bool {
-    uri.starts_with("ipp://") || uri.starts_with("ipps://")
+    ParsedUri::parse(uri).is_some_and(|uri| uri.scheme.is_ipp())
 }
 
 pub(crate) fn parse_uri_endpoint(uri: &str) -> Option<(String, u16)> {
-    let (scheme, rest) = uri.split_once("://")?;
-    let authority = rest.split('/').next()?.rsplit('@').next()?.trim();
-    if authority.is_empty() {
-        return None;
-    }
-
-    let default_port = match scheme.to_ascii_lowercase().as_str() {
-        "ipp" | "ipps" => 631,
-        "http" => 80,
-        "https" => 443,
-        _ => return None,
-    };
-
-    if authority.starts_with('[') {
-        let end = authority.find(']')?;
-        let host = &authority[..=end];
-        let port = authority
-            .get(end + 1..)
-            .and_then(|suffix| suffix.strip_prefix(':'))
-            .and_then(|port| port.parse::<u16>().ok())
-            .unwrap_or(default_port);
-        return Some((host.to_ascii_lowercase(), port));
-    }
-
-    let (host, port) = match authority.rsplit_once(':') {
-        Some((host, port)) if port.parse::<u16>().is_ok() => (host, port.parse::<u16>().ok()),
-        _ => (authority, Some(default_port)),
-    };
-
-    Some((host.to_ascii_lowercase(), port?))
+    let uri = ParsedUri::parse(uri)?;
+    Some((uri.host, uri.port))
 }
 
-pub(crate) fn uri_resource_path(uri: &str) -> Option<String> {
-    let (_, rest) = uri.split_once("://")?;
-    let path = rest
-        .find('/')
-        .map(|index| &rest[index..])
-        .unwrap_or("/")
-        .split(['?', '#'])
-        .next()
-        .unwrap_or("/");
-
-    Some(if path.is_empty() {
-        "/".to_string()
-    } else {
-        path.to_string()
-    })
+pub(crate) fn web_page_from_uri(uri: &str) -> Option<String> {
+    ParsedUri::parse(uri)?.web_page()
 }
 
 pub(crate) fn is_loopback_host(host: &str) -> bool {
@@ -112,48 +172,26 @@ pub(crate) fn is_loopback_host(host: &str) -> bool {
             .is_ok_and(|address| address.is_loopback())
 }
 
-fn is_local_scheduler_uri(uri: &str) -> bool {
-    let Some((host, _)) = parse_uri_endpoint(uri) else {
-        return false;
-    };
-    let resource = uri_resource_path(uri).unwrap_or_default();
-
-    is_loopback_host(&host)
-        && (resource == "/"
-            || resource.starts_with("/printers/")
-            || resource.starts_with("/classes/"))
-}
-
-fn encryption_for_uri(uri: &str) -> EncryptionMode {
-    if uri.starts_with("ipps://") {
-        EncryptionMode::Always
-    } else {
-        EncryptionMode::IfRequested
-    }
+pub(crate) fn is_local_scheduler_uri(uri: &str) -> bool {
+    ParsedUri::parse(uri).is_some_and(|uri| uri.is_local_scheduler())
 }
 
 pub(crate) fn send_ipp_request(request: IppRequest, uri: &str) -> Result<IppResponse, Error> {
-    if !is_ipp_uri(uri) {
-        return Err(Error::Internal {
-            why: format!("not an IPP URI: {uri}"),
-        });
-    }
+    let uri_parts = ParsedUri::parse(uri)
+        .filter(|uri| uri.scheme.is_ipp())
+        .ok_or_else(|| Error::Internal {
+            why: format!("invalid IPP URI: {uri}"),
+        })?;
+    let resource = uri_parts.resource_path();
 
-    let (host, port) = parse_uri_endpoint(uri).ok_or_else(|| Error::Internal {
-        why: format!("invalid IPP URI endpoint: {uri}"),
-    })?;
-    let resource = uri_resource_path(uri).ok_or_else(|| Error::Internal {
-        why: format!("invalid IPP URI resource: {uri}"),
-    })?;
-
-    if is_local_scheduler_uri(uri) {
-        request.send_default(&resource).cups_err()
+    if uri_parts.is_local_scheduler() {
+        request.send_default(resource).cups_err()
     } else {
         let connection = HttpConnection::connect_host_with_encryption(
-            &host,
-            port,
-            &resource,
-            encryption_for_uri(uri),
+            &uri_parts.host,
+            uri_parts.port,
+            resource,
+            uri_parts.encryption(),
             Some(250),
         )
         .map_err(|error| Error::DeviceUnreachable {
@@ -169,6 +207,11 @@ pub(crate) fn printer_attrs_request(
     printer_uri: &str,
     requested_attrs: &[&str],
 ) -> Result<IppRequest, Error> {
+    if !is_ipp_uri(printer_uri) {
+        return Err(Error::Internal {
+            why: format!("invalid IPP URI: {printer_uri}"),
+        });
+    }
     let mut request = IppRequest::new(IppOperation::GetPrinterAttributes).cups_err()?;
 
     request
@@ -202,18 +245,71 @@ mod tests {
             parse_uri_endpoint(uri),
             Some(("printer.local".to_string(), 8000))
         );
-        assert_eq!(uri_resource_path(uri).as_deref(), Some("/ipp/system"));
+        assert_eq!(
+            ParsedUri::parse(uri).unwrap().resource_path(),
+            "/ipp/system"
+        );
     }
 
     #[test]
-    fn requires_tls_for_ipps() {
+    fn recognizes_schemes_case_insensitively() {
+        assert!(is_ipp_uri("IPP://printer.local/ipp/print"));
+        assert!(is_ipp_uri("IPPS://printer.local/ipp/print"));
+    }
+
+    #[test]
+    fn rejects_invalid_ports_and_unbracketed_ipv6() {
         assert_eq!(
-            encryption_for_uri("ipps://printer.local/ipp/system"),
+            parse_uri_endpoint("ipp://printer.local:not-a-port/ipp/print"),
+            None
+        );
+        assert_eq!(parse_uri_endpoint("ipp://2001:db8::1/ipp/print"), None);
+    }
+
+    #[test]
+    fn parses_bracketed_ipv6() {
+        assert_eq!(
+            parse_uri_endpoint("ipps://[2001:db8::1]:8631/ipp/print"),
+            Some(("[2001:db8::1]".to_string(), 8631))
+        );
+    }
+
+    #[test]
+    fn requires_tls_for_ipps_case_insensitively() {
+        assert_eq!(
+            ParsedUri::parse("IPPS://printer.local/ipp/system")
+                .unwrap()
+                .encryption(),
             EncryptionMode::Always
         );
         assert_eq!(
-            encryption_for_uri("ipp://printer.local/ipp/print"),
+            ParsedUri::parse("IPP://printer.local/ipp/print")
+                .unwrap()
+                .encryption(),
             EncryptionMode::IfRequested
+        );
+    }
+
+    #[test]
+    fn detects_only_local_scheduler_resources_on_the_cups_port() {
+        assert!(is_local_scheduler_uri("ipp://localhost/printers/example"));
+        assert!(is_local_scheduler_uri("ipp://127.0.0.1/"));
+        assert!(!is_local_scheduler_uri("ipps://localhost/printers/example"));
+        assert!(!is_local_scheduler_uri(
+            "ipp://localhost:8000/printers/example"
+        ));
+        assert!(!is_local_scheduler_uri("ipp://localhost:8000/ipp/print"));
+    }
+
+    #[test]
+    fn derives_web_scheme_from_ipp_security() {
+        assert_eq!(
+            web_page_from_uri("ipp://printer.local:8000/ipp/print").as_deref(),
+            Some("http://printer.local:8000/")
+        );
+        assert_eq!(
+            web_page_from_uri("ipps://printer.local:8000/ipp/print").as_deref(),
+            Some("https://printer.local:8000/")
         );
     }
 }
