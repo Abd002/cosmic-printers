@@ -3,12 +3,11 @@ use cups_rs::{Destination, PrinterState as CupsPrinterState};
 
 use super::identity::local_printer_uri;
 use super::options::is_printer_class;
-use crate::ipp::{is_loopback_host, parse_uri_endpoint};
+use crate::ipp::{is_local_scheduler_uri, parse_uri_endpoint, web_page_from_uri};
 
 /// Derives a simple web interface URL from a device URI hostname.
 fn web_page_from_device_uri(device_uri: &str) -> Option<String> {
-    let (hostname, _) = parse_uri_endpoint(device_uri)?;
-    Some(format!("http://{hostname}"))
+    web_page_from_uri(device_uri)
 }
 
 /// Converts a cups-rs destination into the type exposed by the printer API.
@@ -80,16 +79,6 @@ fn endpoint_from_uris(printer_uri: &str, device_uri: &str) -> Option<(String, u1
     parse_uri_endpoint(printer_uri).or_else(|| parse_uri_endpoint(device_uri))
 }
 
-fn is_local_scheduler_uri(uri: &str) -> bool {
-    let Some((host, port)) = parse_uri_endpoint(uri) else {
-        return false;
-    };
-
-    port == 631
-        && is_loopback_host(&host)
-        && (uri.contains("/printers/") || uri.contains("/classes/"))
-}
-
 /// Recomputes derived public fields after new IPP attributes are merged.
 pub(super) fn refresh_printer_entry(printer: &mut PrinterEntry) {
     let device_uri = printer.device_uri().unwrap_or_default().to_string();
@@ -159,5 +148,13 @@ mod tests {
         let endpoint = endpoint_from_uris("ipp://localhost/printers/Usb", "usb://HP/DeskJet");
 
         assert_eq!(endpoint, None);
+    }
+
+    #[test]
+    fn derives_secure_web_page_from_ipps_device_uri() {
+        assert_eq!(
+            web_page_from_device_uri("ipps://printer.local:8000/ipp/print").as_deref(),
+            Some("https://printer.local:8000/")
+        );
     }
 }
