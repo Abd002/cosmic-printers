@@ -1,4 +1,3 @@
-use std::cell::Cell;
 use std::collections::HashMap;
 use std::net::IpAddr;
 
@@ -8,7 +7,7 @@ use nix::sys::socket::SockaddrStorage;
 
 /// Normalized identity evidence used to decide whether queues share a device.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DeviceIdentity {
+pub(crate) struct DeviceIdentity {
     uuid: Option<String>,
     endpoint: Option<(String, u16)>,
     uri: Option<String>,
@@ -16,7 +15,7 @@ pub struct DeviceIdentity {
 
 impl DeviceIdentity {
     /// Builds the normalized identity used to compare printer queues.
-    pub fn new(
+    fn new(
         uuid: Option<&str>,
         endpoint: Option<(String, u16)>,
         device_uri: Option<&str>,
@@ -31,7 +30,7 @@ impl DeviceIdentity {
     }
 
     /// Compares identities by UUID, then prepared endpoint, then normalized URI.
-    pub fn matches(&self, other: &Self) -> bool {
+    fn matches(&self, other: &Self) -> bool {
         if let (Some(left), Some(right)) = (&self.uuid, &other.uuid)
             && left == right
         {
@@ -47,21 +46,21 @@ impl DeviceIdentity {
         self.uri.is_some() && self.uri == other.uri
     }
 
-    pub fn uuid(&self) -> Option<&str> {
+    pub(crate) fn uuid(&self) -> Option<&str> {
         self.uuid.as_deref()
     }
 
-    pub fn hostname(&self) -> Option<&str> {
+    pub(crate) fn hostname(&self) -> Option<&str> {
         self.endpoint
             .as_ref()
             .map(|(hostname, _)| hostname.as_str())
     }
 
-    pub fn port(&self) -> Option<u16> {
+    pub(crate) fn port(&self) -> Option<u16> {
         self.endpoint.as_ref().map(|(_, port)| *port)
     }
 
-    pub fn uri(&self) -> Option<&str> {
+    pub(crate) fn uri(&self) -> Option<&str> {
         self.uri.as_deref()
     }
 
@@ -221,6 +220,37 @@ impl GroupedDevice {
     }
 }
 
+struct DisjointSet {
+    parent: Vec<usize>,
+}
+
+impl DisjointSet {
+    fn new(item_count: usize) -> Self {
+        Self {
+            parent: (0..item_count).collect(),
+        }
+    }
+
+    fn find(&mut self, index: usize) -> usize {
+        let parent = self.parent[index];
+        if parent == index {
+            index
+        } else {
+            let root = self.find(parent);
+            self.parent[index] = root;
+            root
+        }
+    }
+
+    fn union(&mut self, left: usize, right: usize) {
+        let left_root = self.find(left);
+        let right_root = self.find(right);
+        if left_root != right_root {
+            self.parent[left_root] = right_root;
+        }
+    }
+}
+
 /// Groups configured queues that appear to belong to the same physical device.
 pub fn group_printers(
     printers: Vec<PrinterEntry>,
@@ -236,14 +266,14 @@ pub fn group_printers(
         )
         .collect::<Vec<_>>();
     let identities: Vec<DeviceIdentity> = items.iter().map(GroupingItem::identity).collect();
-    let printer_count = identities.len();
-    let parent: Vec<Cell<usize>> = (0..printer_count).map(Cell::new).collect();
+    let item_count = identities.len();
+    let mut sets = DisjointSet::new(item_count);
     let mut first_index_by_key = HashMap::<String, usize>::new();
 
     for (index, identity) in identities.iter().enumerate() {
         for key in identity.match_keys() {
             if let Some(&other) = first_index_by_key.get(&key) {
-                union(&parent, other, index);
+                sets.union(other, index);
             } else {
                 first_index_by_key.insert(key, index);
             }
@@ -254,7 +284,7 @@ pub fn group_printers(
     let mut devices = Vec::<GroupedDevice>::new();
 
     for (index, item) in items.into_iter().enumerate() {
-        let root = find(&parent, index);
+        let root = sets.find(index);
         if let Some(&slot) = slot_of_root.get(&root) {
             devices[slot].absorb(GroupedDevice::new(item));
         } else {
@@ -268,8 +298,21 @@ pub fn group_printers(
             .queues
             .sort_by(|left, right| left.id().cmp(right.id()));
     }
+    devices.sort_by(|left, right| group_sort_key(left).cmp(&group_sort_key(right)));
 
     devices
+}
+
+fn group_sort_key(device: &GroupedDevice) -> (&str, &str) {
+    if let Some(application) = &device.application {
+        return (&application.service_name, &application.id);
+    }
+
+    device
+        .queues
+        .first()
+        .map(|printer| (printer.id(), printer.name()))
+        .unwrap_or_default()
 }
 
 /// Returns true when two printer entries appear to describe the same physical
@@ -308,25 +351,6 @@ fn printer_endpoint(printer: &PrinterEntry) -> Option<(String, u16)> {
         .map(ToString::to_string)?;
 
     Some((host, printer.port()?))
-}
-
-fn find(parent: &[Cell<usize>], index: usize) -> usize {
-    let stored = parent[index].get();
-    if stored == index {
-        index
-    } else {
-        let root = find(parent, stored);
-        parent[index].set(root);
-        root
-    }
-}
-
-fn union(parent: &[Cell<usize>], a: usize, b: usize) {
-    let root_a = find(parent, a);
-    let root_b = find(parent, b);
-    if root_a != root_b {
-        parent[root_a].set(root_b);
-    }
 }
 
 fn uri_prefix(uri: &str) -> String {
@@ -638,6 +662,20 @@ mod tests {
         ];
         let groups = group_printers(printers, Vec::new());
         assert_eq!(groups.len(), 2);
+    }
+
+    #[test]
+    fn sorts_groups_by_application_name_or_queue_id() {
+        let groups = group_printers(
+            vec![
+                printer("z-queue", "ipp://192.0.2.2/ipp/print", "", None),
+                printer("a-queue", "ipp://192.0.2.1/ipp/print", "", None),
+            ],
+            Vec::new(),
+        );
+
+        assert_eq!(groups[0].queues()[0].id(), "a-queue");
+        assert_eq!(groups[1].queues()[0].id(), "z-queue");
     }
 
     #[test]
