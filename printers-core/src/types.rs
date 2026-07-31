@@ -1,4 +1,4 @@
-use crate::DeviceIdentity;
+use crate::grouping::DeviceIdentity;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 
