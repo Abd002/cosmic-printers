@@ -18,6 +18,18 @@ pub enum Error {
     /// CUPS rejected the request because the caller isn't authenticated or authorized.
     PermissionDenied { operation: String },
 
+    /// The requested print job no longer exists.
+    JobNotFound { job_id: i32 },
+
+    /// The print job is in a final state and cannot be moved.
+    JobNotMovable { job_id: i32 },
+
+    /// The connected scheduler does not implement the requested operation.
+    OperationNotSupported { operation: String },
+
+    /// The selected destination cannot be used for this move.
+    InvalidMoveDestination { why: String },
+
     /// A discovered network/IPP device couldn't be reached directly.
     DeviceUnreachable { why: String },
 
@@ -40,6 +52,16 @@ impl std::fmt::Display for Error {
             Error::MissingDeviceUri { queue } => write!(f, "queue '{queue}' has no device URI"),
             Error::PermissionDenied { operation } => {
                 write!(f, "permission denied for '{operation}'")
+            }
+            Error::JobNotFound { job_id } => write!(f, "print job {job_id} was not found"),
+            Error::JobNotMovable { job_id } => {
+                write!(f, "print job {job_id} can no longer be moved")
+            }
+            Error::OperationNotSupported { operation } => {
+                write!(f, "'{operation}' is not supported by the print scheduler")
+            }
+            Error::InvalidMoveDestination { why } => {
+                write!(f, "invalid print-job destination: {why}")
             }
             Error::DeviceUnreachable { why } => write!(f, "device unreachable: {why}"),
             Error::ConfigFailed { why } => write!(f, "printer config error: {why}"),

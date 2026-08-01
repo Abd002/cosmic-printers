@@ -1,5 +1,5 @@
 use cosmic_settings_printers_core::{JobInfo, JobState, PrinterEntry};
-use cups_rs::{IppAttribute, IppOperation, IppRequest, IppTag, IppValueTag};
+use cups_rs::{IppAttribute, IppOperation, IppRequest, IppStatus, IppTag, IppValueTag};
 
 use super::helpers::{
     CupsResultExt, add_requesting_user, ensure_success, local_printer_uri, send_ipp_request,
@@ -21,6 +21,7 @@ const JOB_ATTRIBUTES: &[&str] = &[
     "time-at-processing",
     "time-at-completed",
 ];
+const CUPS_JOBS_URI: &str = "ipp://localhost/jobs";
 
 pub async fn get_jobs(printer: &PrinterEntry, filter: &str) -> BackendResult<Vec<JobInfo>> {
     let printer_id = printer.id().to_string();
@@ -94,6 +95,52 @@ pub async fn resume_job(printer: &PrinterEntry, job_id: i32) -> BackendResult<()
     send_job_request(IppOperation::ReleaseJob, printer, job_id).await
 }
 
+pub async fn move_job(
+    source: &PrinterEntry,
+    job_id: i32,
+    destination: &PrinterEntry,
+) -> BackendResult<()> {
+    if source.id() == destination.id() {
+        return Err(BackendError::InvalidMoveDestination {
+            why: "source and destination queues are the same".to_string(),
+        });
+    }
+
+    let source_uri = resolve_job_printer_uri(source);
+    let destination_uri = resolve_job_printer_uri(destination);
+
+    tokio::task::spawn_blocking(move || {
+        let mut request = IppRequest::new(IppOperation::CupsMoveJob).cups_err()?;
+
+        add_operation_defaults(&mut request)?;
+        request
+            .add_string(
+                IppTag::Operation,
+                IppValueTag::Uri,
+                "printer-uri",
+                &source_uri,
+            )
+            .cups_err()?;
+        request
+            .add_integer(IppTag::Operation, IppValueTag::Integer, "job-id", job_id)
+            .cups_err()?;
+        add_requesting_user(&mut request)?;
+        request
+            .add_string(
+                IppTag::Job,
+                IppValueTag::Uri,
+                "job-printer-uri",
+                &destination_uri,
+            )
+            .cups_err()?;
+
+        let response = send_ipp_request(request, CUPS_JOBS_URI)?;
+        ensure_move_job_success(response.status(), job_id)
+    })
+    .await
+    .map_err(BackendError::Join)?
+}
+
 async fn send_job_request(
     operation: IppOperation,
     printer: &PrinterEntry,
@@ -146,11 +193,36 @@ fn add_operation_defaults(request: &mut IppRequest) -> BackendResult<()> {
 }
 
 fn resolve_job_printer_uri(printer: &PrinterEntry) -> String {
-    // match printer.device_uri().filter(|uri| is_ipp_uri(uri)) {
-    //     Some(uri) => uri.to_string(),
-    //     None => local_printer_uri(printer.id(), false),
-    // }
-    local_printer_uri(printer.id(), false)
+    printer
+        .printer_local_uri()
+        .filter(|uri| crate::ipp::is_local_scheduler_uri(uri))
+        .map(str::to_owned)
+        .unwrap_or_else(|| local_printer_uri(printer.id(), false))
+}
+
+fn ensure_move_job_success(status: IppStatus, job_id: i32) -> BackendResult<()> {
+    if status.is_successful() {
+        return Ok(());
+    }
+
+    match status {
+        IppStatus::ErrorNotAuthorized
+        | IppStatus::ErrorForbidden
+        | IppStatus::ErrorNotAuthenticated => Err(BackendError::PermissionDenied {
+            operation: "CUPS-Move-Job".to_string(),
+        }),
+        IppStatus::ErrorNotFound | IppStatus::ErrorGone => {
+            Err(BackendError::JobNotFound { job_id })
+        }
+        IppStatus::ErrorNotPossible => Err(BackendError::JobNotMovable { job_id }),
+        IppStatus::ErrorOperationNotSupported => Err(BackendError::OperationNotSupported {
+            operation: "CUPS-Move-Job".to_string(),
+        }),
+        _ => Err(BackendError::IppStatus {
+            operation: "CUPS-Move-Job".to_string(),
+            status: format!("{status:?}"),
+        }),
+    }
 }
 
 struct JobBuilder<'a> {
@@ -278,5 +350,21 @@ mod tests {
         let job = builder.finish().unwrap();
         assert_eq!(job.id, 42);
         assert_eq!(job.printer_id, "printer");
+    }
+
+    #[test]
+    fn move_job_rejects_finished_jobs_as_stale_state() {
+        assert!(matches!(
+            ensure_move_job_success(IppStatus::ErrorNotPossible, 42),
+            Err(BackendError::JobNotMovable { job_id: 42 })
+        ));
+    }
+
+    #[test]
+    fn move_job_reports_unsupported_schedulers() {
+        assert!(matches!(
+            ensure_move_job_success(IppStatus::ErrorOperationNotSupported, 42),
+            Err(BackendError::OperationNotSupported { .. })
+        ));
     }
 }

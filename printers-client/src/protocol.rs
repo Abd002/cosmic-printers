@@ -82,6 +82,13 @@ pub trait CosmicPrintersProxy {
         filter: String,
     ) -> zlink::Result<Result<GetJobsReply, Error>>;
 
+    async fn move_job(
+        &mut self,
+        source_printer_id: String,
+        job_id: i32,
+        destination_printer_id: String,
+    ) -> zlink::Result<Result<(), Error>>;
+
     async fn pause_job(
         &mut self,
         printer_id: String,
