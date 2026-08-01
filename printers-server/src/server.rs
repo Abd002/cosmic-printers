@@ -184,6 +184,34 @@ impl Server {
             .map_err(service_error)
     }
 
+    /// Moves a job between configured destinations on the local CUPS scheduler.
+    pub async fn move_job(
+        &self,
+        source_printer_id: &str,
+        job_id: i32,
+        destination_printer_id: &str,
+    ) -> Result<(), Error> {
+        if source_printer_id == destination_printer_id {
+            return Err(Error::InvalidMoveDestination {
+                why: "source and destination queues are the same".to_string(),
+            });
+        }
+
+        let printers = self.list_printers().await?;
+        let source = printers
+            .iter()
+            .find(|printer| printer.id() == source_printer_id)
+            .ok_or(Error::PrinterNotFound)?;
+        let destination = printers
+            .iter()
+            .find(|printer| printer.id() == destination_printer_id)
+            .ok_or(Error::PrinterNotFound)?;
+
+        cups_backend::move_job(source, job_id, destination)
+            .await
+            .map_err(service_error)
+    }
+
     /// Pauses a job.
     pub async fn pause_job(&self, printer_id: &str, job_id: i32) -> Result<(), Error> {
         let printer = self.printer_entry(printer_id).await?;

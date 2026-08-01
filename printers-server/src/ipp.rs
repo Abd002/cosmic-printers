@@ -94,6 +94,7 @@ impl ParsedUri {
             && self.port == 631
             && is_loopback_host(&self.host)
             && (resource == "/"
+                || resource == "/jobs"
                 || resource.starts_with("/printers/")
                 || resource.starts_with("/classes/"))
     }
@@ -293,6 +294,7 @@ mod tests {
     fn detects_only_local_scheduler_resources_on_the_cups_port() {
         assert!(is_local_scheduler_uri("ipp://localhost/printers/example"));
         assert!(is_local_scheduler_uri("ipp://127.0.0.1/"));
+        assert!(is_local_scheduler_uri("ipp://localhost/jobs"));
         assert!(!is_local_scheduler_uri("ipps://localhost/printers/example"));
         assert!(!is_local_scheduler_uri(
             "ipp://localhost:8000/printers/example"

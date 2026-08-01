@@ -29,6 +29,18 @@ pub(crate) enum BackendError {
     #[error("permission denied for '{operation}'")]
     PermissionDenied { operation: String },
 
+    #[error("print job {job_id} was not found")]
+    JobNotFound { job_id: i32 },
+
+    #[error("print job {job_id} can no longer be moved")]
+    JobNotMovable { job_id: i32 },
+
+    #[error("'{operation}' is not supported by the print scheduler")]
+    OperationNotSupported { operation: String },
+
+    #[error("invalid print-job destination: {why}")]
+    InvalidMoveDestination { why: String },
+
     #[error("device '{uri}' is unreachable: {source}")]
     DeviceUnreachable {
         uri: String,
@@ -84,6 +96,12 @@ impl From<BackendError> for Error {
             },
             BackendError::MissingDeviceUri { queue } => Self::MissingDeviceUri { queue },
             BackendError::PermissionDenied { operation } => Self::PermissionDenied { operation },
+            BackendError::JobNotFound { job_id } => Self::JobNotFound { job_id },
+            BackendError::JobNotMovable { job_id } => Self::JobNotMovable { job_id },
+            BackendError::OperationNotSupported { operation } => {
+                Self::OperationNotSupported { operation }
+            }
+            BackendError::InvalidMoveDestination { why } => Self::InvalidMoveDestination { why },
             BackendError::DeviceUnreachable { uri, source } => Self::DeviceUnreachable {
                 why: format!("{uri}: {source}"),
             },

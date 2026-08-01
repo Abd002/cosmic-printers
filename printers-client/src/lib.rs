@@ -247,6 +247,23 @@ impl Client {
         Ok(reply.jobs)
     }
 
+    pub async fn move_job(
+        &mut self,
+        source_printer_id: &str,
+        job_id: i32,
+        destination_printer_id: &str,
+    ) -> ClientResult<()> {
+        flatten(
+            protocol::CosmicPrintersProxy::move_job(
+                &mut self.conn,
+                source_printer_id.to_owned(),
+                job_id,
+                destination_printer_id.to_owned(),
+            )
+            .await,
+        )
+    }
+
     pub async fn pause_job(&mut self, printer_id: &str, job_id: i32) -> ClientResult<()> {
         flatten(
             protocol::CosmicPrintersProxy::pause_job(&mut self.conn, printer_id.to_owned(), job_id)
