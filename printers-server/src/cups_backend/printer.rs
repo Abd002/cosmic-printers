@@ -2,7 +2,7 @@ use cosmic_settings_printers_core::PrinterEntry;
 use cups_rs::create_job;
 
 use super::helpers::{
-    CupsResultExt, PRINTER_ATTRIBUTES, configured_printers, fill_missing_attrs,
+    CupsResultExt, PRINTER_ATTRIBUTES, available_destinations, fill_missing_attrs,
     split_queue_instance,
 };
 use super::{metadata, polkit_helper};
@@ -12,7 +12,7 @@ const TEST_PAGE_PDF: &str = "/usr/share/cups/data/default-testpage.pdf";
 
 pub async fn list_printers() -> BackendResult<Vec<PrinterEntry>> {
     tokio::task::spawn_blocking(|| {
-        let mut printers = configured_printers(250)?;
+        let mut printers = available_destinations(250)?;
 
         metadata::retain_for_configured_queues(printers.keys().map(String::as_str))?;
         metadata::apply(&mut printers)?;
