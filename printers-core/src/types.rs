@@ -109,11 +109,6 @@ impl PrinterEntry {
         self.is_default
     }
 
-    /// Changes the destination identifier after CUPS creates a queue.
-    pub fn set_id(&mut self, id: impl Into<String>) {
-        self.id = id.into();
-    }
-
     /// Returns a normalized option by its IPP/CUPS name.
     pub fn option(&self, name: &str) -> Option<&str> {
         self.options

@@ -260,9 +260,8 @@ pub(crate) async fn discover_printers_into_cache(
 
 async fn merge_printer_into_cache(context: &Context, printer: PrinterEntry) {
     context
-        .merge_discovered_printer_by(printer.clone(), discovered_printers_match)
+        .merge_discovered_printer_by(printer, discovered_printers_match)
         .await;
-    crate::cups_backend::auto_add_discovered_printer(context.clone(), printer).await;
 }
 
 async fn retain_seen_services(
@@ -275,10 +274,6 @@ async fn retain_seen_services(
         .filter(|service| service_kind(&service.service_type) == Some(ResolvedServiceKind::Printer))
         .map(|service| service_to_partial_entry(&service))
         .collect::<Vec<_>>();
-    let active_printer_ids = active_printers
-        .iter()
-        .filter_map(discovered_printer_id)
-        .collect::<HashSet<_>>();
 
     context
         .retain_discovered_printers_by(active_printers, discovered_printers_match)
@@ -286,7 +281,6 @@ async fn retain_seen_services(
     context
         .retain_printer_applications(&active_application_ids)
         .await;
-    crate::cups_backend::delete_stale_discovered_printers(active_printer_ids).await;
 }
 
 async fn resolve_service_entry(

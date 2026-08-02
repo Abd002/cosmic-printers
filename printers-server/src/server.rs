@@ -70,23 +70,18 @@ impl Server {
         .boxed()
     }
 
-    /// Adds a discovered printer to the configured CUPS queues.
+    /// Requests managed creation for a discovered printer.
+    ///
+    /// This remains unavailable until the sharing-server `Create-Printer`
+    /// backend is implemented.
     pub async fn add_discovered_printer(&self, printer_id: &str) -> Result<(), Error> {
-        let printer = self
-            .context
+        self.context
             .discovered_printer(printer_id)
             .await
             .ok_or(Error::PrinterNotFound)?;
-        let actual_queue_name = cups_backend::add_discovered_printer(printer)
-            .await
-            .map_err(service_error)?;
-        self.context
-            .update_discovered_printer(printer_id, |printer| {
-                printer.set_id(actual_queue_name);
-            })
-            .await;
-
-        Ok(())
+        Err(Error::OperationNotSupported {
+            operation: "Create-Printer".to_string(),
+        })
     }
 
     /// Deletes a configured printer.
