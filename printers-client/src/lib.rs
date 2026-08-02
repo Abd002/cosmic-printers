@@ -110,16 +110,6 @@ impl Client {
         Ok(events.map(flatten))
     }
 
-    pub async fn add_discovered_printer(&mut self, printer_id: &str) -> ClientResult<()> {
-        flatten(
-            protocol::CosmicPrintersProxy::add_discovered_printer(
-                &mut self.conn,
-                printer_id.to_owned(),
-            )
-            .await,
-        )
-    }
-
     pub async fn delete_printer(&mut self, printer_id: &str) -> ClientResult<()> {
         flatten(
             protocol::CosmicPrintersProxy::delete_printer(&mut self.conn, printer_id.to_owned())

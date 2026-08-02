@@ -23,11 +23,6 @@ pub trait CosmicPrintersProxy {
         &mut self,
     ) -> zlink::Result<impl Stream<Item = zlink::Result<Result<PrintersEvent, Error>>>>;
 
-    async fn add_discovered_printer(
-        &mut self,
-        printer_id: String,
-    ) -> zlink::Result<Result<(), Error>>;
-
     async fn delete_printer(&mut self, printer_id: String) -> zlink::Result<Result<(), Error>>;
 
     async fn set_printer_accept_jobs(

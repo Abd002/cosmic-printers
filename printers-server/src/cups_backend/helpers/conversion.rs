@@ -3,11 +3,6 @@ use cups_rs::{Destination, PrinterState as CupsPrinterState};
 
 use crate::ipp::{is_local_scheduler_uri, parse_uri_endpoint, web_page_from_uri};
 
-/// Derives a simple web interface URL from a device URI hostname.
-fn web_page_from_device_uri(device_uri: &str) -> Option<String> {
-    web_page_from_uri(device_uri)
-}
-
 /// Converts a cups-rs destination into the type exposed by the printer API.
 pub(super) fn destination_to_printer_entry(mut destination: Destination) -> PrinterEntry {
     let queue_status = destination.state().to_string();
@@ -45,7 +40,7 @@ pub(super) fn destination_to_printer_entry(mut destination: Destination) -> Prin
             .insert("printer-make-and-model".to_string(), model.clone());
     }
     if !destination.options.contains_key("printer-more-info")
-        && let Some(web_page) = device_uri.as_deref().and_then(web_page_from_device_uri)
+        && let Some(web_page) = device_uri.as_deref().and_then(web_page_from_uri)
     {
         destination
             .options
@@ -76,7 +71,7 @@ fn endpoint_from_uris(
 pub(super) fn refresh_printer_entry(printer: &mut PrinterEntry) {
     let device_uri = printer.device_uri().map(str::to_owned);
     if printer.web_page().is_none()
-        && let Some(web_page) = device_uri.as_deref().and_then(web_page_from_device_uri)
+        && let Some(web_page) = device_uri.as_deref().and_then(web_page_from_uri)
     {
         printer.set_option("printer-more-info", web_page);
     }
@@ -196,7 +191,7 @@ mod tests {
     #[test]
     fn derives_secure_web_page_from_ipps_device_uri() {
         assert_eq!(
-            web_page_from_device_uri("ipps://printer.local:8000/ipp/print").as_deref(),
+            web_page_from_uri("ipps://printer.local:8000/ipp/print").as_deref(),
             Some("https://printer.local:8000/")
         );
     }

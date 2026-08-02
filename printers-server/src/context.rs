@@ -1,4 +1,3 @@
-use crate::avahi::discovered_printer_id;
 use cosmic_settings_printers_core::{
     PrinterApplication, PrinterEntry, PrintersEvent, PrintersEventKind,
 };
@@ -120,16 +119,6 @@ impl Context {
         if changed {
             self.emit_printer_applications_changed();
         }
-    }
-
-    pub(crate) async fn discovered_printer(&self, printer_id: &str) -> Option<PrinterEntry> {
-        self.model
-            .lock()
-            .await
-            .discovered_printers
-            .iter()
-            .find(|printer| discovered_printer_id(printer).as_deref() == Some(printer_id))
-            .cloned()
     }
 
     pub(crate) async fn update_discovered_printers(

@@ -294,11 +294,6 @@ impl PrinterEntry {
 
         self.merge_options(incoming.options);
     }
-
-    /// Applies stored discovery options to a configured CUPS destination.
-    pub fn apply_discovery_metadata(&mut self, metadata: &Self) {
-        self.merge_options(metadata.options.clone());
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -446,25 +441,6 @@ mod tests {
         assert_eq!(existing.name(), "Office Printer");
         assert_eq!(existing.dnssd_address(), Some("192.0.2.2"));
         assert_eq!(existing.location(), Some("Office"));
-    }
-
-    #[test]
-    fn applying_discovery_metadata_preserves_configured_identity() {
-        let mut configured = printer("office_queue", "Configured Name", &[]);
-        let metadata = printer(
-            "dnssd:_ipp._tcp:local:Office",
-            "Discovered Name",
-            &[("device-uri", "ipp://printer.local/ipp/print")],
-        );
-
-        configured.apply_discovery_metadata(&metadata);
-
-        assert_eq!(configured.id(), "office_queue");
-        assert_eq!(configured.name(), "Configured Name");
-        assert_eq!(
-            configured.device_uri(),
-            Some("ipp://printer.local/ipp/print")
-        );
     }
 
     #[test]
