@@ -28,7 +28,10 @@ impl Server {
 
     /// Lists the configured CUPS printers.
     pub async fn list_printers(&self) -> Result<Vec<PrinterEntry>, Error> {
-        cups_backend::list_printers().await.map_err(service_error)
+        let mut printers = cups_backend::list_printers().await.map_err(service_error)?;
+        let discovered = self.context.discovered_printers_cached().await;
+        cups_backend::attach_discovered_metadata(&mut printers, &discovered);
+        Ok(printers)
     }
 
     /// Starts a background DNS-SD discovery refresh when one is not already running.

@@ -12,7 +12,7 @@ const TEST_PAGE_PDF: &str = "/usr/share/cups/data/default-testpage.pdf";
 
 pub async fn list_printers() -> BackendResult<Vec<PrinterEntry>> {
     tokio::task::spawn_blocking(|| {
-        let mut printers = available_destinations(250)?;
+        let mut printers = available_destinations(5000)?;
 
         fill_printer_attrs(printers.values_mut());
 
