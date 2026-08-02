@@ -42,6 +42,7 @@ impl NetworkScheme {
         matches!(self, Self::Ipp | Self::Ipps)
     }
 
+    #[cfg(test)]
     fn web_scheme(self) -> &'static str {
         match self {
             Self::Ipp | Self::Http => "http",
@@ -99,6 +100,7 @@ impl ParsedUri {
                 || resource.starts_with("/classes/"))
     }
 
+    #[cfg(test)]
     fn web_page(&self) -> Option<String> {
         let mut web_page = Url::parse("http://localhost/").ok()?;
         web_page.set_scheme(self.scheme.web_scheme()).ok()?;
@@ -157,7 +159,8 @@ pub(crate) fn parse_uri_endpoint(uri: &str) -> Option<(String, u16)> {
     Some((uri.host, uri.port))
 }
 
-pub(crate) fn web_page_from_uri(uri: &str) -> Option<String> {
+#[cfg(test)]
+fn web_page_from_uri(uri: &str) -> Option<String> {
     ParsedUri::parse(uri)?.web_page()
 }
 

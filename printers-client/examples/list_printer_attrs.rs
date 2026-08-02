@@ -21,19 +21,18 @@ fn print_printer(printer: &PrinterEntry) {
     println!("  name: {}", printer.name());
     println!("  is-default: {}", printer.is_default());
     println!("  printer-uri: {:?}", printer.printer_uri());
-    println!("  status: {:?}", printer.status());
-    println!("  queue-status: {:?}", printer.queue_status());
-    println!("  location: {:?}", printer.location());
-    println!("  model: {:?}", printer.model());
     println!("  device-uri: {:?}", printer.device_uri());
     println!("  hostname: {:?}", printer.hostname());
     println!("  port: {:?}", printer.port());
     println!("  web-page: {:?}", printer.web_page());
-    println!("  driver-version: {:?}", printer.driver_version());
-    println!("  supplies:");
     for supply in printer.supplies() {
         println!("    {}: {}%", supply.name, supply.level_percent);
     }
-    println!("  paper-sizes: {}", printer.paper_sizes().join(", "));
-    println!("  print-sides: {}", printer.print_sides().join(", "));
+    println!("  options:");
+
+    let mut options = printer.options().collect::<Vec<_>>();
+    options.sort_unstable_by_key(|(name, _)| *name);
+    for (name, value) in options {
+        println!("    {name}: {value}");
+    }
 }

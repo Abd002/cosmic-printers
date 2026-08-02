@@ -1,4 +1,4 @@
-use super::conversion::refresh_printer_entry;
+use super::conversion::refresh_printer_endpoint;
 use crate::error::{BackendError, BackendResult};
 use crate::ipp::{CupsResultExt, ensure_success, printer_attrs_request, send_ipp_request};
 use cosmic_settings_printers_core::PrinterEntry;
@@ -52,7 +52,7 @@ pub(in crate::cups_backend) fn fill_missing_attrs(
     ensure_success(&response, "Get-Printer-Attributes")?;
 
     printer.merge_options(merge_response_attrs(&response, &missing));
-    refresh_printer_entry(printer);
+    refresh_printer_endpoint(printer);
     Ok(())
 }
 
@@ -82,7 +82,7 @@ fn fill_attrs_from_device_uri(
     ensure_success(&response, "Get-Printer-Attributes")?;
 
     printer.merge_options(merge_response_attrs(&response, attrs));
-    refresh_printer_entry(printer);
+    refresh_printer_endpoint(printer);
     Ok(())
 }
 

@@ -143,47 +143,23 @@ impl Context {
         printer: PrinterEntry,
         matches: impl Fn(&PrinterEntry, &PrinterEntry) -> bool,
     ) {
-        let mut added = false;
+        let mut changed = false;
         self.update_discovered_printers(|printers| {
             if let Some(index) = printers
                 .iter()
                 .position(|existing| matches(existing, &printer))
             {
+                let before = printers[index].clone();
                 printers[index].merge_discovery_record(printer);
+                changed = printers[index] != before;
             } else {
                 printers.push(printer);
-                added = true;
+                changed = true;
             }
         })
         .await;
 
-        if added {
-            self.emit_discovered_printers_changed();
-        }
-    }
-
-    pub(crate) async fn merge_discovered_printers_by(
-        &self,
-        incoming: impl IntoIterator<Item = PrinterEntry>,
-        matches: impl Fn(&PrinterEntry, &PrinterEntry) -> bool,
-    ) {
-        let mut added = false;
-        self.update_discovered_printers(|printers| {
-            for printer in incoming {
-                if let Some(index) = printers
-                    .iter()
-                    .position(|existing| matches(existing, &printer))
-                {
-                    printers[index].merge_discovery_record(printer);
-                } else {
-                    printers.push(printer);
-                    added = true;
-                }
-            }
-        })
-        .await;
-
-        if added {
+        if changed {
             self.emit_discovered_printers_changed();
         }
     }
@@ -246,6 +222,24 @@ mod tests {
         }
     }
 
+    fn discovered_printer(state: &str) -> PrinterEntry {
+        PrinterEntry::new(
+            "",
+            "Office Printer",
+            false,
+            HashMap::from([
+                (
+                    "dnssd-service-name".to_string(),
+                    "Office Printer".to_string(),
+                ),
+                (
+                    "cosmic-discovery-detail-state".to_string(),
+                    state.to_string(),
+                ),
+            ]),
+        )
+    }
+
     #[tokio::test]
     async fn printer_applications_use_a_separate_cache_and_event() {
         let context = Context::new();
@@ -304,6 +298,33 @@ mod tests {
         assert_eq!(applications.len(), 1);
         assert_eq!(applications[0].id, "keep");
         assert!(context.discovered_printers_cached().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn resolved_discovery_metadata_emits_a_change_event() {
+        let context = Context::new();
+        let mut events = context.subscribe_events();
+        let matches = |left: &PrinterEntry, right: &PrinterEntry| left.name() == right.name();
+
+        context
+            .merge_discovered_printer_by(discovered_printer("partial"), matches)
+            .await;
+        assert_eq!(
+            events.recv().await.unwrap().kind,
+            PrintersEventKind::DiscoveredPrintersChanged
+        );
+
+        context
+            .merge_discovered_printer_by(discovered_printer("resolved"), matches)
+            .await;
+        assert_eq!(
+            events.recv().await.unwrap().kind,
+            PrintersEventKind::DiscoveredPrintersChanged
+        );
+        assert_eq!(
+            context.discovered_printers_cached().await[0].option("cosmic-discovery-detail-state"),
+            Some("resolved")
+        );
     }
 
     #[test]

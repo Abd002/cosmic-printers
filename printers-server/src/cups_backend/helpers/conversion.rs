@@ -1,7 +1,7 @@
 use cosmic_settings_printers_core::{PrinterEntry, PrinterStatus};
 use cups_rs::{Destination, PrinterState as CupsPrinterState};
 
-use crate::ipp::{is_local_scheduler_uri, parse_uri_endpoint, web_page_from_uri};
+use crate::ipp::{is_local_scheduler_uri, parse_uri_endpoint};
 
 /// Converts a cups-rs destination into the type exposed by the printer API.
 pub(super) fn destination_to_printer_entry(mut destination: Destination) -> PrinterEntry {
@@ -39,13 +39,6 @@ pub(super) fn destination_to_printer_entry(mut destination: Destination) -> Prin
             .options
             .insert("printer-make-and-model".to_string(), model.clone());
     }
-    if !destination.options.contains_key("printer-more-info")
-        && let Some(web_page) = device_uri.as_deref().and_then(web_page_from_uri)
-    {
-        destination
-            .options
-            .insert("printer-more-info".to_string(), web_page);
-    }
     let mut printer = PrinterEntry::new(id, name, destination.is_default, destination.options);
     apply_endpoint(
         &mut printer,
@@ -67,14 +60,9 @@ fn endpoint_from_uris(
         .or_else(|| device_uri.and_then(parse_uri_endpoint))
 }
 
-/// Recomputes derived public fields after new IPP attributes are merged.
-pub(super) fn refresh_printer_entry(printer: &mut PrinterEntry) {
+/// Recomputes the endpoint after URI attributes are merged.
+pub(super) fn refresh_printer_endpoint(printer: &mut PrinterEntry) {
     let device_uri = printer.device_uri().map(str::to_owned);
-    if printer.web_page().is_none()
-        && let Some(web_page) = device_uri.as_deref().and_then(web_page_from_uri)
-    {
-        printer.set_option("printer-more-info", web_page);
-    }
     apply_endpoint(
         printer,
         endpoint_from_uris(printer.printer_uri(), device_uri.as_deref()),
@@ -186,13 +174,5 @@ mod tests {
     #[test]
     fn leaves_endpoint_absent_when_both_uris_are_absent() {
         assert_eq!(endpoint_from_uris(None, None), None);
-    }
-
-    #[test]
-    fn derives_secure_web_page_from_ipps_device_uri() {
-        assert_eq!(
-            web_page_from_uri("ipps://printer.local:8000/ipp/print").as_deref(),
-            Some("https://printer.local:8000/")
-        );
     }
 }
