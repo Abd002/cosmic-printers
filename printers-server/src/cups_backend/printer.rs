@@ -5,7 +5,7 @@ use super::helpers::{
     CupsResultExt, PRINTER_ATTRIBUTES, available_destinations, fill_missing_attrs,
     split_queue_instance,
 };
-use super::{metadata, polkit_helper};
+use super::polkit_helper;
 use crate::error::{BackendError, BackendResult};
 
 const TEST_PAGE_PDF: &str = "/usr/share/cups/data/default-testpage.pdf";
@@ -14,8 +14,6 @@ pub async fn list_printers() -> BackendResult<Vec<PrinterEntry>> {
     tokio::task::spawn_blocking(|| {
         let mut printers = available_destinations(250)?;
 
-        metadata::retain_for_configured_queues(printers.keys().map(String::as_str))?;
-        metadata::apply(&mut printers)?;
         fill_printer_attrs(printers.values_mut());
 
         Ok(printers.into_values().collect())
@@ -42,8 +40,7 @@ fn fill_printer_attrs<'a>(printers: impl Iterator<Item = &'a mut PrinterEntry>) 
 
 pub async fn delete_printer(printer_id: &str) -> BackendResult<()> {
     let queue_name = split_queue_instance(printer_id).0;
-    polkit_helper::delete_printer(queue_name).await?;
-    metadata::remove(queue_name)
+    polkit_helper::delete_printer(queue_name).await
 }
 
 pub async fn set_printer_accept_jobs(

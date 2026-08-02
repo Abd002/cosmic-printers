@@ -445,13 +445,6 @@ pub(crate) fn discovered_printers_match(left: &PrinterEntry, right: &PrinterEntr
     }
 }
 
-pub(crate) fn discovered_printer_id(printer: &PrinterEntry) -> Option<String> {
-    let service_type = printer.option("dnssd-service-type")?;
-    let domain = printer.option("dnssd-domain")?;
-    let name = printer.option("dnssd-service-name")?;
-    Some(format!("dnssd:{service_type}:{domain}:{name}"))
-}
-
 fn service_kind(service_type: &str) -> Option<ResolvedServiceKind> {
     match service_type {
         "_ipp._tcp" | "_ipps._tcp" => Some(ResolvedServiceKind::Printer),

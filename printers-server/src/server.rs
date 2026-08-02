@@ -70,20 +70,6 @@ impl Server {
         .boxed()
     }
 
-    /// Requests managed creation for a discovered printer.
-    ///
-    /// This remains unavailable until the sharing-server `Create-Printer`
-    /// backend is implemented.
-    pub async fn add_discovered_printer(&self, printer_id: &str) -> Result<(), Error> {
-        self.context
-            .discovered_printer(printer_id)
-            .await
-            .ok_or(Error::PrinterNotFound)?;
-        Err(Error::OperationNotSupported {
-            operation: "Create-Printer".to_string(),
-        })
-    }
-
     /// Deletes a configured printer.
     pub async fn delete_printer(&self, printer_id: &str) -> Result<(), Error> {
         self.printer_entry(printer_id).await?;

@@ -10,9 +10,6 @@ pub(crate) enum BackendError {
     #[error("failed to enumerate CUPS printers: {0}")]
     FailedToGetPrinters(#[source] cups_rs::Error),
 
-    #[error("printer configuration failed: {0}")]
-    Config(#[source] cosmic_config::Error),
-
     #[error("{operation} failed over D-Bus: {source}")]
     Zbus {
         operation: &'static str,
@@ -73,12 +70,6 @@ impl From<cups_rs::Error> for BackendError {
     }
 }
 
-impl From<cosmic_config::Error> for BackendError {
-    fn from(error: cosmic_config::Error) -> Self {
-        Self::Config(error)
-    }
-}
-
 impl From<tokio::task::JoinError> for BackendError {
     fn from(error: tokio::task::JoinError) -> Self {
         Self::Join(error)
@@ -89,9 +80,6 @@ impl From<BackendError> for Error {
     fn from(error: BackendError) -> Self {
         match error {
             BackendError::FailedToGetPrinters(source) => Self::FailedToGetPrinters {
-                why: source.to_string(),
-            },
-            BackendError::Config(source) => Self::ConfigFailed {
                 why: source.to_string(),
             },
             BackendError::MissingDeviceUri { queue } => Self::MissingDeviceUri { queue },
