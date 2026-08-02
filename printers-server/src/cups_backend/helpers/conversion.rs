@@ -1,8 +1,6 @@
 use cosmic_settings_printers_core::{PrinterEntry, PrinterStatus};
 use cups_rs::{Destination, PrinterState as CupsPrinterState};
 
-use super::identity::local_printer_uri;
-use super::options::is_printer_class;
 use crate::ipp::{is_local_scheduler_uri, parse_uri_endpoint, web_page_from_uri};
 
 /// Derives a simple web interface URL from a device URI hostname.
@@ -13,18 +11,8 @@ fn web_page_from_device_uri(device_uri: &str) -> Option<String> {
 /// Converts a cups-rs destination into the type exposed by the printer API.
 pub(super) fn destination_to_printer_entry(mut destination: Destination) -> PrinterEntry {
     let queue_status = destination.state().to_string();
-    let printer_local_uri = destination.uri().cloned().unwrap_or_else(|| {
-        local_printer_uri(&destination.name, is_printer_class(&destination.options))
-    });
-    let device_uri = destination.device_uri().cloned().unwrap_or_default();
-    destination
-        .options
-        .entry("printer-uri-supported".to_string())
-        .or_insert_with(|| printer_local_uri.clone());
-    destination
-        .options
-        .entry("device-uri".to_string())
-        .or_insert_with(|| device_uri.clone());
+    let printer_uri = destination.uri().cloned();
+    let device_uri = destination.device_uri().cloned();
     let id = destination.full_name();
     let name = destination
         .info()
@@ -57,7 +45,7 @@ pub(super) fn destination_to_printer_entry(mut destination: Destination) -> Prin
             .insert("printer-make-and-model".to_string(), model.clone());
     }
     if !destination.options.contains_key("printer-more-info")
-        && let Some(web_page) = web_page_from_device_uri(&device_uri)
+        && let Some(web_page) = device_uri.as_deref().and_then(web_page_from_device_uri)
     {
         destination
             .options
@@ -66,30 +54,35 @@ pub(super) fn destination_to_printer_entry(mut destination: Destination) -> Prin
     let mut printer = PrinterEntry::new(id, name, destination.is_default, destination.options);
     apply_endpoint(
         &mut printer,
-        endpoint_from_uris(&printer_local_uri, &device_uri),
+        endpoint_from_uris(printer_uri.as_deref(), device_uri.as_deref()),
     );
     printer
 }
 
-fn endpoint_from_uris(printer_uri: &str, device_uri: &str) -> Option<(String, u16)> {
-    if is_local_scheduler_uri(printer_uri) {
-        return parse_uri_endpoint(device_uri);
+fn endpoint_from_uris(
+    printer_uri: Option<&str>,
+    device_uri: Option<&str>,
+) -> Option<(String, u16)> {
+    if printer_uri.is_some_and(is_local_scheduler_uri) {
+        return device_uri.and_then(parse_uri_endpoint);
     }
 
-    parse_uri_endpoint(printer_uri).or_else(|| parse_uri_endpoint(device_uri))
+    printer_uri
+        .and_then(parse_uri_endpoint)
+        .or_else(|| device_uri.and_then(parse_uri_endpoint))
 }
 
 /// Recomputes derived public fields after new IPP attributes are merged.
 pub(super) fn refresh_printer_entry(printer: &mut PrinterEntry) {
-    let device_uri = printer.device_uri().unwrap_or_default().to_string();
+    let device_uri = printer.device_uri().map(str::to_owned);
     if printer.web_page().is_none()
-        && let Some(web_page) = web_page_from_device_uri(&device_uri)
+        && let Some(web_page) = device_uri.as_deref().and_then(web_page_from_device_uri)
     {
         printer.set_option("printer-more-info", web_page);
     }
     apply_endpoint(
         printer,
-        endpoint_from_uris(printer.printer_local_uri().unwrap_or_default(), &device_uri),
+        endpoint_from_uris(printer.printer_uri(), device_uri.as_deref()),
     );
 }
 
@@ -119,12 +112,47 @@ fn printer_status(destination: &Destination) -> PrinterStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
+
+    fn destination(options: &[(&str, &str)]) -> Destination {
+        Destination {
+            name: "Test".to_string(),
+            instance: None,
+            is_default: false,
+            options: options
+                .iter()
+                .map(|(name, value)| (name.to_string(), value.to_string()))
+                .collect::<HashMap<_, _>>(),
+        }
+    }
+
+    #[test]
+    fn leaves_unreported_destination_uris_absent() {
+        let printer = destination_to_printer_entry(destination(&[]));
+
+        assert_eq!(printer.printer_uri(), None);
+        assert_eq!(printer.device_uri(), None);
+    }
+
+    #[test]
+    fn preserves_reported_destination_uris() {
+        let printer = destination_to_printer_entry(destination(&[
+            ("printer-uri-supported", "ipps://printer.local/ipp/print"),
+            ("device-uri", "ipp://printer.local/ipp/print"),
+        ]));
+
+        assert_eq!(
+            printer.printer_uri(),
+            Some("ipps://printer.local/ipp/print")
+        );
+        assert_eq!(printer.device_uri(), Some("ipp://printer.local/ipp/print"));
+    }
 
     #[test]
     fn stores_endpoint_from_remote_printer_uri() {
         let endpoint = endpoint_from_uris(
-            "ipps://DESKTOP-96VEKVC-2.local:8880/ipp/print",
-            "ipps://Abd._ipps._tcp.local/",
+            Some("ipps://DESKTOP-96VEKVC-2.local:8880/ipp/print"),
+            Some("ipps://Abd._ipps._tcp.local/"),
         );
 
         assert_eq!(
@@ -136,8 +164,8 @@ mod tests {
     #[test]
     fn skips_local_scheduler_uri_and_uses_device_uri() {
         let endpoint = endpoint_from_uris(
-            "ipp://localhost/printers/Abd",
-            "ipp://localhost:60001/ipp/print",
+            Some("ipp://localhost/printers/Abd"),
+            Some("ipp://localhost:60001/ipp/print"),
         );
 
         assert_eq!(endpoint, Some(("localhost".to_string(), 60001)));
@@ -145,9 +173,24 @@ mod tests {
 
     #[test]
     fn leaves_endpoint_absent_when_no_network_uri_is_available() {
-        let endpoint = endpoint_from_uris("ipp://localhost/printers/Usb", "usb://HP/DeskJet");
+        let endpoint = endpoint_from_uris(
+            Some("ipp://localhost/printers/Usb"),
+            Some("usb://HP/DeskJet"),
+        );
 
         assert_eq!(endpoint, None);
+    }
+
+    #[test]
+    fn uses_device_uri_when_printer_uri_is_absent() {
+        let endpoint = endpoint_from_uris(None, Some("ipp://printer.local:631/ipp/print"));
+
+        assert_eq!(endpoint, Some(("printer.local".to_string(), 631)));
+    }
+
+    #[test]
+    fn leaves_endpoint_absent_when_both_uris_are_absent() {
+        assert_eq!(endpoint_from_uris(None, None), None);
     }
 
     #[test]

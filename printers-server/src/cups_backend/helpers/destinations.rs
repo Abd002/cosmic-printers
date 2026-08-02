@@ -6,31 +6,17 @@ use super::conversion::destination_to_printer_entry;
 use crate::error::{BackendError, BackendResult};
 
 /// Lists queues configured in the local CUPS scheduler as normalized printer entries.
-pub(in crate::cups_backend) fn configured_printers(
+pub(in crate::cups_backend) fn available_destinations(
     timeout_ms: i32,
 ) -> BackendResult<HashMap<String, PrinterEntry>> {
-    let destinations = enum_destination_set(
-        cups_rs::PRINTER_LOCAL,
-        cups_rs::PRINTER_DISCOVERED,
-        timeout_ms,
-    )?;
-    Ok(printer_entry_set(destinations))
-}
-
-/// Collects `cupsEnumDests` callbacks into a map keyed by destination full name.
-fn enum_destination_set(
-    printer_type: u32,
-    printer_mask: u32,
-    timeout: i32,
-) -> BackendResult<HashMap<String, Destination>> {
     let mut destinations = HashMap::<String, Destination>::new();
 
     enum_destinations(
         cups_rs::DEST_FLAGS_NONE,
-        timeout,
+        timeout_ms,
         None,
-        printer_type,
-        printer_mask,
+        0,
+        0,
         &mut |flags, destination, destinations: &mut HashMap<String, Destination>| {
             let id = destination.full_name();
 
@@ -46,7 +32,7 @@ fn enum_destination_set(
     )
     .map_err(BackendError::FailedToGetPrinters)?;
 
-    Ok(destinations)
+    Ok(printer_entry_set(destinations))
 }
 
 /// Normalizes raw CUPS destinations immediately after enumeration.

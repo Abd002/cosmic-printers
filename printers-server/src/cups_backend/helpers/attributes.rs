@@ -42,12 +42,11 @@ pub(in crate::cups_backend) fn fill_missing_attrs(
         return Ok(());
     }
 
-    let printer_uri =
-        printer
-            .printer_local_uri()
-            .ok_or_else(|| BackendError::MissingDeviceUri {
-                queue: printer.id().to_string(),
-            })?;
+    let printer_uri = printer
+        .printer_uri()
+        .ok_or_else(|| BackendError::MissingDeviceUri {
+            queue: printer.id().to_string(),
+        })?;
     let request = printer_attrs_request(printer_uri, &missing)?;
     let response = request.send_default("/").cups_err()?;
     ensure_success(&response, "Get-Printer-Attributes")?;

@@ -194,7 +194,7 @@ fn add_operation_defaults(request: &mut IppRequest) -> BackendResult<()> {
 
 fn resolve_job_printer_uri(printer: &PrinterEntry) -> String {
     printer
-        .printer_local_uri()
+        .printer_uri()
         .filter(|uri| crate::ipp::is_local_scheduler_uri(uri))
         .map(str::to_owned)
         .unwrap_or_else(|| local_printer_uri(printer.id(), false))

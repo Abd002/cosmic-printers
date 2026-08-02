@@ -326,7 +326,7 @@ fn printer_identity(printer: &PrinterEntry) -> DeviceIdentity {
         printer.device_uuid(),
         printer_endpoint(printer),
         printer.device_uri(),
-        printer.printer_local_uri(),
+        printer.printer_uri(),
     )
 }
 

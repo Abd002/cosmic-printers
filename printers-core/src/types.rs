@@ -143,8 +143,8 @@ impl PrinterEntry {
         }
     }
 
-    /// Returns the local CUPS printer URI.
-    pub fn printer_local_uri(&self) -> Option<&str> {
+    /// Returns the printer service URI reported by the destination.
+    pub fn printer_uri(&self) -> Option<&str> {
         self.option("printer-uri-supported")
             .or_else(|| self.option("printer-local-uri"))
     }

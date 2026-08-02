@@ -355,8 +355,7 @@ fn resolved_printer_entry(
         .unwrap_or_else(|| "ipp/print".to_string());
     let device_uri = dnssd_device_uri(&service.service_type, &hostname, port, &resource_path);
 
-    printer.set_option("device-uri", device_uri.clone());
-    printer.set_option("printer-uri-supported", device_uri);
+    printer.set_option("device-uri", device_uri);
     printer.set_option("dnssd-hostname", hostname);
     printer.set_option("dnssd-address", address);
     printer.set_option("dnssd-port", port.to_string());
@@ -520,6 +519,29 @@ mod tests {
         assert_eq!(
             service_kind("_ipps-system._tcp"),
             Some(ResolvedServiceKind::PrinterApplication)
+        );
+    }
+
+    #[test]
+    fn resolved_dns_sd_printer_does_not_claim_reported_printer_uri() {
+        let printer = resolved_printer_entry(
+            AvahiService {
+                interface: 1,
+                protocol: 0,
+                name: "Office Printer".to_string(),
+                service_type: "_ipps._tcp".to_string(),
+                domain: "local".to_string(),
+            },
+            "printer.local".to_string(),
+            "192.0.2.10".to_string(),
+            631,
+            BTreeMap::from([("rp".to_string(), "ipp/print".to_string())]),
+        );
+
+        assert_eq!(printer.printer_uri(), None);
+        assert_eq!(
+            printer.device_uri(),
+            Some("ipps://printer.local:631/ipp/print")
         );
     }
 

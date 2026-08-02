@@ -20,7 +20,7 @@ fn print_printer(printer: &PrinterEntry) {
     println!("  id: {}", printer.id());
     println!("  name: {}", printer.name());
     println!("  is-default: {}", printer.is_default());
-    println!("  printer-local-uri: {:?}", printer.printer_local_uri());
+    println!("  printer-uri: {:?}", printer.printer_uri());
     println!("  status: {:?}", printer.status());
     println!("  queue-status: {:?}", printer.queue_status());
     println!("  location: {:?}", printer.location());
