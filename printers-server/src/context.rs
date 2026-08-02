@@ -13,7 +13,6 @@ use tokio::sync::{Mutex, broadcast};
 struct Model {
     discovered_printers: Vec<PrinterEntry>,
     printer_applications: HashMap<String, PrinterApplication>,
-    auto_add_in_progress: HashSet<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -150,22 +149,6 @@ impl Context {
         self.events.subscribe()
     }
 
-    pub(crate) async fn update_discovered_printer(
-        &self,
-        printer_id: &str,
-        update: impl FnOnce(&mut PrinterEntry),
-    ) {
-        self.update_discovered_printers(|printers| {
-            if let Some(printer) = printers
-                .iter_mut()
-                .find(|printer| discovered_printer_id(printer).as_deref() == Some(printer_id))
-            {
-                update(printer);
-            }
-        })
-        .await;
-    }
-
     pub(crate) async fn merge_discovered_printer_by(
         &self,
         printer: PrinterEntry,
@@ -238,22 +221,6 @@ impl Context {
             printers.retain(|printer| incoming.iter().any(|other| matches(printer, other)));
         })
         .await;
-    }
-
-    pub(crate) async fn start_auto_add(&self, printer_id: String) -> bool {
-        self.model
-            .lock()
-            .await
-            .auto_add_in_progress
-            .insert(printer_id)
-    }
-
-    pub(crate) async fn finish_auto_add(&self, printer_id: &str) {
-        self.model
-            .lock()
-            .await
-            .auto_add_in_progress
-            .remove(printer_id);
     }
 
     pub(crate) fn try_start_discovery(&self) -> Option<DiscoveryLease> {

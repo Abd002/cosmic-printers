@@ -5,10 +5,7 @@ mod metadata;
 mod polkit_helper;
 mod printer;
 
-pub use discovery::add_discovered_printer;
-pub(crate) use discovery::{
-    auto_add_discovered_printer, delete_stale_discovered_printers, start_discovery,
-};
+pub(crate) use discovery::start_discovery;
 pub use jobs::{cancel_job, get_jobs, move_job, pause_job, resume_job};
 pub use printer::{
     delete_printer, list_printers, print_test_page, set_printer_accept_jobs, set_printer_default,
