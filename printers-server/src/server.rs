@@ -26,17 +26,14 @@ impl Server {
         }
     }
 
-    /// Lists the configured CUPS printers.
+    /// Lists all destinations currently reported by libcups.
     pub async fn list_printers(&self) -> Result<Vec<PrinterEntry>, Error> {
-        let mut printers = cups_backend::list_printers().await.map_err(service_error)?;
-        let discovered = self.context.discovered_printers_cached().await;
-        cups_backend::attach_discovered_metadata(&mut printers, &discovered);
-        Ok(printers)
+        cups_backend::list_printers().await.map_err(service_error)
     }
 
     /// Starts a background DNS-SD discovery refresh when one is not already running.
     pub async fn start_discovery(&self) -> Result<(), Error> {
-        cups_backend::start_discovery(self.context.clone()).await;
+        crate::avahi::start_discovery(self.context.clone()).await;
         Ok(())
     }
 

@@ -1,5 +1,6 @@
 use std::collections::HashMap;
-use std::net::IpAddr;
+use std::net::{IpAddr, ToSocketAddrs};
+use std::sync::{LazyLock, Mutex};
 
 use crate::{GroupedDevice, PrinterApplication, PrinterEntry};
 use nix::ifaddrs::getifaddrs;
@@ -116,8 +117,36 @@ fn hosts_match(left: &str, right: &str) -> bool {
 }
 
 fn is_local_host(host: &str) -> bool {
-    host.eq_ignore_ascii_case("localhost")
-        || parse_ip(host).is_some_and(|ip| ip.is_loopback() || is_ip_on_local_interface(ip))
+    if let Some(ip) = parse_ip(host) {
+        return ip.is_loopback() || is_ip_on_local_interface(ip);
+    }
+
+    static RESOLVED_LOCALITY: LazyLock<Mutex<HashMap<String, bool>>> =
+        LazyLock::new(|| Mutex::new(HashMap::new()));
+
+    let key = host.to_ascii_lowercase();
+    if let Some(is_local) = RESOLVED_LOCALITY
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .get(&key)
+        .copied()
+    {
+        return is_local;
+    }
+
+    let is_local = (host, 0)
+        .to_socket_addrs()
+        .is_ok_and(|mut addresses| {
+            addresses.any(|address| {
+                let ip = address.ip();
+                ip.is_loopback() || is_ip_on_local_interface(ip)
+            })
+        });
+    RESOLVED_LOCALITY
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .insert(key, is_local);
+    is_local
 }
 
 fn endpoint_match_key(host: &str, port: u16) -> String {
@@ -323,7 +352,7 @@ pub fn printers_match(left: &PrinterEntry, right: &PrinterEntry) -> bool {
 
 fn printer_identity(printer: &PrinterEntry) -> DeviceIdentity {
     DeviceIdentity::new(
-        printer.device_uuid(),
+        printer.device_uuid().or_else(|| printer.printer_uuid()),
         printer_endpoint(printer),
         printer.device_uri(),
         printer.printer_uri(),

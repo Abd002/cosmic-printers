@@ -4,7 +4,9 @@ use cups_rs::{Destination, PrinterState as CupsPrinterState};
 use crate::ipp::{is_local_scheduler_uri, parse_uri_endpoint};
 
 /// Converts a cups-rs destination into the type exposed by the printer API.
-pub(super) fn destination_to_printer_entry(mut destination: Destination) -> PrinterEntry {
+pub(in crate::cups_backend) fn destination_to_printer_entry(
+    mut destination: Destination,
+) -> PrinterEntry {
     let queue_status = destination.state().to_string();
     let printer_uri = destination.uri().cloned();
     let device_uri = destination.device_uri().cloned();
@@ -129,6 +131,17 @@ mod tests {
             Some("ipps://printer.local/ipp/print")
         );
         assert_eq!(printer.device_uri(), Some("ipp://printer.local/ipp/print"));
+    }
+
+    #[test]
+    fn preserves_unknown_destination_options() {
+        let printer =
+            destination_to_printer_entry(destination(&[("vendor-example-option", "opaque-value")]));
+
+        assert_eq!(
+            printer.option("vendor-example-option"),
+            Some("opaque-value")
+        );
     }
 
     #[test]

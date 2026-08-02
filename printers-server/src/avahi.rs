@@ -115,6 +115,30 @@ impl DiscoveryError {
     }
 }
 
+pub(crate) async fn start_discovery(context: Context) {
+    let Some(discovery_lease) = context.try_start_discovery() else {
+        return;
+    };
+
+    tokio::spawn(async move {
+        let _discovery_lease = discovery_lease;
+        match discover_printers_into_cache(context.clone()).await {
+            Ok(summary) => {
+                tracing::debug!(
+                    services_seen = summary.services_seen,
+                    printers_resolved = summary.printers_resolved,
+                    applications_resolved = summary.applications_resolved,
+                    warnings = summary.warnings,
+                    "printer discovery refresh completed"
+                );
+            }
+            Err(error) => {
+                tracing::warn!(error = ?error, "printer discovery refresh failed");
+            }
+        }
+    });
+}
+
 #[derive(Debug, thiserror::Error)]
 enum ResolveError {
     #[error("service resolution timed out")]

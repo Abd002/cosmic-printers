@@ -2,8 +2,8 @@ use cosmic_settings_printers_core::PrinterEntry;
 use cups_rs::create_job;
 
 use super::helpers::{
-    CupsResultExt, PRINTER_ATTRIBUTES, available_destinations, fill_missing_attrs,
-    split_queue_instance,
+    CupsResultExt, PRINTER_ATTRIBUTES, available_destinations, destination_to_printer_entry,
+    fill_missing_attrs_from_device_uri, fill_missing_attrs_from_printer_uri, split_queue_instance,
 };
 use super::polkit_helper;
 use crate::error::{BackendError, BackendResult};
@@ -12,21 +12,33 @@ const TEST_PAGE_PDF: &str = "/usr/share/cups/data/default-testpage.pdf";
 
 pub async fn list_printers() -> BackendResult<Vec<PrinterEntry>> {
     tokio::task::spawn_blocking(|| {
-        let mut printers = available_destinations(5000)?;
+        let destinations = available_destinations(5000)?;
+        let mut printers = destinations
+            .into_values()
+            .map(|destination| {
+                let printer = destination_to_printer_entry(destination.clone());
+                (destination, printer)
+            })
+            .collect::<Vec<_>>();
 
-        fill_printer_attrs(printers.values_mut());
+        fill_printer_attrs(&mut printers);
 
-        Ok(printers.into_values().collect())
+        Ok(printers.into_iter().map(|(_, printer)| printer).collect())
     })
     .await
     .map_err(BackendError::Join)?
 }
 
-fn fill_printer_attrs<'a>(printers: impl Iterator<Item = &'a mut PrinterEntry>) {
+fn fill_printer_attrs(printers: &mut [(cups_rs::Destination, PrinterEntry)]) {
     std::thread::scope(|scope| {
-        for printer in printers {
+        for (destination, printer) in printers {
             scope.spawn(move || {
-                if let Err(error) = fill_missing_attrs(printer, PRINTER_ATTRIBUTES) {
+                let result = if printer.printer_uri().is_some() {
+                    fill_missing_attrs_from_printer_uri(printer, PRINTER_ATTRIBUTES)
+                } else {
+                    fill_missing_attrs_from_device_uri(destination, printer, PRINTER_ATTRIBUTES)
+                };
+                if let Err(error) = result {
                     tracing::warn!(
                         printer_id = printer.id(),
                         error = ?error,
