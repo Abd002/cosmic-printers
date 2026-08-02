@@ -146,7 +146,7 @@ impl PrinterEntry {
     /// Returns the printer service URI reported by the destination.
     pub fn printer_uri(&self) -> Option<&str> {
         self.option("printer-uri-supported")
-            .or_else(|| self.option("printer-local-uri"))
+            .and_then(preferred_printer_uri)
     }
 
     /// Returns the destination device URI.
@@ -245,7 +245,14 @@ impl PrinterEntry {
         self.set_option("sides-default", print_sides);
     }
 
-    /// Returns the physical device UUID used by grouping.
+    /// Returns the printer UUID, including aliases used by DNS-SD metadata.
+    pub fn printer_uuid(&self) -> Option<&str> {
+        self.option("printer-uuid")
+            .or_else(|| self.option("uuid"))
+            .or_else(|| self.option("UUID"))
+    }
+
+    /// Returns a separately reported physical device UUID.
     pub fn device_uuid(&self) -> Option<&str> {
         self.option("device-uuid")
     }
@@ -293,6 +300,77 @@ impl PrinterEntry {
         }
 
         self.merge_options(incoming.options);
+    }
+}
+
+fn preferred_printer_uri(value: &str) -> Option<&str> {
+    let mut uris = value
+        .split(',')
+        .map(str::trim)
+        .filter(|uri| !uri.is_empty());
+    let first = uris.next()?;
+
+    Some(
+        std::iter::once(first)
+            .chain(uris)
+            .find(|uri| {
+                uri.get(..7)
+                    .is_some_and(|scheme| scheme.eq_ignore_ascii_case("ipps://"))
+            })
+            .unwrap_or(first),
+    )
+}
+
+#[cfg(test)]
+mod printer_entry_tests {
+    use super::*;
+
+    fn printer(options: &[(&str, &str)]) -> PrinterEntry {
+        PrinterEntry::new(
+            "printer",
+            "Printer",
+            false,
+            options
+                .iter()
+                .map(|(name, value)| (name.to_string(), value.to_string()))
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn normalizes_printer_uuid_aliases() {
+        assert_eq!(
+            printer(&[("printer-uuid", "urn:uuid:standard")]).printer_uuid(),
+            Some("urn:uuid:standard")
+        );
+        assert_eq!(printer(&[("uuid", "lower")]).printer_uuid(), Some("lower"));
+        assert_eq!(printer(&[("UUID", "upper")]).printer_uuid(), Some("upper"));
+    }
+
+    #[test]
+    fn returns_printer_more_info_as_web_page() {
+        assert_eq!(
+            printer(&[("printer-more-info", "https://printer.local/")]).web_page(),
+            Some("https://printer.local/")
+        );
+    }
+
+    #[test]
+    fn optional_metadata_can_be_absent() {
+        let printer = printer(&[("device-uri", "ipps://printer._ipps._tcp.local/")]);
+
+        assert_eq!(printer.printer_uuid(), None);
+        assert_eq!(printer.web_page(), None);
+    }
+
+    #[test]
+    fn secure_printer_uri_is_preferred_from_supported_values() {
+        let printer = printer(&[(
+            "printer-uri-supported",
+            "ipp://host:8889/ipp/print,ipps://host:8889/ipp/print",
+        )]);
+
+        assert_eq!(printer.printer_uri(), Some("ipps://host:8889/ipp/print"));
     }
 }
 

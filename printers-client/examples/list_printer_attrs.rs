@@ -22,6 +22,7 @@ fn print_printer(printer: &PrinterEntry) {
     println!("  is-default: {}", printer.is_default());
     println!("  printer-uri: {:?}", printer.printer_uri());
     println!("  device-uri: {:?}", printer.device_uri());
+    println!("  printer-uuid: {:?}", printer.printer_uuid());
     println!("  hostname: {:?}", printer.hostname());
     println!("  port: {:?}", printer.port());
     println!("  web-page: {:?}", printer.web_page());
