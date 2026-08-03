@@ -1,6 +1,4 @@
-use cosmic_settings_printers_core::{
-    PrinterApplication, PrinterEntry, PrintersEvent, PrintersEventKind,
-};
+use cosmic_settings_printers_core::{PrinterApplication, PrintersEvent, PrintersEventKind};
 use std::collections::{HashMap, HashSet};
 use std::sync::{
     Arc,
@@ -10,7 +8,6 @@ use tokio::sync::{Mutex, broadcast};
 
 #[derive(Debug, Default)]
 struct Model {
-    discovered_printers: Vec<PrinterEntry>,
     printer_applications: HashMap<String, PrinterApplication>,
 }
 
@@ -39,10 +36,6 @@ impl Context {
             discovery_running: Arc::new(AtomicBool::new(false)),
             events,
         }
-    }
-
-    pub(crate) async fn discovered_printers_cached(&self) -> Vec<PrinterEntry> {
-        self.model.lock().await.discovered_printers.clone()
     }
 
     pub(crate) async fn printer_applications_cached(&self) -> Vec<PrinterApplication> {
@@ -121,71 +114,14 @@ impl Context {
         }
     }
 
-    pub(crate) async fn update_discovered_printers(
-        &self,
-        update: impl FnOnce(&mut Vec<PrinterEntry>),
-    ) {
-        let mut model = self.model.lock().await;
-        update(&mut model.discovered_printers);
-        model.discovered_printers.sort_by(|left, right| {
-            left.name()
-                .cmp(right.name())
-                .then(left.id().cmp(right.id()))
-        });
-    }
-
     pub(crate) fn subscribe_events(&self) -> broadcast::Receiver<PrintersEvent> {
         self.events.subscribe()
-    }
-
-    pub(crate) async fn merge_discovered_printer_by(
-        &self,
-        printer: PrinterEntry,
-        matches: impl Fn(&PrinterEntry, &PrinterEntry) -> bool,
-    ) {
-        let mut changed = false;
-        self.update_discovered_printers(|printers| {
-            if let Some(index) = printers
-                .iter()
-                .position(|existing| matches(existing, &printer))
-            {
-                let before = printers[index].clone();
-                printers[index].merge_discovery_record(printer);
-                changed = printers[index] != before;
-            } else {
-                printers.push(printer);
-                changed = true;
-            }
-        })
-        .await;
-
-        if changed {
-            self.emit_discovered_printers_changed();
-        }
-    }
-
-    fn emit_discovered_printers_changed(&self) {
-        let _ = self.events.send(PrintersEvent {
-            kind: PrintersEventKind::DiscoveredPrintersChanged,
-        });
     }
 
     fn emit_printer_applications_changed(&self) {
         let _ = self.events.send(PrintersEvent {
             kind: PrintersEventKind::PrinterApplicationsChanged,
         });
-    }
-
-    pub(crate) async fn retain_discovered_printers_by(
-        &self,
-        incoming: impl IntoIterator<Item = PrinterEntry>,
-        matches: impl Fn(&PrinterEntry, &PrinterEntry) -> bool,
-    ) {
-        let incoming = incoming.into_iter().collect::<Vec<_>>();
-        self.update_discovered_printers(|printers| {
-            printers.retain(|printer| incoming.iter().any(|other| matches(printer, other)));
-        })
-        .await;
     }
 
     pub(crate) fn try_start_discovery(&self) -> Option<DiscoveryLease> {
@@ -222,24 +158,6 @@ mod tests {
         }
     }
 
-    fn discovered_printer(state: &str) -> PrinterEntry {
-        PrinterEntry::new(
-            "",
-            "Office Printer",
-            false,
-            HashMap::from([
-                (
-                    "dnssd-service-name".to_string(),
-                    "Office Printer".to_string(),
-                ),
-                (
-                    "cosmic-discovery-detail-state".to_string(),
-                    state.to_string(),
-                ),
-            ]),
-        )
-    }
-
     #[tokio::test]
     async fn printer_applications_use_a_separate_cache_and_event() {
         let context = Context::new();
@@ -250,7 +168,6 @@ mod tests {
                 .merge_printer_application_discovery(application("app"))
                 .await
         );
-        assert!(context.discovered_printers_cached().await.is_empty());
         assert_eq!(context.printer_applications_cached().await.len(), 1);
         assert_eq!(
             events.recv().await.unwrap().kind,
@@ -259,7 +176,6 @@ mod tests {
 
         context.retain_printer_applications(&HashSet::new()).await;
         assert!(context.printer_applications_cached().await.is_empty());
-        assert!(context.discovered_printers_cached().await.is_empty());
     }
 
     #[tokio::test]
@@ -281,7 +197,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn retaining_applications_does_not_change_discovered_printers() {
+    async fn retaining_applications_removes_inactive_entries() {
         let context = Context::new();
         context
             .merge_printer_application_discovery(application("keep"))
@@ -297,34 +213,6 @@ mod tests {
         let applications = context.printer_applications_cached().await;
         assert_eq!(applications.len(), 1);
         assert_eq!(applications[0].id, "keep");
-        assert!(context.discovered_printers_cached().await.is_empty());
-    }
-
-    #[tokio::test]
-    async fn resolved_discovery_metadata_emits_a_change_event() {
-        let context = Context::new();
-        let mut events = context.subscribe_events();
-        let matches = |left: &PrinterEntry, right: &PrinterEntry| left.name() == right.name();
-
-        context
-            .merge_discovered_printer_by(discovered_printer("partial"), matches)
-            .await;
-        assert_eq!(
-            events.recv().await.unwrap().kind,
-            PrintersEventKind::DiscoveredPrintersChanged
-        );
-
-        context
-            .merge_discovered_printer_by(discovered_printer("resolved"), matches)
-            .await;
-        assert_eq!(
-            events.recv().await.unwrap().kind,
-            PrintersEventKind::DiscoveredPrintersChanged
-        );
-        assert_eq!(
-            context.discovered_printers_cached().await[0].option("cosmic-discovery-detail-state"),
-            Some("resolved")
-        );
     }
 
     #[test]
