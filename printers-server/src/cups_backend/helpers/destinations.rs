@@ -4,10 +4,22 @@ use std::collections::HashMap;
 use crate::error::{BackendError, BackendResult};
 
 /// Enumerates all destinations reported by libcups, including DNS-SD services.
-pub(in crate::cups_backend) fn available_destinations(
+pub(in crate::cups_backend) fn available_destinations<F>(
     timeout_ms: i32,
-) -> BackendResult<HashMap<String, Destination>> {
-    let mut destinations = HashMap::<String, Destination>::new();
+    on_change: F,
+) -> BackendResult<HashMap<String, Destination>>
+where
+    F: FnMut(u32, &Destination),
+{
+    struct EnumerationState<F> {
+        destinations: HashMap<String, Destination>,
+        on_change: F,
+    }
+
+    let mut state = EnumerationState {
+        destinations: HashMap::new(),
+        on_change,
+    };
 
     enum_destinations(
         cups_rs::DEST_FLAGS_NONE,
@@ -15,22 +27,24 @@ pub(in crate::cups_backend) fn available_destinations(
         None,
         0,
         0,
-        &mut |flags, destination, destinations: &mut HashMap<String, Destination>| {
+        &mut |flags, destination, state: &mut EnumerationState<F>| {
             let id = destination.full_name();
 
             if flags & cups_rs::DEST_FLAGS_REMOVED != 0 {
-                destinations.remove(&id);
+                state.destinations.remove(&id);
+                (state.on_change)(flags, destination);
             } else {
-                merge_destination(destinations, id, destination);
+                merge_destination(&mut state.destinations, id.clone(), destination);
+                (state.on_change)(flags, &state.destinations[&id]);
             }
 
             true
         },
-        &mut destinations,
+        &mut state,
     )
     .map_err(BackendError::FailedToGetPrinters)?;
 
-    Ok(destinations)
+    Ok(state.destinations)
 }
 
 fn merge_destination(

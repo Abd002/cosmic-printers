@@ -78,6 +78,14 @@ pub struct PrinterEntry {
     options: HashMap<String, String>,
 }
 
+/// Identifies how a printer endpoint was obtained.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EndpointSource {
+    Uri,
+    Connected,
+}
+
 impl PrinterEntry {
     /// Creates a destination from its identity and normalized options.
     pub fn new(
@@ -131,6 +139,26 @@ impl PrinterEntry {
         self.options.insert(name.into(), value.into());
     }
 
+    #[doc(hidden)]
+    pub fn set_endpoint_source(&mut self, source: EndpointSource) {
+        self.set_option(
+            "endpoint-source",
+            match source {
+                EndpointSource::Uri => "uri",
+                EndpointSource::Connected => "connected",
+            },
+        );
+    }
+
+    #[doc(hidden)]
+    pub fn endpoint_source(&self) -> Option<EndpointSource> {
+        match self.option("endpoint-source")? {
+            "uri" => Some(EndpointSource::Uri),
+            "connected" => Some(EndpointSource::Connected),
+            _ => None,
+        }
+    }
+
     /// Merges normalized options into this destination.
     pub fn merge_options<I>(&mut self, options: I)
     where
@@ -141,6 +169,29 @@ impl PrinterEntry {
                 self.set_option(name, value);
             }
         }
+    }
+
+    /// Merges a partial CUPS enumeration update while retaining an endpoint
+    /// previously selected by a successful device connection.
+    pub fn merge_enumeration_record(&mut self, incoming: Self) {
+        const CONNECTED_ENDPOINT_OPTIONS: &[&str] = &[
+            "endpoint-hostname",
+            "endpoint-port",
+            "endpoint-address",
+            "endpoint-is-local",
+            "endpoint-source",
+            "dnssd-hostname",
+            "dnssd-port",
+        ];
+
+        let preserve_connected_endpoint = self.endpoint_source() == Some(EndpointSource::Connected);
+        if !incoming.name.is_empty() {
+            self.name = incoming.name;
+        }
+        self.is_default = incoming.is_default;
+        self.merge_options(incoming.options.into_iter().filter(|(name, _)| {
+            !preserve_connected_endpoint || !CONNECTED_ENDPOINT_OPTIONS.contains(&name.as_str())
+        }));
     }
 
     /// Returns the printer service URI reported by the destination.
@@ -257,9 +308,9 @@ impl PrinterEntry {
         self.option("device-uuid")
     }
 
-    /// Returns the DNS-SD address used by grouping.
-    pub fn dnssd_address(&self) -> Option<&str> {
-        self.option("dnssd-address")
+    /// Returns the resolved network address used by grouping.
+    pub fn endpoint_address(&self) -> Option<&str> {
+        self.option("endpoint-address")
     }
 
     /// Returns all reported supply levels.
@@ -372,6 +423,29 @@ mod printer_entry_tests {
 
         assert_eq!(printer.printer_uri(), Some("ipps://host:8889/ipp/print"));
     }
+
+    #[test]
+    fn enumeration_preserves_connected_endpoint() {
+        let mut existing = printer(&[
+            ("endpoint-hostname", "printer.local"),
+            ("endpoint-port", "8000"),
+            ("endpoint-is-local", "true"),
+            ("endpoint-source", "connected"),
+        ]);
+        let incoming = printer(&[
+            ("endpoint-hostname", "printer._ipps._tcp.local"),
+            ("endpoint-port", "631"),
+            ("printer-location", "Office"),
+        ]);
+
+        existing.merge_enumeration_record(incoming);
+
+        assert_eq!(existing.hostname(), Some("printer.local"));
+        assert_eq!(existing.port(), Some(8000));
+        assert_eq!(existing.endpoint_address(), None);
+        assert_eq!(existing.endpoint_source(), Some(EndpointSource::Connected));
+        assert_eq!(existing.location(), Some("Office"));
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -430,6 +504,7 @@ pub struct ListPrinterApplicationsReply {
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, zlink::introspect::Type)]
 pub enum PrintersEventKind {
+    AvailableDestinationsChanged,
     DiscoveredPrintersChanged,
     PrinterApplicationsChanged,
 }
@@ -504,12 +579,12 @@ mod tests {
 
     #[test]
     fn discovery_merge_fills_name_and_refreshes_options() {
-        let mut existing = printer("", "", &[("dnssd-address", "192.0.2.1")]);
+        let mut existing = printer("", "", &[("endpoint-address", "192.0.2.1")]);
         let incoming = printer(
             "",
             "Office Printer",
             &[
-                ("dnssd-address", "192.0.2.2"),
+                ("endpoint-address", "192.0.2.2"),
                 ("printer-location", "Office"),
             ],
         );
@@ -517,7 +592,7 @@ mod tests {
         existing.merge_discovery_record(incoming);
 
         assert_eq!(existing.name(), "Office Printer");
-        assert_eq!(existing.dnssd_address(), Some("192.0.2.2"));
+        assert_eq!(existing.endpoint_address(), Some("192.0.2.2"));
         assert_eq!(existing.location(), Some("Office"));
     }
 

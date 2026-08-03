@@ -1,8 +1,8 @@
 use super::conversion::refresh_printer_endpoint;
 use crate::error::{BackendError, BackendResult};
 use crate::ipp::{CupsResultExt, ensure_success, printer_attrs_request, send_ipp_request};
-use cosmic_settings_printers_core::PrinterEntry;
-use cups_rs::{ConnectionFlags, Destination, IppResponse};
+use cosmic_settings_printers_core::{EndpointSource, PrinterEntry, is_local_address};
+use cups_rs::{ConnectionFlags, Destination, HttpConnection, IppResponse};
 
 pub(in crate::cups_backend) const PRINTER_ATTRIBUTES: &[&str] = &[
     "printer-uri-supported",
@@ -57,12 +57,27 @@ pub(in crate::cups_backend) fn fill_missing_attrs_from_device_uri(
     printer: &mut PrinterEntry,
     attrs: &[&str],
 ) -> BackendResult<()> {
-    let missing = missing_attrs(printer, attrs);
+    let (device_uri, connection) = connect_to_device(destination, printer)?;
+    apply_connection_endpoint(printer, &connection);
 
+    let missing = missing_attrs(printer, attrs);
     if missing.is_empty() {
         return Ok(());
     }
+    let request = printer_attrs_request(&device_uri, &missing)?;
+    let response = request
+        .send(&connection, connection.resource_path())
+        .cups_err()?;
 
+    merge_missing_attrs(printer, &missing, response)?;
+    apply_connection_endpoint(printer, &connection);
+    Ok(())
+}
+
+fn connect_to_device(
+    destination: &Destination,
+    printer: &mut PrinterEntry,
+) -> BackendResult<(String, HttpConnection)> {
     let device_uri = printer
         .device_uri()
         .ok_or_else(|| BackendError::MissingDeviceUri {
@@ -75,12 +90,21 @@ pub(in crate::cups_backend) fn fill_missing_attrs_from_device_uri(
             uri: device_uri.clone(),
             source,
         })?;
-    let request = printer_attrs_request(&device_uri, &missing)?;
-    let response = request
-        .send(&connection, connection.resource_path())
-        .cups_err()?;
+    Ok((device_uri, connection))
+}
 
-    merge_missing_attrs(printer, &missing, response)
+fn apply_connection_endpoint(printer: &mut PrinterEntry, connection: &HttpConnection) {
+    if let Some(hostname) = connection.hostname() {
+        printer.set_option("endpoint-hostname", hostname);
+    }
+    if let Some(port) = connection.port() {
+        printer.set_option("endpoint-port", port.to_string());
+    }
+    if let Some(address) = connection.address() {
+        printer.set_option("endpoint-address", address.to_string());
+        printer.set_option("endpoint-is-local", is_local_address(address).to_string());
+    }
+    printer.set_endpoint_source(EndpointSource::Connected);
 }
 
 fn missing_attrs<'a>(printer: &PrinterEntry, attrs: &'a [&str]) -> Vec<&'a str> {

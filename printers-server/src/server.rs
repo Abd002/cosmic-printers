@@ -26,14 +26,20 @@ impl Server {
         }
     }
 
-    /// Lists all destinations currently reported by libcups.
+    /// Lists the currently cached libcups destinations without performing I/O.
     pub async fn list_printers(&self) -> Result<Vec<PrinterEntry>, Error> {
-        cups_backend::list_printers().await.map_err(service_error)
+        Ok(self.context.available_destinations_cached().await)
     }
 
-    /// Starts a background DNS-SD discovery refresh when one is not already running.
-    pub async fn start_discovery(&self) -> Result<(), Error> {
-        crate::dnssd::start_discovery(self.context.clone()).await;
+    /// Starts a background libcups refresh of the available destination cache.
+    pub async fn refresh_available_destinations(&self) -> Result<(), Error> {
+        cups_backend::refresh_available_destinations(self.context.clone());
+        Ok(())
+    }
+
+    /// Starts long-running DNS-SD discovery of local Printer Applications.
+    pub async fn start_printer_application_discovery(&self) -> Result<(), Error> {
+        crate::dnssd::start_printer_application_discovery(self.context.clone()).await;
         Ok(())
     }
 

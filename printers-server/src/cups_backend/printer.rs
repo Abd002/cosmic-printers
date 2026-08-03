@@ -1,53 +1,123 @@
-use cosmic_settings_printers_core::PrinterEntry;
+use cosmic_settings_printers_core::{PrinterEntry, is_local_address};
 use cups_rs::create_job;
+use std::collections::HashMap;
+use std::net::ToSocketAddrs;
+use std::sync::{LazyLock, Mutex};
 
 use super::helpers::{
     CupsResultExt, PRINTER_ATTRIBUTES, available_destinations, destination_to_printer_entry,
     fill_missing_attrs_from_device_uri, fill_missing_attrs_from_printer_uri, split_queue_instance,
 };
 use super::polkit_helper;
+use crate::context::Context;
 use crate::error::{BackendError, BackendResult};
+use crate::ipp::is_local_scheduler_uri;
 
 const TEST_PAGE_PDF: &str = "/usr/share/cups/data/default-testpage.pdf";
 
-pub async fn list_printers() -> BackendResult<Vec<PrinterEntry>> {
-    tokio::task::spawn_blocking(|| {
-        let destinations = available_destinations(5000)?;
-        let mut printers = destinations
-            .into_values()
-            .map(|destination| {
-                let printer = destination_to_printer_entry(destination.clone());
-                (destination, printer)
-            })
-            .collect::<Vec<_>>();
-
-        fill_printer_attrs(&mut printers);
-
-        Ok(printers.into_iter().map(|(_, printer)| printer).collect())
-    })
-    .await
-    .map_err(BackendError::Join)?
+pub fn refresh_available_destinations(context: Context) {
+    if let Some(lease) = context.try_start_available_destinations_refresh() {
+        let worker_context = context.clone();
+        tokio::task::spawn_blocking(move || {
+            let _lease = lease;
+            if let Err(error) = run_available_destinations_refresh(worker_context) {
+                tracing::warn!(
+                    error = ?error,
+                    "failed to refresh available printer destinations"
+                );
+            }
+        });
+    }
 }
 
-fn fill_printer_attrs(printers: &mut [(cups_rs::Destination, PrinterEntry)]) {
+fn run_available_destinations_refresh(worker_context: Context) -> BackendResult<()> {
+    let callback_context = worker_context.clone();
+    let destinations = available_destinations(5000, move |flags, destination| {
+        let id = destination.full_name();
+        if flags & cups_rs::DEST_FLAGS_REMOVED != 0 {
+            callback_context.remove_available_destination(&id);
+        } else {
+            callback_context
+                .merge_available_destination(destination_to_printer_entry(destination.clone()));
+        }
+    })?;
+    let mut printers = destinations
+        .into_values()
+        .map(|destination| {
+            let printer = destination_to_printer_entry(destination.clone());
+            (destination, printer)
+        })
+        .collect::<Vec<_>>();
+
+    fill_printer_attrs(&mut printers, &worker_context);
+    Ok(())
+}
+
+fn fill_printer_attrs(printers: &mut [(cups_rs::Destination, PrinterEntry)], context: &Context) {
     std::thread::scope(|scope| {
         for (destination, printer) in printers {
+            let context = context.clone();
             scope.spawn(move || {
-                let result = if printer.printer_uri().is_some() {
+                let result = if printer.printer_uri().is_some_and(is_local_scheduler_uri) {
                     fill_missing_attrs_from_printer_uri(printer, PRINTER_ATTRIBUTES)
-                } else {
+                } else if printer.device_uri().is_some() {
                     fill_missing_attrs_from_device_uri(destination, printer, PRINTER_ATTRIBUTES)
+                } else {
+                    fill_missing_attrs_from_printer_uri(printer, PRINTER_ATTRIBUTES)
                 };
-                if let Err(error) = result {
-                    tracing::warn!(
-                        printer_id = printer.id(),
-                        error = ?error,
-                        "failed to load optional printer attributes"
-                    );
-                }
+                finish_printer_enrichment(&context, printer, result);
             });
         }
     });
+}
+
+fn finish_printer_enrichment(
+    context: &Context,
+    printer: &mut PrinterEntry,
+    result: BackendResult<()>,
+) {
+    match result {
+        Ok(()) => {
+            resolve_printer_endpoint_locality(printer);
+            context.update_available_destination(printer.clone());
+        }
+        Err(error) => {
+            tracing::warn!(
+                printer_id = printer.id(),
+                error = ?error,
+                "failed to load optional printer attributes"
+            );
+        }
+    }
+}
+
+fn resolve_printer_endpoint_locality(printer: &mut PrinterEntry) {
+    if printer.option("endpoint-is-local").is_some() {
+        return;
+    }
+    let Some(hostname) = printer.hostname() else {
+        return;
+    };
+
+    static LOCALITY: LazyLock<Mutex<HashMap<String, bool>>> =
+        LazyLock::new(|| Mutex::new(HashMap::new()));
+    let key = hostname.to_ascii_lowercase();
+    let cached = LOCALITY
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .get(&key)
+        .copied();
+    let is_local = cached.unwrap_or_else(|| {
+        let is_local = (hostname, 0)
+            .to_socket_addrs()
+            .is_ok_and(|mut addresses| addresses.any(|address| is_local_address(address.ip())));
+        LOCALITY
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(key, is_local);
+        is_local
+    });
+    printer.set_option("endpoint-is-local", is_local.to_string());
 }
 
 pub async fn delete_printer(printer_id: &str) -> BackendResult<()> {
@@ -129,5 +199,53 @@ fn destination_for_print_job(printer: PrinterEntry) -> cups_rs::Destination {
             .options()
             .map(|(name, value)| (name.to_string(), value.to_string()))
             .collect(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cosmic_settings_printers_core::EndpointSource;
+    use std::collections::HashMap;
+
+    fn printer(options: &[(&str, &str)]) -> PrinterEntry {
+        PrinterEntry::new(
+            "printer",
+            "Printer",
+            false,
+            options
+                .iter()
+                .map(|(name, value)| (name.to_string(), value.to_string()))
+                .collect::<HashMap<_, _>>(),
+        )
+    }
+
+    #[tokio::test]
+    async fn failed_enrichment_preserves_previous_connected_endpoint() {
+        let context = Context::new();
+        let mut connected = printer(&[
+            ("endpoint-hostname", "printer.local"),
+            ("endpoint-port", "8000"),
+            ("endpoint-source", "connected"),
+        ]);
+        connected.set_endpoint_source(EndpointSource::Connected);
+        context.update_available_destination(connected);
+
+        let mut fresh = printer(&[
+            ("endpoint-hostname", "printer._ipps._tcp.local"),
+            ("endpoint-port", "631"),
+            ("endpoint-source", "uri"),
+        ]);
+        finish_printer_enrichment(
+            &context,
+            &mut fresh,
+            Err(BackendError::Internal("offline".into())),
+        );
+
+        let cached = context.available_destinations_cached().await;
+        assert_eq!(cached[0].hostname(), Some("printer.local"));
+        assert_eq!(cached[0].port(), Some(8000));
+        assert_eq!(cached[0].endpoint_address(), None);
+        assert_eq!(cached[0].endpoint_source(), Some(EndpointSource::Connected));
     }
 }

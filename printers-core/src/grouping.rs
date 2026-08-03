@@ -1,6 +1,5 @@
 use std::collections::HashMap;
-use std::net::{IpAddr, ToSocketAddrs};
-use std::sync::{LazyLock, Mutex};
+use std::net::IpAddr;
 
 use crate::{GroupedDevice, PrinterApplication, PrinterEntry};
 use nix::ifaddrs::getifaddrs;
@@ -102,55 +101,26 @@ fn endpoints_match(left: &(String, u16), right: &(String, u16)) -> bool {
         return false;
     }
 
-    !is_local_host(host_left) || port_left == port_right
+    !host_left.eq_ignore_ascii_case("localhost") || port_left == port_right
 }
 
 fn hosts_match(left: &str, right: &str) -> bool {
-    if is_local_host(left) && is_local_host(right) {
-        return true;
-    }
-
     match (parse_ip(left), parse_ip(right)) {
         (Some(left), Some(right)) => left == right,
         _ => left.eq_ignore_ascii_case(right),
     }
 }
 
-fn is_local_host(host: &str) -> bool {
+fn host_is_known_local(host: &str) -> bool {
     if let Some(ip) = parse_ip(host) {
-        return ip.is_loopback() || is_ip_on_local_interface(ip);
+        return is_local_address(ip);
     }
 
-    static RESOLVED_LOCALITY: LazyLock<Mutex<HashMap<String, bool>>> =
-        LazyLock::new(|| Mutex::new(HashMap::new()));
-
-    let key = host.to_ascii_lowercase();
-    if let Some(is_local) = RESOLVED_LOCALITY
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .get(&key)
-        .copied()
-    {
-        return is_local;
-    }
-
-    let is_local = (host, 0)
-        .to_socket_addrs()
-        .is_ok_and(|mut addresses| {
-            addresses.any(|address| {
-                let ip = address.ip();
-                ip.is_loopback() || is_ip_on_local_interface(ip)
-            })
-        });
-    RESOLVED_LOCALITY
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .insert(key, is_local);
-    is_local
+    host.eq_ignore_ascii_case("localhost")
 }
 
 fn endpoint_match_key(host: &str, port: u16) -> String {
-    if is_local_host(host) {
+    if host.eq_ignore_ascii_case("localhost") {
         return format!("local:{port}");
     }
 
@@ -168,14 +138,15 @@ fn parse_ip(host: &str) -> Option<IpAddr> {
 }
 
 fn normalize_endpoint((host, port): (String, u16)) -> (String, u16) {
-    if is_local_host(&host) {
-        ("localhost".to_string(), port)
-    } else {
-        (host, port)
-    }
+    (host.to_ascii_lowercase(), port)
 }
 
-fn is_ip_on_local_interface(target: IpAddr) -> bool {
+#[doc(hidden)]
+pub fn is_local_address(target: IpAddr) -> bool {
+    if target.is_loopback() {
+        return true;
+    }
+
     let Ok(addrs) = getifaddrs() else {
         return false;
     };
@@ -360,24 +331,38 @@ fn printer_identity(printer: &PrinterEntry) -> DeviceIdentity {
 }
 
 fn application_identity(application: &PrinterApplication) -> DeviceIdentity {
-    let host = application
+    let is_local = application
         .addresses
-        .first()
-        .cloned()
-        .unwrap_or_else(|| application.hostname.clone());
+        .iter()
+        .any(|address| host_is_known_local(address))
+        || host_is_known_local(&application.hostname);
     DeviceIdentity::new(
         Some(&application.id),
-        Some((host, application.port)),
+        Some((
+            if is_local {
+                "localhost".to_string()
+            } else {
+                application.hostname.clone()
+            },
+            application.port,
+        )),
         Some(&application.system_uri),
         None,
     )
 }
 
 fn printer_endpoint(printer: &PrinterEntry) -> Option<(String, u16)> {
-    let host = printer
-        .dnssd_address()
-        .or_else(|| printer.hostname())
+    let mut host = printer
+        .hostname()
+        .or_else(|| printer.endpoint_address())
         .map(ToString::to_string)?;
+    let is_local = printer
+        .option("endpoint-is-local")
+        .and_then(|value| value.parse().ok())
+        .unwrap_or_else(|| host_is_known_local(&host));
+    if is_local {
+        host = "localhost".to_string();
+    }
 
     Some((host, printer.port()?))
 }
@@ -462,7 +447,16 @@ mod tests {
     ) -> DeviceIdentity {
         DeviceIdentity::new(
             uuid,
-            endpoint.map(|(host, port)| (host.to_string(), port)),
+            endpoint.map(|(host, port)| {
+                (
+                    if host_is_known_local(host) {
+                        "localhost".to_string()
+                    } else {
+                        host.to_string()
+                    },
+                    port,
+                )
+            }),
             device_uri,
             fallback_uri,
         )
@@ -656,7 +650,7 @@ mod tests {
             "",
             Some(&format!("{host}:{port}")),
         );
-        printer.set_option("dnssd-address", host);
+        printer.set_option("endpoint-address", host);
         printer.set_option("endpoint-hostname", host);
         printer.set_option("endpoint-port", port.to_string());
         printer

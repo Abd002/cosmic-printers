@@ -80,12 +80,17 @@ impl Client {
         Ok(reply.printers)
     }
 
-    /// Starts a background discovery refresh.
-    ///
-    /// Watch [`Self::printer_events`] and read the cache again to observe
-    /// results that arrive after this call returns.
-    pub async fn start_discovery(&mut self) -> ClientResult<()> {
-        flatten(protocol::CosmicPrintersProxy::start_discovery(&mut self.conn).await)
+    /// Starts a background libcups refresh of the available destination cache.
+    pub async fn refresh_available_destinations(&mut self) -> ClientResult<()> {
+        flatten(protocol::CosmicPrintersProxy::refresh_available_destinations(&mut self.conn).await)
+    }
+
+    /// Starts long-running discovery of local Printer Applications.
+    pub async fn start_printer_application_discovery(&mut self) -> ClientResult<()> {
+        flatten(
+            protocol::CosmicPrintersProxy::start_printer_application_discovery(&mut self.conn)
+                .await,
+        )
     }
 
     /// Returns printers discovered through Printer Applications.

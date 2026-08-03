@@ -33,7 +33,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     for destination in &mut destinations {
         println!();
-        println!("{} ({})", destination.info().unwrap_or(&destination.name), destination.full_name());
+        println!(
+            "{} ({})",
+            destination.info().unwrap_or(&destination.name),
+            destination.full_name()
+        );
         println!("  device-uri: {:?}", destination.device_uri());
 
         match fill_missing_attrs_from_device_uri(destination, PRINTER_ATTRIBUTES) {
@@ -94,7 +98,9 @@ fn fill_missing_attrs_from_device_uri(
         };
         let values = attribute_values(name, attribute);
         if !values.is_empty() {
-            destination.options.insert(name.to_string(), values.join(","));
+            destination
+                .options
+                .insert(name.to_string(), values.join(","));
         }
     }
 
