@@ -8,7 +8,9 @@ use futures_util::Stream;
 pub trait CosmicPrintersProxy {
     async fn list_printers(&mut self) -> zlink::Result<Result<ListPrintersReply, Error>>;
 
-    async fn start_discovery(&mut self) -> zlink::Result<Result<(), Error>>;
+    async fn refresh_available_destinations(&mut self) -> zlink::Result<Result<(), Error>>;
+
+    async fn start_printer_application_discovery(&mut self) -> zlink::Result<Result<(), Error>>;
 
     async fn list_discovered_printers(
         &mut self,

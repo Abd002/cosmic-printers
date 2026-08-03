@@ -1,4 +1,4 @@
-use cosmic_settings_printers_core::{PrinterEntry, PrinterStatus};
+use cosmic_settings_printers_core::{EndpointSource, PrinterEntry, PrinterStatus};
 use cups_rs::{Destination, PrinterState as CupsPrinterState};
 
 use crate::ipp::{is_local_scheduler_uri, parse_uri_endpoint};
@@ -75,6 +75,7 @@ pub(super) fn apply_endpoint(printer: &mut PrinterEntry, endpoint: Option<(Strin
     if let Some((host, port)) = endpoint {
         printer.set_option("endpoint-hostname", host);
         printer.set_option("endpoint-port", port.to_string());
+        printer.set_endpoint_source(EndpointSource::Uri);
     }
 }
 

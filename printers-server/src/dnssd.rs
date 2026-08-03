@@ -1,15 +1,18 @@
-use cosmic_settings_printers_core::{PrinterApplication, PrinterApplicationState};
-use cups_rs::{Dnssd, DnssdBrowseEvent, DnssdResolveEvent};
+use cosmic_settings_printers_core::{
+    PrinterApplication, PrinterApplicationState, is_local_address,
+};
+use cups_rs::{Dnssd, DnssdBrowseEvent, DnssdResolveEvent, DnssdServiceResolver};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::mpsc;
 use std::time::Duration;
 
-use crate::context::Context;
+use crate::context::{Context, DnssdDeviceEndpoint};
 
 const SYSTEM_SERVICE_TYPES: &[&str] = &["_ipp-system._tcp", "_ipps-system._tcp"];
+const DEVICE_SERVICE_TYPES: &[&str] = &["_ipp._tcp", "_ipps._tcp"];
 
-pub(crate) async fn start_discovery(context: Context) {
-    let Some(discovery_lease) = context.try_start_discovery() else {
+pub(crate) async fn start_printer_application_discovery(context: Context) {
+    let Some(discovery_lease) = context.try_start_printer_application_discovery() else {
         return;
     };
 
@@ -28,14 +31,13 @@ fn run_system_service_browser(
 ) -> cups_rs::Result<()> {
     let (error_sender, error_receiver) = mpsc::channel();
     let (browse_sender, browse_receiver) = mpsc::channel();
-    let (resolve_sender, resolve_receiver) = mpsc::channel();
     let dnssd = Dnssd::new(error_sender)?;
     let mut browsers = Vec::new();
-    for service_type in SYSTEM_SERVICE_TYPES {
+    for service_type in SYSTEM_SERVICE_TYPES.iter().chain(DEVICE_SERVICE_TYPES) {
         browsers.push(dnssd.browse(service_type, None, browse_sender.clone())?);
     }
 
-    let mut resolvers = HashMap::new();
+    let mut resolvers = HashMap::<ServiceKey, DnssdServiceResolver>::new();
     let mut services = HashSet::new();
     let mut application_ids = HashMap::<ServiceKey, String>::new();
 
@@ -44,7 +46,7 @@ fn run_system_service_browser(
             let key = service_key(&event);
             if event.added {
                 if services.insert(key.clone()) {
-                    match dnssd.resolve(&event, resolve_sender.clone()) {
+                    match dnssd.resolve_service(&event) {
                         Ok(resolver) => {
                             resolvers.insert(key, resolver);
                         }
@@ -61,15 +63,25 @@ fn run_system_service_browser(
             }
         }
 
-        while let Ok(event) = resolve_receiver.try_recv() {
-            let key = resolved_service_key(&event);
-            if services.contains(&key) {
-                let application = resolved_application(event);
-                application_ids.insert(key, application.id.clone());
-                runtime.block_on(crate::printer_application_backend::record_discovery(
-                    context.clone(),
-                    application,
-                ));
+        for (key, resolver) in &mut resolvers {
+            while let Some(resolved) = resolver.try_recv()? {
+                if services.contains(key) {
+                    if is_system_service(&resolved.service.service_type) {
+                        let mut application = resolved_application(resolved.service);
+                        application.addresses = resolved
+                            .addresses
+                            .into_iter()
+                            .map(|address| address.to_string())
+                            .collect();
+                        application_ids.insert(key.clone(), application.id.clone());
+                        runtime.block_on(crate::printer_application_backend::record_discovery(
+                            context.clone(),
+                            application,
+                        ));
+                    } else {
+                        record_device_resolution(&context, resolved.service, &resolved.addresses);
+                    }
+                }
             }
         }
 
@@ -79,6 +91,30 @@ fn run_system_service_browser(
 
         std::thread::sleep(Duration::from_millis(20));
     }
+}
+
+fn is_system_service(service_type: &str) -> bool {
+    SYSTEM_SERVICE_TYPES
+        .iter()
+        .any(|candidate| service_type.eq_ignore_ascii_case(candidate))
+}
+
+fn record_device_resolution(
+    context: &Context,
+    service: DnssdResolveEvent,
+    addresses: &[std::net::IpAddr],
+) {
+    let service_name = normalize(&service.full_name);
+    let is_local = addresses.iter().copied().any(is_local_address);
+    context.record_dnssd_device_endpoint(
+        service_name,
+        DnssdDeviceEndpoint {
+            hostname: service.hostname,
+            port: service.port,
+            address: addresses.first().map(ToString::to_string),
+            is_local,
+        },
+    );
 }
 
 fn retain_active_applications(
@@ -93,15 +129,6 @@ fn retain_active_applications(
 type ServiceKey = (u32, String, String, String);
 
 fn service_key(service: &DnssdBrowseEvent) -> ServiceKey {
-    (
-        service.interface_index,
-        normalize(&service.name),
-        normalize(&service.service_type),
-        normalize(&service.domain),
-    )
-}
-
-fn resolved_service_key(service: &DnssdResolveEvent) -> ServiceKey {
     (
         service.interface_index,
         normalize(&service.name),
