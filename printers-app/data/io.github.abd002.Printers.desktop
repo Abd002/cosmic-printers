@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Printers
+Comment=Configure printers and manage print jobs
+Exec=printers
+Icon=io.github.abd002.Printers
+Terminal=false
+Categories=Settings;HardwareSettings;
+Keywords=Printer;Printing;CUPS;
+StartupNotify=true

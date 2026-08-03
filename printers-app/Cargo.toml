@@ -1,0 +1,26 @@
+[package]
+name = "printers"
+version = "0.1.0"
+edition = "2024"
+description = "Set up printers, defaults, and print queues"
+
+[[bin]]
+name = "printers"
+path = "src/main.rs"
+
+[dependencies]
+# The standalone app embeds the server so it does not require cosmic-settings-daemon.
+cosmic-printers-ui = { path = "../printers-ui", features = ["embedded"] }
+cosmic-settings-printers-core = { path = "../printers-core" }
+
+# Keep this aligned with the UI crate; two libcosmic revisions produce incompatible `Element` types.
+libcosmic = { git = "https://github.com/pop-os/libcosmic", default-features = false, features = [
+    "multi-window",
+    "tokio",
+    "wgpu",
+    "winit",
+    "xdg-portal",
+] }
+
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
