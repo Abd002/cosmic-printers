@@ -4,9 +4,9 @@
 
 //! Server-side implementation of the COSMIC printers service.
 
-mod avahi;
 mod context;
 mod cups_backend;
+mod dnssd;
 mod error;
 mod ipp;
 mod printer_application_backend;

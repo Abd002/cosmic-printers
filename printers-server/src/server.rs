@@ -33,13 +33,13 @@ impl Server {
 
     /// Starts a background DNS-SD discovery refresh when one is not already running.
     pub async fn start_discovery(&self) -> Result<(), Error> {
-        crate::avahi::start_discovery(self.context.clone()).await;
+        crate::dnssd::start_discovery(self.context.clone()).await;
         Ok(())
     }
 
-    /// Lists the currently cached discovered printers.
+    /// Lists printers discovered through Printer Applications.
     pub async fn list_discovered_printers(&self) -> Result<Vec<PrinterEntry>, Error> {
-        Ok(self.context.discovered_printers_cached().await)
+        todo!("query discovered printers from validated Printer Applications")
     }
 
     /// Lists the currently cached Printer Applications.

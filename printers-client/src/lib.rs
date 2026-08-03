@@ -88,7 +88,7 @@ impl Client {
         flatten(protocol::CosmicPrintersProxy::start_discovery(&mut self.conn).await)
     }
 
-    /// Returns the current discovered-printer cache without starting discovery.
+    /// Returns printers discovered through Printer Applications.
     pub async fn discovered_printers(&mut self) -> ClientResult<Vec<PrinterEntry>> {
         let reply =
             flatten(protocol::CosmicPrintersProxy::list_discovered_printers(&mut self.conn).await)?;

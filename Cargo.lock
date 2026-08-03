@@ -252,7 +252,7 @@ checksum = "d0a5c400df2834b80a4c3327b3aad3a4c4cd4de0629063962b03235697506a28"
 [[package]]
 name = "cups_rs"
 version = "0.3.0"
-source = "git+https://github.com/Abd002/cups-rs.git?branch=cups3-pr6-signatures#e4370f954cb500368091abbb8418077d7cdf7fe2"
+source = "git+https://github.com/Abd002/cups-rs.git?branch=cups3-pr6-signatures#77d1f2f80fb111ddfb2b1a6a6f8bb69e19a98ac7"
 dependencies = [
  "bindgen",
  "chrono",
