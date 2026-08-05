@@ -335,7 +335,7 @@ pub fn printers_match(left: &PrinterEntry, right: &PrinterEntry) -> bool {
 fn printer_identity(printer: &PrinterEntry) -> DeviceIdentity {
     DeviceIdentity::new(
         printer.device_uuid().or_else(|| printer.printer_uuid()),
-        printer_endpoint(printer),
+        printer.endpoint(),
         printer.device_uri(),
         printer.printer_uri(),
     )
@@ -360,22 +360,6 @@ fn application_identity(application: &PrinterApplication) -> DeviceIdentity {
         Some(&application.system_uri),
         None,
     )
-}
-
-fn printer_endpoint(printer: &PrinterEntry) -> Option<(String, u16)> {
-    let mut host = printer
-        .hostname()
-        .or_else(|| printer.endpoint_address())
-        .map(ToString::to_string)?;
-    let is_local = printer
-        .option("endpoint-is-local")
-        .and_then(|value| value.parse().ok())
-        .unwrap_or_else(|| host_is_known_local(&host));
-    if is_local {
-        host = "localhost".to_string();
-    }
-
-    Some((host, printer.port()?))
 }
 
 fn uri_prefix(uri: &str) -> String {

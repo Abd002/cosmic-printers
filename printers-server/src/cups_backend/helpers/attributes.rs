@@ -90,39 +90,46 @@ pub(in crate::cups_backend) fn fill_missing_attrs_from_device_uri(
 /// says so in the connection's resource path. This puts it back into the URI.
 fn printer_uri_for_request(device_uri: &str, connection: &HttpConnection) -> String {
     printer_uri_from_parts(
-        device_uri,
+        request_scheme(device_uri),
         connection.hostname().as_deref(),
         connection.port(),
         connection.resource_path(),
     )
+    // Nothing was resolved that the device URI does not already say.
+    .unwrap_or_else(|| device_uri.to_string())
 }
 
-fn printer_uri_from_parts(
-    device_uri: &str,
+/// Builds the URI of one printer on a resolved endpoint.
+///
+/// Answers `None` when the parts name no printer: either the endpoint went
+/// unresolved, or it resolved to no more than the service that was asked for.
+pub(in crate::cups_backend) fn printer_uri_from_parts(
+    scheme: &str,
     host: Option<&str>,
     port: Option<u16>,
     resource: &str,
-) -> String {
-    // Nothing was resolved that the device URI does not already say.
+) -> Option<String> {
     if resource.is_empty() || resource == "/" {
-        return device_uri.to_string();
+        return None;
     }
 
-    let (Some(host), Some(port)) = (host, port) else {
-        return device_uri.to_string();
-    };
-    let scheme = if device_uri.starts_with("ipps") {
-        "ipps"
-    } else {
-        "ipp"
-    };
+    let (host, port) = (host?, port?);
     let host = if host.contains(':') && !host.starts_with('[') {
         format!("[{host}]")
     } else {
         host.to_string()
     };
 
-    format!("{scheme}://{host}:{port}{resource}")
+    Some(format!("{scheme}://{host}:{port}{resource}"))
+}
+
+/// Returns the scheme to reach a printer advertised under `uri` on.
+pub(in crate::cups_backend) fn request_scheme(uri: &str) -> &'static str {
+    if uri.starts_with("ipps") {
+        "ipps"
+    } else {
+        "ipp"
+    }
 }
 
 fn connect_to_device(
@@ -145,6 +152,9 @@ fn connect_to_device(
 }
 
 fn apply_connection_endpoint(printer: &mut PrinterEntry, connection: &HttpConnection) {
+    // Names which printer on the endpoint this destination is, which its own
+    // DNS-SD URI does not. Needed to ask a discovered printer for its jobs.
+    printer.set_option("endpoint-resource-path", connection.resource_path());
     if let Some(hostname) = connection.hostname() {
         printer.set_option("endpoint-hostname", hostname);
     }
@@ -220,76 +230,56 @@ fn attr_values(name: &str, attr: cups_rs::IppAttribute) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::printer_uri_from_parts;
+    use super::{printer_uri_from_parts, request_scheme};
 
     /// The case that mattered: a DNS-SD service URI names no printer, so the
     /// resolved path is what says which printer on the application was meant.
     #[test]
     fn a_dns_sd_service_uri_gains_the_printer_it_resolved_to() {
         assert_eq!(
-            printer_uri_from_parts(
-                "ipps://Acme_Laser._ipps._tcp.local/",
-                Some("desktop.local"),
-                Some(8001),
-                "/ipp/print/Acme_Laser",
-            ),
-            "ipps://desktop.local:8001/ipp/print/Acme_Laser"
-        );
-    }
-
-    #[test]
-    fn a_plain_scheme_stays_plain() {
-        assert_eq!(
-            printer_uri_from_parts(
-                "ipp://Acme_Laser._ipp._tcp.local/",
-                Some("desktop.local"),
-                Some(8001),
-                "/ipp/print/Acme_Laser",
-            ),
-            "ipp://desktop.local:8001/ipp/print/Acme_Laser"
+            printer_uri_from_parts("ipps", Some("desktop.local"), Some(8001), "/ipp/print/Acme")
+                .as_deref(),
+            Some("ipps://desktop.local:8001/ipp/print/Acme")
         );
     }
 
     #[test]
     fn an_address_literal_is_bracketed() {
         assert_eq!(
-            printer_uri_from_parts(
-                "ipps://Acme_Laser._ipps._tcp.local/",
-                Some("fe80::1"),
-                Some(8001),
-                "/ipp/print/Acme_Laser",
-            ),
-            "ipps://[fe80::1]:8001/ipp/print/Acme_Laser"
+            printer_uri_from_parts("ipps", Some("fe80::1"), Some(8001), "/ipp/print/Acme")
+                .as_deref(),
+            Some("ipps://[fe80::1]:8001/ipp/print/Acme")
         );
     }
 
-    /// Nothing was resolved beyond what the URI already said, so it is left alone
-    /// rather than rebuilt into something equivalent but different.
+    /// Nothing was resolved beyond the service that was asked for, so there is no
+    /// printer here to name.
     #[test]
-    fn a_uri_that_resolved_to_nothing_more_is_left_alone() {
+    fn a_service_that_resolved_to_nothing_more_names_no_printer() {
         for resource in ["", "/"] {
             assert_eq!(
-                printer_uri_from_parts(
-                    "ipp://printer.local:631/ipp/print",
-                    Some("printer.local"),
-                    Some(631),
-                    resource,
-                ),
-                "ipp://printer.local:631/ipp/print"
+                printer_uri_from_parts("ipp", Some("printer.local"), Some(631), resource),
+                None
             );
         }
     }
 
     #[test]
-    fn an_unresolved_endpoint_is_left_alone() {
+    fn an_unresolved_endpoint_names_no_printer() {
         assert_eq!(
-            printer_uri_from_parts(
-                "ipps://Acme_Laser._ipps._tcp.local/",
-                None,
-                Some(8001),
-                "/ipp/print/Acme_Laser",
-            ),
-            "ipps://Acme_Laser._ipps._tcp.local/"
+            printer_uri_from_parts("ipps", None, Some(8001), "/ipp/print/Acme"),
+            None
         );
+        assert_eq!(
+            printer_uri_from_parts("ipps", Some("desktop.local"), None, "/ipp/print/Acme"),
+            None
+        );
+    }
+
+    #[test]
+    fn a_secure_advertisement_keeps_its_scheme() {
+        assert_eq!(request_scheme("ipps://Acme._ipps._tcp.local/"), "ipps");
+        assert_eq!(request_scheme("ipp://Acme._ipp._tcp.local/"), "ipp");
+        assert_eq!(request_scheme("dnssd://Acme._ipps._tcp.local/"), "ipp");
     }
 }

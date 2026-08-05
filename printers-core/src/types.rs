@@ -480,6 +480,45 @@ impl PrinterEntry {
             .and_then(|port| port.parse().ok())
     }
 
+    /// Returns the resource path the endpoint resolved to.
+    ///
+    /// A discovered printer's own URI names a DNS-SD service rather than a printer,
+    /// so this is what says which printer on that endpoint it is.
+    pub fn endpoint_resource_path(&self) -> Option<&str> {
+        self.option("endpoint-resource-path")
+    }
+
+    /// Returns whether the endpoint is on this machine.
+    ///
+    /// Uses what connecting to the device observed, when it was recorded, and
+    /// otherwise judges the hostname — where a name that would need resolving
+    /// counts as remote, because deciding this must not block on DNS.
+    pub fn endpoint_is_local(&self) -> bool {
+        self.option("endpoint-is-local")
+            .and_then(|value| value.parse().ok())
+            .unwrap_or_else(|| self.endpoint_host().is_some_and(crate::host_is_local))
+    }
+
+    /// Returns the host and port to contact this destination at.
+    ///
+    /// A local endpoint is named `localhost` rather than by the machine's own name,
+    /// because a Printer Application treats a request arriving over the machine's
+    /// LAN address as remote and refuses it.
+    pub fn endpoint(&self) -> Option<(String, u16)> {
+        let host = self.endpoint_host()?;
+        let host = if self.endpoint_is_local() {
+            "localhost"
+        } else {
+            host
+        };
+
+        Some((host.to_string(), self.port()?))
+    }
+
+    fn endpoint_host(&self) -> Option<&str> {
+        self.hostname().or_else(|| self.endpoint_address())
+    }
+
     /// Returns the current operational status.
     pub fn status(&self) -> PrinterStatus {
         if self
