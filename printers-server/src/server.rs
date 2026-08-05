@@ -1,10 +1,12 @@
 use cosmic_settings_printers_core::{
-    Error, JobInfo, PrinterApplication, PrinterEntry, PrintersEvent,
+    AddPrinterDiscoveryReply, ConfigureDiscoveredPrinterRequest, ConfigurePrinterReply, Error,
+    JobInfo, ListManualSetupApplicationsReply, PrinterApplication, PrinterEntry, PrintersEvent,
+    StartAddPrinterDiscoveryReply,
 };
 use futures_util::{Stream, StreamExt};
 use tokio::sync::broadcast;
 
-use crate::{context::Context, cups_backend, error::BackendError};
+use crate::{context::Context, cups_backend, error::BackendError, printer_application_backend};
 
 #[derive(Debug)]
 /// The server-side implementation of the COSMIC printers interface.
@@ -43,14 +45,58 @@ impl Server {
         Ok(())
     }
 
-    /// Lists printers discovered through Printer Applications.
-    pub async fn list_discovered_printers(&self) -> Result<Vec<PrinterEntry>, Error> {
-        todo!("query discovered printers from validated Printer Applications")
-    }
-
     /// Lists the currently cached Printer Applications.
     pub async fn list_printer_applications(&self) -> Result<Vec<PrinterApplication>, Error> {
         Ok(self.context.printer_applications_cached().await)
+    }
+
+    /// Starts a round of Add Printer discovery and returns its generation.
+    ///
+    /// Returns immediately; results arrive per Printer Application and are read
+    /// with [`Server::get_add_printer_discovery`]. Every configuration request
+    /// must quote the generation returned here, so a selection made against
+    /// results that have since been replaced is refused rather than acted on.
+    pub async fn start_add_printer_discovery(
+        &self,
+    ) -> Result<StartAddPrinterDiscoveryReply, Error> {
+        Ok(printer_application_backend::start_add_printer_discovery(self.context.clone()).await)
+    }
+
+    /// Returns the current Add Printer discovery results.
+    pub async fn get_add_printer_discovery(&self) -> Result<AddPrinterDiscoveryReply, Error> {
+        Ok(self.context.add_printer_discovery_reply())
+    }
+
+    /// Configures a discovered printer through the Printer Application chosen.
+    ///
+    /// The reply says the printer was created, not that a destination exists yet.
+    /// The Printer Application advertises the new printer, the ordinary
+    /// destination pipeline discovers it, and the attempt then reconciles to that
+    /// destination — poll [`Server::get_printer_configuration`] to see it happen.
+    pub async fn configure_discovered_printer(
+        &self,
+        request: ConfigureDiscoveredPrinterRequest,
+    ) -> Result<ConfigurePrinterReply, Error> {
+        printer_application_backend::configure_discovered_printer(&self.context, request).await
+    }
+
+    /// Returns the state of an earlier configuration attempt.
+    pub async fn get_printer_configuration(
+        &self,
+        operation_id: &str,
+    ) -> Result<ConfigurePrinterReply, Error> {
+        printer_application_backend::printer_configuration(&self.context, operation_id)
+    }
+
+    /// Lists Printer Applications that can be set up through their own interface.
+    ///
+    /// Includes applications that found no devices and ones that need
+    /// credentials, since those are exactly the ones a user needs to open when
+    /// Add Printer came up empty.
+    pub async fn list_manual_setup_printer_applications(
+        &self,
+    ) -> Result<ListManualSetupApplicationsReply, Error> {
+        Ok(printer_application_backend::manual_setup_applications(&self.context).await)
     }
 
     /// Streams printer and discovery changes.

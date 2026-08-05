@@ -1,5 +1,6 @@
 use cosmic_settings_printers_core::{
-    PrinterApplication, PrinterApplicationState, is_local_address,
+    PrinterApplication, PrinterApplicationCapabilities, PrinterApplicationId,
+    PrinterApplicationState, is_local_address,
 };
 use cups_rs::{Dnssd, DnssdBrowseEvent, DnssdResolveEvent, DnssdServiceResolver};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -32,9 +33,23 @@ fn run_system_service_browser(
     let (error_sender, error_receiver) = mpsc::channel();
     let (browse_sender, browse_receiver) = mpsc::channel();
     let dnssd = Dnssd::new(error_sender)?;
+
+    // One service type failing to browse is not a reason to give up the whole
+    // context: the others still find applications and printers, and tearing the
+    // context down is worse than running with less than all of it.
     let mut browsers = Vec::new();
     for service_type in SYSTEM_SERVICE_TYPES.iter().chain(DEVICE_SERVICE_TYPES) {
-        browsers.push(dnssd.browse(service_type, None, browse_sender.clone())?);
+        match dnssd.browse(service_type, None, browse_sender.clone()) {
+            Ok(browser) => browsers.push(browser),
+            Err(error) => {
+                tracing::warn!(service_type, %error, "could not browse a DNS-SD service type");
+            }
+        }
+    }
+    if browsers.is_empty() {
+        return Err(cups_rs::Error::NetworkError(
+            "no DNS-SD service type could be browsed".into(),
+        ));
     }
 
     let mut resolvers = HashMap::<ServiceKey, DnssdServiceResolver>::new();
@@ -64,23 +79,33 @@ fn run_system_service_browser(
         }
 
         for (key, resolver) in &mut resolvers {
-            while let Some(resolved) = resolver.try_recv()? {
-                if services.contains(key) {
-                    if is_system_service(&resolved.service.service_type) {
-                        let mut application = resolved_application(resolved.service);
-                        application.addresses = resolved
-                            .addresses
-                            .into_iter()
-                            .map(|address| address.to_string())
-                            .collect();
-                        application_ids.insert(key.clone(), application.id.clone());
-                        runtime.block_on(crate::printer_application_backend::record_discovery(
-                            context.clone(),
-                            application,
-                        ));
-                    } else {
-                        record_device_resolution(&context, resolved.service, &resolved.addresses);
-                    }
+            // One resolver failing says nothing about the rest, and ending the loop
+            // would drop every browser and resolver with it.
+            let resolved = match resolver.try_recv() {
+                Ok(resolved) => resolved,
+                Err(error) => {
+                    tracing::warn!(%error, "could not read a DNS-SD resolution");
+                    continue;
+                }
+            };
+
+            if let Some(resolved) = resolved
+                && services.contains(key)
+            {
+                if is_system_service(&resolved.service.service_type) {
+                    let mut application = resolved_application(resolved.service);
+                    application.addresses = resolved
+                        .addresses
+                        .into_iter()
+                        .map(|address| address.to_string())
+                        .collect();
+                    application_ids.insert(key.clone(), application.id.clone());
+                    runtime.block_on(crate::printer_application_backend::record_discovery(
+                        context.clone(),
+                        application,
+                    ));
+                } else {
+                    record_device_resolution(&context, resolved.service, &resolved.addresses);
                 }
             }
         }
@@ -137,13 +162,17 @@ fn service_key(service: &DnssdBrowseEvent) -> ServiceKey {
     )
 }
 
+/// Builds a Printer Application from a resolved DNS-SD system service.
+///
+/// Identity is the service instance — name, type, domain — and nothing else. The
+/// hostname and port are left out on purpose: an application that restarts on a
+/// different port, or that becomes reachable on a second network interface, is
+/// the same application and must update in place rather than appear twice.
+///
+/// The `UUID` TXT record is read and discarded. Several Printer Applications on
+/// one machine can advertise the same system UUID, so it cannot tell them apart.
 fn resolved_application(service: DnssdResolveEvent) -> PrinterApplication {
     let txt = service.txt.into_iter().collect::<BTreeMap<_, _>>();
-    let system_uuid = txt
-        .get("UUID")
-        .or_else(|| txt.get("uuid"))
-        .filter(|value| !value.is_empty())
-        .cloned();
     let make_and_model = txt.get("ty").filter(|value| !value.is_empty()).cloned();
     let scheme = if service.service_type.starts_with("_ipps") {
         "ipps"
@@ -154,14 +183,20 @@ fn resolved_application(service: DnssdResolveEvent) -> PrinterApplication {
         "{scheme}://{}:{}/ipp/system",
         service.hostname, service.port
     );
+    let id = PrinterApplicationId::new(&service.name, &service.service_type, &service.domain);
+    // The administration page, which is the root of the same endpoint — never the
+    // `/ipp/system` path used to talk to the application.
+    let web_interface_uri = (!service.hostname.trim().is_empty()).then(|| {
+        let web_scheme = if scheme == "ipps" { "https" } else { "http" };
+        format!(
+            "{web_scheme}://{}:{}/",
+            service.hostname.trim().trim_end_matches('.'),
+            service.port
+        )
+    });
 
     PrinterApplication {
-        id: printer_application_id(
-            &service.name,
-            &service.domain,
-            &service.hostname,
-            service.port,
-        ),
+        id: id.as_key(),
         service_name: service.name,
         service_type: service.service_type,
         domain: service.domain,
@@ -169,21 +204,13 @@ fn resolved_application(service: DnssdResolveEvent) -> PrinterApplication {
         port: service.port,
         addresses: Vec::new(),
         system_uri,
-        system_uuid,
         make_and_model,
-        operations_supported: Vec::new(),
+        web_interface_uri,
+        endpoints: Vec::new(),
+        capabilities: PrinterApplicationCapabilities::default(),
         txt,
         state: PrinterApplicationState::Discovered,
     }
-}
-
-fn printer_application_id(name: &str, domain: &str, hostname: &str, port: u16) -> String {
-    format!(
-        "dnssd-system:{}:{}:{}:{port}",
-        normalize(name),
-        normalize(domain),
-        normalize(hostname)
-    )
 }
 
 fn normalize(value: &str) -> String {
@@ -194,23 +221,113 @@ fn normalize(value: &str) -> String {
 mod tests {
     use super::*;
 
-    #[test]
-    fn resolved_system_builds_secure_application_uri() {
-        let application = resolved_application(DnssdResolveEvent {
-            name: "LPrint".into(),
+    fn resolution(
+        name: &str,
+        interface_index: u32,
+        hostname: &str,
+        port: u16,
+        txt: Vec<(String, String)>,
+    ) -> DnssdResolveEvent {
+        DnssdResolveEvent {
+            name: name.into(),
             service_type: "_ipps-system._tcp".into(),
             domain: "local.".into(),
-            interface_index: 2,
-            full_name: "LPrint._ipps-system._tcp.local.".into(),
-            hostname: "printer.local".into(),
-            port: 8000,
-            txt: vec![("UUID".into(), "urn:uuid:test".into())],
-        });
+            interface_index,
+            full_name: format!("{name}._ipps-system._tcp.local."),
+            hostname: hostname.into(),
+            port,
+            txt,
+        }
+    }
+
+    #[test]
+    fn resolved_system_builds_secure_application_uri() {
+        let application = resolved_application(resolution(
+            "LPrint",
+            2,
+            "printer.local",
+            8000,
+            vec![("ty".into(), "LPrint".into())],
+        ));
 
         assert_eq!(
             application.system_uri,
             "ipps://printer.local:8000/ipp/system"
         );
-        assert_eq!(application.system_uuid.as_deref(), Some("urn:uuid:test"));
+        assert_eq!(application.make_and_model.as_deref(), Some("LPrint"));
+    }
+
+    #[test]
+    fn two_applications_sharing_a_system_uuid_stay_separate() {
+        let uuid = ("UUID".to_string(), "urn:uuid:shared".to_string());
+        let first = resolved_application(resolution(
+            "LPrint",
+            2,
+            "localhost",
+            8000,
+            vec![uuid.clone()],
+        ));
+        let second = resolved_application(resolution(
+            "PostScript Printer Application",
+            2,
+            "localhost",
+            8001,
+            vec![uuid],
+        ));
+
+        assert_ne!(first.id, second.id);
+    }
+
+    #[test]
+    fn the_same_service_on_two_interfaces_is_one_application() {
+        let first =
+            resolved_application(resolution("LPrint", 2, "printer.local", 8000, Vec::new()));
+        let second =
+            resolved_application(resolution("LPrint", 3, "printer.local", 8000, Vec::new()));
+
+        assert_eq!(first.id, second.id);
+    }
+
+    #[test]
+    fn a_restart_on_a_new_port_updates_the_same_application() {
+        let before =
+            resolved_application(resolution("LPrint", 2, "printer.local", 8000, Vec::new()));
+        let after =
+            resolved_application(resolution("LPrint", 2, "desktop.local", 8631, Vec::new()));
+
+        assert_eq!(before.id, after.id);
+        assert_ne!(before.system_uri, after.system_uri);
+    }
+
+    /// Losing one interface must not remove an application that is still
+    /// advertised on another. Because identity excludes the interface index,
+    /// both browse entries map to one id, and the id stays active while any
+    /// entry remains.
+    #[test]
+    fn dropping_one_interface_keeps_an_application_advertised_elsewhere() {
+        let mut application_ids = HashMap::<ServiceKey, String>::new();
+        let first =
+            resolved_application(resolution("LPrint", 2, "printer.local", 8000, Vec::new()));
+        let second =
+            resolved_application(resolution("LPrint", 3, "printer.local", 8000, Vec::new()));
+        let first_key = (
+            2,
+            "lprint".into(),
+            "_ipps-system._tcp".into(),
+            "local".into(),
+        );
+        let second_key = (
+            3,
+            "lprint".into(),
+            "_ipps-system._tcp".into(),
+            "local".into(),
+        );
+        application_ids.insert(first_key.clone(), first.id.clone());
+        application_ids.insert(second_key, second.id);
+
+        application_ids.remove(&first_key);
+
+        let active = application_ids.values().cloned().collect::<HashSet<_>>();
+        assert_eq!(active, HashSet::from([first.id]));
     }
 }

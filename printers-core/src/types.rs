@@ -15,16 +15,195 @@ pub enum PrinterStatus {
     LowToner,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize, zlink::introspect::Type)]
+/// What a Printer Application can currently be used for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize, zlink::introspect::Type)]
 pub enum PrinterApplicationState {
+    /// Advertised, not yet probed.
     Discovered,
+    /// Being probed for its capabilities.
+    Probing,
+    /// Can find devices, match drivers, and create printers.
     Ready,
-    Unsupported,
+    /// Can find devices but cannot create printers remotely, so it cannot be an
+    /// automatic configuration candidate.
+    DiscoveryOnly,
+    /// Offers no usable IPP administration, only its own web interface.
+    ManualSetupOnly,
+    /// Needs credentials before it will answer.
     AuthenticationRequired,
+    /// Could not be reached.
     Unreachable,
+    /// Answered, but implements none of the operations Add Printer needs.
+    Unsupported,
+    /// Answered unusably.
     Failed,
 }
 
+/// What a Printer Application told us it can do.
+///
+/// The booleans are derived once from `operations-supported` so callers never
+/// have to know which raw operation code means what.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize, zlink::introspect::Type)]
+pub struct PrinterApplicationCapabilities {
+    /// Implements `PAPPL-Find-Devices`.
+    pub find_devices: bool,
+    /// Implements `PAPPL-Find-Drivers`.
+    pub find_drivers: bool,
+    /// Implements `Create-Printer`.
+    pub create_printer: bool,
+    /// Implements `Get-Printers`, which is what makes duplicate detection
+    /// possible.
+    pub get_printers: bool,
+    /// Implements `Delete-Printer`.
+    pub delete_printer: bool,
+    /// Implements `PAPPL-Create-Printers`, the batch "add everything" call.
+    pub create_printers_batch: bool,
+    /// Every operation code reported, kept for diagnostics.
+    pub operations_supported: Vec<u16>,
+    /// Attributes the application accepts when creating a printer. Advisory:
+    /// PAPPL validates its own required set regardless.
+    pub printer_creation_attributes_supported: Vec<String>,
+    /// Attributes the application says are mandatory when creating a printer.
+    pub mandatory_printer_attributes: Vec<String>,
+    /// Device URI schemes the application can drive.
+    pub device_uri_schemes_supported: Vec<String>,
+    /// Service types the application can create, such as `print`.
+    pub printer_service_types_supported: Vec<String>,
+}
+
+/// `PAPPL-Find-Devices`.
+const OPERATION_FIND_DEVICES: u16 = 0x402b;
+/// `PAPPL-Find-Drivers`.
+const OPERATION_FIND_DRIVERS: u16 = 0x402c;
+/// `PAPPL-Create-Printers`.
+const OPERATION_CREATE_PRINTERS: u16 = 0x402d;
+/// `Create-Printer`.
+const OPERATION_CREATE_PRINTER: u16 = 0x004c;
+/// `Delete-Printer`.
+const OPERATION_DELETE_PRINTER: u16 = 0x004e;
+/// `Get-Printers`.
+const OPERATION_GET_PRINTERS: u16 = 0x004f;
+/// `CUPS-Get-Printers`, which PAPPL accepts as an alias for `Get-Printers`.
+const OPERATION_CUPS_GET_PRINTERS: u16 = 0x4002;
+
+impl PrinterApplicationCapabilities {
+    /// Derives the typed capabilities from a reported operation list.
+    pub fn from_operations(operations: Vec<u16>) -> Self {
+        let supports = |operation: u16| operations.contains(&operation);
+
+        Self {
+            find_devices: supports(OPERATION_FIND_DEVICES),
+            find_drivers: supports(OPERATION_FIND_DRIVERS),
+            create_printer: supports(OPERATION_CREATE_PRINTER),
+            get_printers: supports(OPERATION_GET_PRINTERS) || supports(OPERATION_CUPS_GET_PRINTERS),
+            delete_printer: supports(OPERATION_DELETE_PRINTER),
+            create_printers_batch: supports(OPERATION_CREATE_PRINTERS),
+            operations_supported: operations,
+            ..Self::default()
+        }
+    }
+
+    /// Returns true when this application can carry an Add Printer flow through
+    /// to a created printer without the user visiting its web interface.
+    ///
+    /// Finding devices is not enough: the application also has to be able to
+    /// confirm it has a driver for one, and to create the printer.
+    pub fn supports_automatic_configuration(&self) -> bool {
+        self.find_devices && self.find_drivers && self.create_printer
+    }
+}
+
+/// One endpoint a Printer Application's system service is reachable at, as
+/// reported in `system-xri-supported`.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize, zlink::introspect::Type)]
+pub struct SystemEndpoint {
+    pub uri: String,
+    /// The authentication the endpoint requires, when reported.
+    pub authentication: Option<String>,
+    /// The transport security the endpoint uses, when reported.
+    pub security: Option<String>,
+}
+
+/// The logical identity of a Printer Application.
+///
+/// Identity is the DNS-SD service instance: its name, service type, and domain.
+/// Everything else about an advertisement is mutable — a Printer Application
+/// that restarts on a different port, or that becomes reachable on a second
+/// network interface, is still the same application.
+///
+/// The system UUID is deliberately not part of this. Several Printer
+/// Applications running on one machine can report the same `system-uuid`, so
+/// using it would silently merge unrelated applications.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct PrinterApplicationId {
+    service_name: String,
+    service_type: String,
+    domain: String,
+}
+
+impl PrinterApplicationId {
+    /// Builds a normalized identity from a DNS-SD service instance.
+    ///
+    /// Each part is trimmed, has any trailing dot removed, and is lowercased,
+    /// so `LPrint._ipps-system._tcp.` in `local.` and `lprint._ipps-system._tcp`
+    /// in `local` are one application.
+    pub fn new(service_name: &str, service_type: &str, domain: &str) -> Self {
+        Self {
+            service_name: normalize_dnssd_part(service_name),
+            service_type: normalize_dnssd_part(service_type),
+            domain: normalize_dnssd_part(domain),
+        }
+    }
+
+    /// Returns the normalized DNS-SD instance name.
+    pub fn service_name(&self) -> &str {
+        &self.service_name
+    }
+
+    /// Returns the normalized DNS-SD service type.
+    pub fn service_type(&self) -> &str {
+        &self.service_type
+    }
+
+    /// Returns the normalized DNS-SD domain.
+    pub fn domain(&self) -> &str {
+        &self.domain
+    }
+
+    /// Returns the stable string form used as a map key and on the wire.
+    ///
+    /// Separators inside a part are escaped, because a DNS-SD instance name may
+    /// contain any character and two different applications must never encode
+    /// to the same key.
+    pub fn as_key(&self) -> String {
+        format!(
+            "dnssd-system:{}:{}:{}",
+            escape_key_part(&self.service_name),
+            escape_key_part(&self.service_type),
+            escape_key_part(&self.domain),
+        )
+    }
+}
+
+impl std::fmt::Display for PrinterApplicationId {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.as_key())
+    }
+}
+
+fn normalize_dnssd_part(value: &str) -> String {
+    value.trim().trim_end_matches('.').to_ascii_lowercase()
+}
+
+fn escape_key_part(value: &str) -> String {
+    value.replace('%', "%25").replace(':', "%3A")
+}
+
+/// A Printer Application discovered on the network.
+///
+/// `id` is [`PrinterApplicationId::as_key`]. Hostname, port, addresses, system
+/// URI, TXT data, and endpoints are mutable discovery data that a later
+/// resolution may replace; capabilities and state come from probing.
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize, zlink::introspect::Type)]
 pub struct PrinterApplication {
     pub id: String,
@@ -35,9 +214,16 @@ pub struct PrinterApplication {
     pub port: u16,
     pub addresses: Vec<String>,
     pub system_uri: String,
-    pub system_uuid: Option<String>,
     pub make_and_model: Option<String>,
-    pub operations_supported: Vec<u16>,
+    /// The application's own administration page, when it has a usable one.
+    ///
+    /// Distinct from [`PrinterApplication::system_uri`]: that is the IPP endpoint
+    /// used to talk to the application, and is not something to open in a
+    /// browser. Only `http` and `https` ever appear here.
+    pub web_interface_uri: Option<String>,
+    /// Endpoints parsed from `system-xri-supported`.
+    pub endpoints: Vec<SystemEndpoint>,
+    pub capabilities: PrinterApplicationCapabilities,
     pub txt: BTreeMap<String, String>,
     pub state: PrinterApplicationState,
 }
@@ -62,6 +248,57 @@ impl PrinterApplication {
             }
         }
         self.addresses.sort();
+    }
+
+    /// Returns whether this application is reachable only over the loopback
+    /// interface.
+    ///
+    /// It matters because a Printer Application refuses remote administration
+    /// unless it has been configured with an authentication service, so a
+    /// non-local application cannot be an automatic configuration candidate.
+    pub fn is_local(&self) -> bool {
+        crate::host_is_local(&self.hostname)
+            || self
+                .addresses
+                .iter()
+                .any(|address| crate::host_is_local(address))
+    }
+
+    /// Returns the URI to actually administer this application on.
+    ///
+    /// [`PrinterApplication::system_uri`] records what was advertised, which is not
+    /// what an administrative request can use. Two things differ, both verified
+    /// against real Printer Applications:
+    ///
+    /// The host must be loopback. A Printer Application authorizes administration
+    /// without credentials only for a loopback peer; a request arriving over the
+    /// machine's own LAN address is remote by its reckoning and refused outright,
+    /// even though it is the same process on the same computer. Reading attributes
+    /// is unrestricted, so the advertised host appears to work right up until the
+    /// first operation that matters.
+    ///
+    /// The scheme must be plain. An application advertises `_ipps-system._tcp` but
+    /// negotiates TLS by HTTP upgrade rather than serving it immediately, so
+    /// opening a TLS connection to the advertised port fails. On loopback the plain
+    /// scheme is also safe, because the traffic never leaves the machine.
+    ///
+    /// A non-local application keeps its advertised URI. Administering one is
+    /// refused regardless, and nothing here should quietly move a remote
+    /// conversation off TLS.
+    pub fn administration_uri(&self) -> String {
+        if !self.is_local() {
+            return self.system_uri.clone();
+        }
+
+        format!("ipp://localhost:{}/ipp/system", self.port)
+    }
+
+    /// Returns whether Add Printer can configure through this application
+    /// without sending the user to its web interface.
+    pub fn supports_automatic_configuration(&self) -> bool {
+        self.state == PrinterApplicationState::Ready
+            && self.capabilities.supports_automatic_configuration()
+            && self.is_local()
     }
 }
 
@@ -448,6 +685,18 @@ mod printer_entry_tests {
     }
 }
 
+/// A set of active destinations that appear to come from the same source.
+///
+/// This is the main-view grouping domain: it answers "which of the printers the
+/// system already has belong together", where a source is a physical IPP device,
+/// a Printer Application, or a remote CUPS server. A Printer Application group
+/// may hold many queues for many different physical printers.
+///
+/// It is not the Add Printer domain. Add Printer groups PA-owned observations of
+/// printers that are *not yet configured*, by physical hardware — see
+/// [`crate::DiscoveredPhysicalPrinter`] and
+/// [`crate::group_by_physical_device`]. The two use different evidence and
+/// different rules, and neither reuses the other's types.
 #[derive(Debug, Clone)]
 pub struct GroupedDevice {
     pub(crate) identity: DeviceIdentity,
@@ -493,20 +742,25 @@ pub struct ListPrintersReply {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, zlink::introspect::Type)]
-pub struct ListDiscoveredPrintersReply {
-    pub printers: Vec<PrinterEntry>,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize, zlink::introspect::Type)]
 pub struct ListPrinterApplicationsReply {
     pub printer_applications: Vec<PrinterApplication>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, zlink::introspect::Type)]
+/// What changed, so a client knows which cache to re-read.
+///
+/// Each kind names one thing that became stale. There is deliberately no
+/// general-purpose "something changed" event: a client that wants Add Printer
+/// results should not be woken by an unrelated queue going offline.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, zlink::introspect::Type)]
 pub enum PrintersEventKind {
+    /// The set or attributes of available destinations changed.
     AvailableDestinationsChanged,
-    DiscoveredPrintersChanged,
+    /// The set or state of discovered Printer Applications changed.
     PrinterApplicationsChanged,
+    /// An Add Printer discovery generation produced new results.
+    AddPrinterDiscoveryChanged,
+    /// A printer configuration attempt changed state.
+    PrinterConfigurationChanged,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, zlink::introspect::Type)]
@@ -596,28 +850,38 @@ mod tests {
         assert_eq!(existing.location(), Some("Office"));
     }
 
-    #[test]
-    fn printer_application_discovery_merge_preserves_probe_results() {
-        let mut existing = PrinterApplication {
-            id: "app".into(),
-            service_name: "LPrint".into(),
+    fn printer_application(service_name: &str, hostname: &str, port: u16) -> PrinterApplication {
+        let id = PrinterApplicationId::new(service_name, "_ipps-system._tcp", "local.");
+
+        PrinterApplication {
+            id: id.as_key(),
+            service_name: service_name.into(),
             service_type: "_ipps-system._tcp".into(),
             domain: "local".into(),
-            hostname: "printer.local".into(),
-            port: 8000,
+            hostname: hostname.into(),
+            port,
             addresses: vec!["192.0.2.1".into()],
-            system_uri: "ipps://printer.local:8000/ipp/system".into(),
-            system_uuid: Some("urn:uuid:system".into()),
-            make_and_model: Some("LPrint".into()),
-            operations_supported: vec![0x402b],
+            system_uri: format!("ipps://{hostname}:{port}/ipp/system"),
+            make_and_model: Some(service_name.into()),
+            web_interface_uri: None,
+            endpoints: Vec::new(),
+            capabilities: PrinterApplicationCapabilities::from_operations(vec![
+                OPERATION_FIND_DEVICES,
+                OPERATION_FIND_DRIVERS,
+                OPERATION_CREATE_PRINTER,
+            ]),
             txt: BTreeMap::new(),
             state: PrinterApplicationState::Ready,
-        };
+        }
+    }
+
+    #[test]
+    fn printer_application_discovery_merge_preserves_probe_results() {
+        let mut existing = printer_application("LPrint", "printer.local", 8000);
         let mut incoming = existing.clone();
         incoming.addresses = vec!["2001:db8::1".into()];
-        incoming.system_uuid = None;
         incoming.make_and_model = None;
-        incoming.operations_supported.clear();
+        incoming.capabilities = PrinterApplicationCapabilities::default();
         incoming.state = PrinterApplicationState::Discovered;
 
         existing.merge_discovery_record(incoming);
@@ -626,8 +890,88 @@ mod tests {
             existing.addresses,
             vec!["192.0.2.1".to_string(), "2001:db8::1".to_string()]
         );
-        assert_eq!(existing.system_uuid.as_deref(), Some("urn:uuid:system"));
-        assert_eq!(existing.operations_supported, vec![0x402b]);
+        assert!(existing.capabilities.find_devices);
         assert_eq!(existing.state, PrinterApplicationState::Ready);
+    }
+
+    #[test]
+    fn identity_ignores_the_endpoint_so_a_restart_updates_one_application() {
+        let first = printer_application("LPrint", "printer.local", 8000);
+        let restarted = printer_application("LPrint", "desktop.local", 8001);
+
+        assert_eq!(first.id, restarted.id);
+    }
+
+    #[test]
+    fn identity_normalizes_case_and_trailing_dots() {
+        assert_eq!(
+            PrinterApplicationId::new("LPrint", "_IPPS-System._tcp.", "Local."),
+            PrinterApplicationId::new(" lprint ", "_ipps-system._tcp", "local")
+        );
+    }
+
+    #[test]
+    fn identity_keeps_different_services_apart_even_with_one_system_uuid() {
+        // Two Printer Applications on one machine can report the same
+        // system-uuid, so identity must not depend on it. Nothing in
+        // PrinterApplication carries one.
+        let first = printer_application("LPrint", "localhost", 8000);
+        let second = printer_application("PostScript Printer Application", "localhost", 8001);
+
+        assert_ne!(first.id, second.id);
+    }
+
+    #[test]
+    fn identity_keys_escape_separators_in_a_service_name() {
+        let colon = PrinterApplicationId::new("weird:name", "_ipps-system._tcp", "local");
+        let split = PrinterApplicationId::new("weird", "name:_ipps-system._tcp", "local");
+
+        assert_ne!(colon.as_key(), split.as_key());
+    }
+
+    #[test]
+    fn capabilities_are_derived_from_reported_operations() {
+        let capabilities = PrinterApplicationCapabilities::from_operations(vec![
+            OPERATION_FIND_DEVICES,
+            OPERATION_FIND_DRIVERS,
+            OPERATION_CREATE_PRINTER,
+            OPERATION_CUPS_GET_PRINTERS,
+        ]);
+
+        assert!(capabilities.find_devices);
+        assert!(capabilities.find_drivers);
+        assert!(capabilities.create_printer);
+        assert!(capabilities.get_printers);
+        assert!(!capabilities.delete_printer);
+        assert!(!capabilities.create_printers_batch);
+        assert!(capabilities.supports_automatic_configuration());
+    }
+
+    #[test]
+    fn discovery_without_creation_is_not_automatically_configurable() {
+        let capabilities = PrinterApplicationCapabilities::from_operations(vec![
+            OPERATION_FIND_DEVICES,
+            OPERATION_FIND_DRIVERS,
+        ]);
+
+        assert!(!capabilities.supports_automatic_configuration());
+    }
+
+    #[test]
+    fn a_remote_application_is_never_an_automatic_candidate() {
+        // A Printer Application refuses remote administration unless it was
+        // given an authentication service, so it can only be set up by hand.
+        let mut remote = printer_application("LPrint", "printer.example", 8000);
+        remote.addresses = vec!["198.51.100.7".into()];
+
+        assert!(!remote.is_local());
+        assert!(!remote.supports_automatic_configuration());
+
+        let mut local = remote.clone();
+        local.hostname = "localhost".into();
+        local.addresses = vec!["127.0.0.1".into()];
+
+        assert!(local.is_local());
+        assert!(local.supports_automatic_configuration());
     }
 }

@@ -180,7 +180,44 @@ pub(crate) fn is_local_scheduler_uri(uri: &str) -> bool {
     ParsedUri::parse(uri).is_some_and(|uri| uri.is_local_scheduler())
 }
 
+/// How long to wait when a peer is expected to answer immediately.
+///
+/// Enumerating attributes of a printer that is already known is a lookup, so a
+/// peer that does not answer quickly is treated as unreachable.
+const DEFAULT_CONNECT_TIMEOUT_MS: i32 = 250;
+
+/// How long an individual request may take.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct IppTimeouts {
+    /// Bound on establishing the connection.
+    pub connect_ms: i32,
+    /// Bound on waiting for the reply, once connected.
+    pub response_seconds: f64,
+}
+
+impl Default for IppTimeouts {
+    fn default() -> Self {
+        Self {
+            connect_ms: DEFAULT_CONNECT_TIMEOUT_MS,
+            response_seconds: 0.0,
+        }
+    }
+}
+
 pub(crate) fn send_ipp_request(request: IppRequest, uri: &str) -> BackendResult<IppResponse> {
+    send_ipp_request_with_timeouts(request, uri, IppTimeouts::default())
+}
+
+/// Sends a request with explicit timeouts.
+///
+/// Some operations do real work before replying — a Printer Application asked to
+/// find devices rescans USB, SNMP, and DNS-SD first, which can take tens of
+/// seconds — so the caller has to be able to wait longer than a lookup would.
+pub(crate) fn send_ipp_request_with_timeouts(
+    request: IppRequest,
+    uri: &str,
+    timeouts: IppTimeouts,
+) -> BackendResult<IppResponse> {
     let uri_parts = ParsedUri::parse(uri)
         .filter(|uri| uri.scheme.is_ipp())
         .ok_or_else(|| BackendError::Internal(format!("invalid IPP URI: {uri}")))?;
@@ -189,17 +226,20 @@ pub(crate) fn send_ipp_request(request: IppRequest, uri: &str) -> BackendResult<
     if uri_parts.is_local_scheduler() {
         request.send_default(resource).cups_err()
     } else {
-        let connection = HttpConnection::connect_host_with_encryption(
+        let mut connection = HttpConnection::connect_host_with_encryption(
             &uri_parts.host,
             uri_parts.port,
             resource,
             uri_parts.encryption(),
-            Some(250),
+            Some(timeouts.connect_ms),
         )
         .map_err(|source| BackendError::DeviceUnreachable {
             uri: uri.to_string(),
             source,
         })?;
+        if timeouts.response_seconds > 0.0 {
+            connection.set_timeout(timeouts.response_seconds);
+        }
         request
             .send(&connection, connection.resource_path())
             .cups_err()

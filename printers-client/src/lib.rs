@@ -3,10 +3,15 @@ use std::path::PathBuf;
 use zlink::Connection;
 
 pub use cosmic_settings_printers_core::{
-    Error, GetJobsReply, GroupedDevice, JobFilter, JobInfo, JobState, ListDiscoveredPrintersReply,
-    ListPrinterApplicationsReply, ListPrintersReply, PrintTestPageReply, PrinterApplication,
-    PrinterApplicationState, PrinterEntry, PrinterStatus, PrintersEvent, PrintersEventKind,
-    SupplyLevel, group_printers, printers_match,
+    AddPrinterDiscoveryReply, AddPrinterDiscoveryState, ConfigureDiscoveredPrinterRequest,
+    ConfigurePrinterReply, DiscoveredPhysicalPrinter, DiscoveryGeneration, Error, GetJobsReply,
+    GroupedDevice, IdentityConfidenceKind, JobFilter, JobInfo, JobState,
+    ListManualSetupApplicationsReply, ListPrinterApplicationsReply, ListPrintersReply,
+    ManualSetupPrinterApplication, PaCandidateState, PrintTestPageReply, PrinterApplication,
+    PrinterApplicationCandidateSummary, PrinterApplicationCapabilities,
+    PrinterApplicationScanState, PrinterApplicationScanStatus, PrinterApplicationState,
+    PrinterConfigurationState, PrinterEntry, PrinterStatus, PrintersEvent, PrintersEventKind,
+    StartAddPrinterDiscoveryReply, SupplyLevel, group_printers, printers_match,
 };
 
 mod protocol;
@@ -93,11 +98,55 @@ impl Client {
         )
     }
 
-    /// Returns printers discovered through Printer Applications.
-    pub async fn discovered_printers(&mut self) -> ClientResult<Vec<PrinterEntry>> {
-        let reply =
-            flatten(protocol::CosmicPrintersProxy::list_discovered_printers(&mut self.conn).await)?;
-        Ok(reply.printers)
+    /// Starts a round of Add Printer discovery and returns its generation.
+    ///
+    /// Returns immediately. Poll [`Client::add_printer_discovery`] for results,
+    /// which arrive per Printer Application.
+    pub async fn start_add_printer_discovery(
+        &mut self,
+    ) -> ClientResult<StartAddPrinterDiscoveryReply> {
+        flatten(protocol::CosmicPrintersProxy::start_add_printer_discovery(&mut self.conn).await)
+    }
+
+    /// Returns the current Add Printer discovery results.
+    pub async fn add_printer_discovery(&mut self) -> ClientResult<AddPrinterDiscoveryReply> {
+        flatten(protocol::CosmicPrintersProxy::get_add_printer_discovery(&mut self.conn).await)
+    }
+
+    /// Configures a discovered printer through the Printer Application chosen.
+    pub async fn configure_discovered_printer(
+        &mut self,
+        request: ConfigureDiscoveredPrinterRequest,
+    ) -> ClientResult<ConfigurePrinterReply> {
+        flatten(
+            protocol::CosmicPrintersProxy::configure_discovered_printer(&mut self.conn, request)
+                .await,
+        )
+    }
+
+    /// Returns the state of an earlier configuration attempt.
+    pub async fn printer_configuration(
+        &mut self,
+        operation_id: &str,
+    ) -> ClientResult<ConfigurePrinterReply> {
+        flatten(
+            protocol::CosmicPrintersProxy::get_printer_configuration(
+                &mut self.conn,
+                operation_id.to_owned(),
+            )
+            .await,
+        )
+    }
+
+    /// Lists Printer Applications that can be set up through their own interface.
+    pub async fn manual_setup_printer_applications(
+        &mut self,
+    ) -> ClientResult<Vec<ManualSetupPrinterApplication>> {
+        let reply = flatten(
+            protocol::CosmicPrintersProxy::list_manual_setup_printer_applications(&mut self.conn)
+                .await,
+        )?;
+        Ok(reply.printer_applications)
     }
 
     /// Returns the current Printer Application cache without starting discovery.

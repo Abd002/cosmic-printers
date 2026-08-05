@@ -119,6 +119,15 @@ fn host_is_known_local(host: &str) -> bool {
     host.eq_ignore_ascii_case("localhost")
 }
 
+/// Returns whether a hostname or address literal refers to this machine.
+///
+/// Accepts `localhost`, a loopback literal, and any address assigned to a local
+/// interface. A name that would need resolving to answer is treated as remote,
+/// because deciding locality must not block on DNS.
+pub fn host_is_local(host: &str) -> bool {
+    host_is_known_local(host)
+}
+
 fn endpoint_match_key(host: &str, port: u16) -> String {
     if host.eq_ignore_ascii_case("localhost") {
         return format!("local:{port}");
@@ -182,7 +191,9 @@ fn normalize_uuid(uuid: Option<&str>) -> Option<String> {
 
 enum GroupingItem {
     Printer(PrinterEntry),
-    Application(PrinterApplication),
+    /// Boxed because a Printer Application carries its probed capabilities and
+    /// is much larger than a destination.
+    Application(Box<PrinterApplication>),
 }
 
 impl GroupingItem {
@@ -205,7 +216,7 @@ impl GroupedDevice {
             },
             GroupingItem::Application(application) => Self {
                 identity,
-                application: Some(application),
+                application: Some(*application),
                 queues: Vec::new(),
             },
         }
@@ -262,7 +273,7 @@ pub fn group_printers(
         .chain(
             printer_applications
                 .into_iter()
-                .map(GroupingItem::Application),
+                .map(|application| GroupingItem::Application(Box::new(application))),
         )
         .collect::<Vec<_>>();
     let identities: Vec<DeviceIdentity> = items.iter().map(GroupingItem::identity).collect();
@@ -635,9 +646,10 @@ mod tests {
             port,
             addresses: vec![host.to_string()],
             system_uri: format!("ipps://{host}:{port}/ipp/system"),
-            system_uuid: Some("shared-system-uuid".to_string()),
             make_and_model: None,
-            operations_supported: vec![0x402b],
+            web_interface_uri: None,
+            endpoints: Vec::new(),
+            capabilities: crate::PrinterApplicationCapabilities::from_operations(vec![0x402b]),
             txt: BTreeMap::new(),
             state: PrinterApplicationState::Ready,
         }
