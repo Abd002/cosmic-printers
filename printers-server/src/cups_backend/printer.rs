@@ -14,6 +14,8 @@ use crate::error::{BackendError, BackendResult};
 use crate::ipp::is_local_scheduler_uri;
 
 const TEST_PAGE_PDF: &str = "/usr/share/cups/data/default-testpage.pdf";
+/// The attribute CUPS reads to decide where to submit a job.
+const PRINTER_URI_SUPPORTED: &str = "printer-uri-supported";
 
 pub fn refresh_available_destinations(context: Context) {
     if let Some(lease) = context.try_start_available_destinations_refresh() {
@@ -175,8 +177,18 @@ pub async fn print_test_page(printer: PrinterEntry) -> BackendResult<i32> {
         let destination = destination_for_print_job(printer);
         let job = create_job(&destination, "Test Page").cups_err()?;
 
-        job.submit_file(TEST_PAGE_PDF, cups_rs::FORMAT_PDF)
-            .cups_err()?;
+        // The job exists from here on, so a document that cannot be sent leaves an
+        // empty one behind unless it is withdrawn. Report the original failure.
+        if let Err(error) = job.submit_file(TEST_PAGE_PDF, cups_rs::FORMAT_PDF) {
+            if let Err(why) = job.cancel() {
+                tracing::warn!(
+                    job_id = job.id,
+                    error = ?why,
+                    "failed to cancel a test page that could not be sent"
+                );
+            }
+            return Err(BackendError::Cups(error));
+        }
 
         Ok(job.id)
     })
@@ -184,12 +196,21 @@ pub async fn print_test_page(printer: PrinterEntry) -> BackendResult<i32> {
     .map_err(BackendError::Join)?
 }
 
-/// Converts the normalized printer entry to the raw CUPS type required by `cupsCreateJob`.
+/// Converts the normalized printer entry to the raw CUPS type required by
+/// `cupsCreateDestJob`.
+///
+/// A `printer-uri-supported` that is not the local scheduler's is left out. CUPS
+/// submits on the default connection whatever the destination is, so it reads that
+/// attribute as a path on the scheduler — and for a destination that answers
+/// elsewhere the scheduler has no such path, which fails the job before it exists.
+/// Left out, CUPS resolves the device URI instead and makes a queue for it on
+/// demand, which is what puts the job somewhere the queue view can find it.
 fn destination_for_print_job(printer: PrinterEntry) -> cups_rs::Destination {
     let (name, instance) = {
         let (name, instance) = split_queue_instance(printer.id());
         (name.to_string(), instance.map(ToString::to_string))
     };
+    let scheduler_holds_the_queue = printer.printer_uri().is_some_and(is_local_scheduler_uri);
 
     cups_rs::Destination {
         name,
@@ -197,6 +218,7 @@ fn destination_for_print_job(printer: PrinterEntry) -> cups_rs::Destination {
         is_default: printer.is_default(),
         options: printer
             .options()
+            .filter(|(name, _)| scheduler_holds_the_queue || *name != PRINTER_URI_SUPPORTED)
             .map(|(name, value)| (name.to_string(), value.to_string()))
             .collect(),
     }
