@@ -480,14 +480,6 @@ impl PrinterEntry {
             .and_then(|port| port.parse().ok())
     }
 
-    /// Returns the resource path the endpoint resolved to.
-    ///
-    /// A discovered printer's own URI names a DNS-SD service rather than a printer,
-    /// so this is what says which printer on that endpoint it is.
-    pub fn endpoint_resource_path(&self) -> Option<&str> {
-        self.option("endpoint-resource-path")
-    }
-
     /// Returns whether the endpoint is on this machine.
     ///
     /// Uses what connecting to the device observed, when it was recorded, and

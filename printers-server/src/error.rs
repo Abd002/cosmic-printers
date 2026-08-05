@@ -45,9 +45,6 @@ pub(crate) enum BackendError {
         source: cups_rs::Error,
     },
 
-    #[error("printer '{printer}' has no endpoint to be reached at")]
-    UnknownEndpoint { printer: String },
-
     #[error("{operation} failed with IPP status {status}")]
     IppStatus { operation: String, status: String },
 
@@ -95,9 +92,6 @@ impl From<BackendError> for Error {
             BackendError::InvalidMoveDestination { why } => Self::InvalidMoveDestination { why },
             BackendError::DeviceUnreachable { uri, source } => Self::DeviceUnreachable {
                 why: format!("{uri}: {source}"),
-            },
-            BackendError::UnknownEndpoint { printer } => Self::DeviceUnreachable {
-                why: format!("printer '{printer}' has no endpoint to be reached at"),
             },
             BackendError::Join(source) => Self::Internal {
                 why: source.to_string(),

@@ -103,7 +103,7 @@ fn printer_uri_for_request(device_uri: &str, connection: &HttpConnection) -> Str
 ///
 /// Answers `None` when the parts name no printer: either the endpoint went
 /// unresolved, or it resolved to no more than the service that was asked for.
-pub(in crate::cups_backend) fn printer_uri_from_parts(
+fn printer_uri_from_parts(
     scheme: &str,
     host: Option<&str>,
     port: Option<u16>,
@@ -124,7 +124,7 @@ pub(in crate::cups_backend) fn printer_uri_from_parts(
 }
 
 /// Returns the scheme to reach a printer advertised under `uri` on.
-pub(in crate::cups_backend) fn request_scheme(uri: &str) -> &'static str {
+fn request_scheme(uri: &str) -> &'static str {
     if uri.starts_with("ipps") {
         "ipps"
     } else {
@@ -152,9 +152,6 @@ fn connect_to_device(
 }
 
 fn apply_connection_endpoint(printer: &mut PrinterEntry, connection: &HttpConnection) {
-    // Names which printer on the endpoint this destination is, which its own
-    // DNS-SD URI does not. Needed to ask a discovered printer for its jobs.
-    printer.set_option("endpoint-resource-path", connection.resource_path());
     if let Some(hostname) = connection.hostname() {
         printer.set_option("endpoint-hostname", hostname);
     }

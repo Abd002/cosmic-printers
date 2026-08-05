@@ -2,8 +2,7 @@ use cosmic_settings_printers_core::{JobInfo, JobState, PrinterEntry};
 use cups_rs::{IppAttribute, IppOperation, IppRequest, IppStatus, IppTag, IppValueTag};
 
 use super::helpers::{
-    CupsResultExt, add_requesting_user, ensure_success, printer_uri_from_parts, request_scheme,
-    send_ipp_request,
+    CupsResultExt, add_requesting_user, ensure_success, local_printer_uri, send_ipp_request,
 };
 use crate::error::{BackendError, BackendResult};
 
@@ -26,12 +25,22 @@ const CUPS_JOBS_URI: &str = "ipp://localhost/jobs";
 
 pub async fn get_jobs(printer: &PrinterEntry, filter: &str) -> BackendResult<Vec<JobInfo>> {
     let printer_id = printer.id().to_string();
-    let printer_uri = resolve_job_printer_uri(printer)?;
+    let printer_uri = resolve_job_printer_uri(printer);
     let filter = filter.to_string();
 
     tokio::task::spawn_blocking(move || {
         let request = get_jobs_request(&printer_uri, which_jobs(&filter))?;
         let response = send_ipp_request(request, &printer_uri)?;
+
+        // No queue for this destination, so nothing is spooled for it. CUPS keeps a
+        // queue only while a job needs one, so this is the ordinary state of a
+        // destination that is merely advertised — not a failure to report.
+        if matches!(
+            response.status(),
+            IppStatus::ErrorNotFound | IppStatus::ErrorGone
+        ) {
+            return Ok(Vec::new());
+        }
         ensure_success(&response, "Get-Jobs")?;
 
         Ok(parse_jobs(response.attributes(), &printer_id))
@@ -107,8 +116,8 @@ pub async fn move_job(
         });
     }
 
-    let source_uri = resolve_job_printer_uri(source)?;
-    let destination_uri = resolve_job_printer_uri(destination)?;
+    let source_uri = resolve_job_printer_uri(source);
+    let destination_uri = resolve_job_printer_uri(destination);
 
     tokio::task::spawn_blocking(move || {
         let mut request = IppRequest::new(IppOperation::CupsMoveJob).cups_err()?;
@@ -147,7 +156,7 @@ async fn send_job_request(
     printer: &PrinterEntry,
     job_id: i32,
 ) -> BackendResult<()> {
-    let printer_uri = resolve_job_printer_uri(printer)?;
+    let printer_uri = resolve_job_printer_uri(printer);
 
     tokio::task::spawn_blocking(move || {
         let mut request = IppRequest::new(operation).cups_err()?;
@@ -195,42 +204,23 @@ fn add_operation_defaults(request: &mut IppRequest) -> BackendResult<()> {
 
 /// Returns the URI to address this printer's jobs at.
 ///
-/// A queue keeps its jobs on the scheduler, so a queue's own URI is used as it
-/// stands. A discovered printer is no queue at all: the scheduler has no
-/// `/printers/<name>` for it and answers `client-error-not-found` if asked for one,
-/// so the printer itself is asked, at the endpoint connecting to the device
-/// resolved. Its `printer-uri-supported` cannot serve here, that being the DNS-SD
-/// service name, which names a service rather than a printer; the resolved resource
-/// path is what says which printer on that endpoint this is.
-fn resolve_job_printer_uri(printer: &PrinterEntry) -> BackendResult<String> {
-    if let Some(uri) = printer
+/// Always the local scheduler, because the local scheduler is what holds the jobs.
+/// Submitting through libcups reaches it whatever the destination is — every request
+/// is made on the default connection, so `cupsCopyDestInfo` resolves against the
+/// scheduler, creating a queue on demand for a destination that has none — and the
+/// job id it hands back is the scheduler's.
+///
+/// A destination that is only advertised therefore has jobs at
+/// `ipp://localhost/printers/<name>` while a queue for it exists, and no queue at all
+/// once CUPS reaps it for being idle. Asking the printer instead would report the
+/// printer's own jobs, which are numbered separately and do not include anything
+/// still waiting to be sent to it.
+fn resolve_job_printer_uri(printer: &PrinterEntry) -> String {
+    printer
         .printer_uri()
         .filter(|uri| crate::ipp::is_local_scheduler_uri(uri))
-    {
-        return Ok(uri.to_owned());
-    }
-
-    endpoint_job_uri(printer).ok_or_else(|| BackendError::UnknownEndpoint {
-        printer: printer.id().to_string(),
-    })
-}
-
-fn endpoint_job_uri(printer: &PrinterEntry) -> Option<String> {
-    let (host, port) = printer.endpoint()?;
-    let scheme = if printer.endpoint_is_local() {
-        // A Printer Application advertises `_ipps` but reaches TLS by upgrading a
-        // plain connection, so locally the plain scheme is the one that answers.
-        "ipp"
-    } else {
-        request_scheme(printer.printer_uri().or_else(|| printer.device_uri())?)
-    };
-
-    printer_uri_from_parts(
-        scheme,
-        Some(&host),
-        Some(port),
-        printer.endpoint_resource_path()?,
-    )
+        .map(str::to_owned)
+        .unwrap_or_else(|| local_printer_uri(printer.id(), false))
 }
 
 fn ensure_move_job_success(status: IppStatus, job_id: i32) -> BackendResult<()> {
@@ -391,68 +381,38 @@ mod tests {
         )]);
 
         assert_eq!(
-            resolve_job_printer_uri(&printer).unwrap(),
+            resolve_job_printer_uri(&printer),
             "ipp://localhost:631/printers/Acme_Laser"
         );
     }
 
-    /// The case that was failing: the scheduler has no queue for a discovered
-    /// printer, so it is asked at the application that resolved it — over `ipp`,
-    /// although it advertised `ipps`.
+    /// A destination that answers somewhere other than the scheduler is still asked
+    /// at the scheduler, because that is where its jobs are spooled. The URI names a
+    /// queue CUPS may not have right now, and being told so is how the caller learns
+    /// there is nothing waiting.
     #[test]
-    fn a_printer_on_a_local_application_is_asked_directly() {
-        let printer = printer(&[
-            (
-                "printer-uri-supported",
-                "ipps://Acme_Laser._ipps._tcp.local/",
-            ),
-            ("endpoint-hostname", "desktop.local"),
-            ("endpoint-port", "8000"),
-            ("endpoint-is-local", "true"),
-            ("endpoint-resource-path", "/ipp/print/Acme_Laser"),
-        ]);
-
-        assert_eq!(
-            resolve_job_printer_uri(&printer).unwrap(),
-            "ipp://localhost:8000/ipp/print/Acme_Laser"
-        );
-    }
-
-    /// A remote printer does serve the scheme it advertised, unlike a local
-    /// application, and is named by the host it was reached at.
-    #[test]
-    fn a_remote_printer_keeps_the_scheme_it_advertised() {
-        let printer = printer(&[
-            (
-                "printer-uri-supported",
-                "ipps://Acme_Laser._ipps._tcp.local/",
-            ),
-            ("endpoint-hostname", "printer.example"),
-            ("endpoint-port", "631"),
-            ("endpoint-is-local", "false"),
-            ("endpoint-resource-path", "/ipp/print"),
-        ]);
-
-        assert_eq!(
-            resolve_job_printer_uri(&printer).unwrap(),
-            "ipps://printer.example:631/ipp/print"
-        );
-    }
-
-    /// Nothing resolved, so there is nowhere to ask. Guessing a queue name is what
-    /// made the scheduler answer `client-error-not-found` for every discovered
-    /// printer, once per refresh.
-    #[test]
-    fn a_printer_that_resolved_to_nothing_is_reported_unreachable() {
+    fn a_discovered_printer_is_asked_at_the_queue_the_scheduler_would_make() {
         let printer = printer(&[(
             "printer-uri-supported",
-            "ipps://Acme_Laser._ipps._tcp.local/",
+            "ipp://desktop.local:8000/ipp/print/Acme_Laser",
         )]);
 
-        assert!(matches!(
+        assert_eq!(
             resolve_job_printer_uri(&printer),
-            Err(BackendError::UnknownEndpoint { .. })
-        ));
+            "ipp://localhost/printers/Acme_Laser"
+        );
+    }
+
+    /// The same, for a destination CUPS reported without any printer URI at all,
+    /// which is every DNS-SD device before its attributes are read.
+    #[test]
+    fn a_destination_with_no_printer_uri_is_asked_at_the_scheduler() {
+        let printer = printer(&[("device-uri", "ipps://Acme_Laser._ipps._tcp.local/")]);
+
+        assert_eq!(
+            resolve_job_printer_uri(&printer),
+            "ipp://localhost/printers/Acme_Laser"
+        );
     }
 
     #[test]
