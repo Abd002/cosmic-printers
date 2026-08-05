@@ -504,6 +504,11 @@ impl PrinterEntry {
     /// A local endpoint is named `localhost` rather than by the machine's own name,
     /// because a Printer Application treats a request arriving over the machine's
     /// LAN address as remote and refuses it.
+    ///
+    /// Grouping relies on that rewrite too: a local application names itself the same
+    /// way, and both sides doing it is what makes them agree on one spelling of this
+    /// machine, so removing it here would silently separate an application from the
+    /// queues it serves.
     pub fn endpoint(&self) -> Option<(String, u16)> {
         let host = self.endpoint_host()?;
         let host = if self.endpoint_is_local() {
@@ -755,16 +760,23 @@ impl GroupedDevice {
     }
 
     /// Returns the normalized printer UUID used for strongest matching.
+    ///
+    /// Absent for a group that holds only a Printer Application, which is
+    /// identified by its address alone.
     pub fn uuid(&self) -> Option<&str> {
         self.identity.uuid()
     }
 
-    /// Returns the normalized hostname used when no UUID is available.
+    /// Returns the normalized host this group answers on, `localhost` when it is on
+    /// this machine.
+    ///
+    /// Consulted when UUIDs do not agree, not merely when one is missing.
     pub fn hostname(&self) -> Option<&str> {
         self.identity.hostname()
     }
 
-    /// Returns the URI port used for host-and-port matching.
+    /// Returns the port this group answers on, which together with the host names
+    /// one service rather than one machine.
     pub fn port(&self) -> Option<u16> {
         self.identity.port()
     }

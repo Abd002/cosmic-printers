@@ -76,20 +76,37 @@ impl DeviceIdentity {
         }
     }
 
-    fn match_keys(&self) -> Vec<String> {
+    /// Returns the keys that name one service.
+    ///
+    /// Each of these says *which* service, not merely where one is: an identifier
+    /// the device reported, or the exact address it answers on. A Printer
+    /// Application has only the last of them.
+    fn service_keys(&self) -> Vec<String> {
         let mut keys = Vec::with_capacity(3);
 
         if let Some(uuid) = &self.uuid {
             keys.push(format!("uuid:{uuid}"));
         }
         if let Some((host, port)) = &self.endpoint {
-            keys.push(format!("endpoint:{}", endpoint_match_key(host, *port)));
+            keys.push(format!("service:{}:{port}", host.to_ascii_lowercase()));
         }
         if let Some(uri) = &self.uri {
             keys.push(format!("uri:{uri}"));
         }
 
         keys
+    }
+
+    /// Returns the key that says only where a device is, not which service on it.
+    ///
+    /// A remote host is named without its port, which is what keeps a remote CUPS
+    /// server's queues, or a multi-function device's print and fax queues, in one
+    /// group. That is too coarse to name a Printer Application, because several of
+    /// them share one host, so this may only group devices no application claimed.
+    fn location_key(&self) -> Option<String> {
+        let (host, port) = self.endpoint.as_ref()?;
+
+        Some(format!("endpoint:{}", endpoint_match_key(host, *port)))
     }
 }
 
@@ -189,6 +206,21 @@ fn normalize_uuid(uuid: Option<&str>) -> Option<String> {
     )
 }
 
+/// Returns, for each item, whether a Printer Application shares its group.
+fn claimed_by_an_application(items: &[GroupingItem], sets: &mut DisjointSet) -> Vec<bool> {
+    let application_roots = (0..items.len())
+        .filter(|index| matches!(items[*index], GroupingItem::Application(_)))
+        .map(|index| sets.find(index))
+        .collect::<Vec<_>>();
+
+    (0..items.len())
+        .map(|index| {
+            let root = sets.find(index);
+            application_roots.contains(&root)
+        })
+        .collect()
+}
+
 enum GroupingItem {
     Printer(PrinterEntry),
     /// Boxed because a Printer Application carries its probed capabilities and
@@ -222,6 +254,12 @@ impl GroupedDevice {
         }
     }
 
+    /// Folds another group into this one.
+    ///
+    /// A group holds at most one Printer Application, and the one kept is the first
+    /// in input order — which the server supplies sorted by `(service_name, id)`.
+    /// Two distinct applications cannot reach one group by address, so this only
+    /// decides between two records of the same application.
     fn absorb(&mut self, other: Self) {
         self.identity.fill_missing_from(other.identity);
         if self.application.is_none() {
@@ -263,6 +301,12 @@ impl DisjointSet {
 }
 
 /// Groups configured queues that appear to belong to the same physical device.
+///
+/// Evidence is used in two passes, strongest first. Whatever names one service —
+/// an identifier, or an exact address — groups first, which is what puts a Printer
+/// Application together with the printers it serves and nothing else. Only then may
+/// what is left group by host alone, so a bare host can never reach into an
+/// application's group and claim a printer another application serves.
 pub fn group_printers(
     printers: Vec<PrinterEntry>,
     printer_applications: Vec<PrinterApplication>,
@@ -279,15 +323,34 @@ pub fn group_printers(
     let identities: Vec<DeviceIdentity> = items.iter().map(GroupingItem::identity).collect();
     let item_count = identities.len();
     let mut sets = DisjointSet::new(item_count);
-    let mut first_index_by_key = HashMap::<String, usize>::new();
 
+    let mut first_index_by_key = HashMap::<String, usize>::new();
     for (index, identity) in identities.iter().enumerate() {
-        for key in identity.match_keys() {
+        for key in identity.service_keys() {
             if let Some(&other) = first_index_by_key.get(&key) {
                 sets.union(other, index);
             } else {
                 first_index_by_key.insert(key, index);
             }
+        }
+    }
+
+    // Decided for every item before any of them moves, so that grouping by host
+    // cannot chain its way into a group an application had already claimed.
+    let claimed = claimed_by_an_application(&items, &mut sets);
+
+    let mut first_unclaimed_by_key = HashMap::<String, usize>::new();
+    for (index, identity) in identities.iter().enumerate() {
+        if claimed[index] {
+            continue;
+        }
+        let Some(key) = identity.location_key() else {
+            continue;
+        };
+        if let Some(&other) = first_unclaimed_by_key.get(&key) {
+            sets.union(other, index);
+        } else {
+            first_unclaimed_by_key.insert(key, index);
         }
     }
 
@@ -341,25 +404,25 @@ fn printer_identity(printer: &PrinterEntry) -> DeviceIdentity {
     )
 }
 
+/// Builds the identity of a Printer Application: the address it answers on, and
+/// nothing else.
+///
+/// A UUID cannot serve. The `system-uuid` an application advertises belongs to the
+/// PAPPL system on that machine, so every application running there reports the same
+/// one, and grouping by it would merge all of them. Its `system_uri` cannot serve
+/// either: it restates the host and port while looking like separate evidence.
+///
+/// A local application is named `localhost`, which [`PrinterEntry::endpoint`] does
+/// for its queues as well. Both sides rewriting is what makes them agree on one
+/// spelling of this machine, so it is not a tidy-up to remove from either.
 fn application_identity(application: &PrinterApplication) -> DeviceIdentity {
-    let is_local = application
-        .addresses
-        .iter()
-        .any(|address| host_is_known_local(address))
-        || host_is_known_local(&application.hostname);
-    DeviceIdentity::new(
-        Some(&application.id),
-        Some((
-            if is_local {
-                "localhost".to_string()
-            } else {
-                application.hostname.clone()
-            },
-            application.port,
-        )),
-        Some(&application.system_uri),
-        None,
-    )
+    let host = if application.is_local() {
+        "localhost".to_string()
+    } else {
+        application.hostname.clone()
+    };
+
+    DeviceIdentity::new(None, Some((host, application.port)), None, None)
 }
 
 fn uri_prefix(uri: &str) -> String {
@@ -744,6 +807,162 @@ mod tests {
                 .all(|group| group.printer_application().is_some())
         );
         assert!(groups.iter().all(|group| group.queues().is_empty()));
+    }
+
+    /// Returns the group holding this application, and the ids of its queues.
+    fn group_of(groups: &[GroupedDevice], application_id: &str) -> Vec<String> {
+        groups
+            .iter()
+            .find(|group| {
+                group
+                    .printer_application()
+                    .is_some_and(|application| application.id == application_id)
+            })
+            .map(|group| {
+                group
+                    .queues()
+                    .iter()
+                    .map(|queue| queue.id().to_string())
+                    .collect()
+            })
+            .unwrap_or_else(|| panic!("no group holds '{application_id}'"))
+    }
+
+    /// The reported bug. Several Printer Applications on one remote host, each
+    /// serving its own printers on its own port: keying by host alone collapsed all
+    /// of them into one group, which then kept whichever application came first and
+    /// showed every printer under it.
+    #[test]
+    fn keeps_remote_printer_applications_on_one_host_separate() {
+        let groups = group_printers(
+            vec![
+                printer_queue("label-queue", "printer.lan", 8000),
+                printer_queue("postscript-queue", "printer.lan", 8001),
+            ],
+            vec![
+                typed_printer_application("LPrint", "printer.lan", 8000),
+                typed_printer_application("PostScript Printer Application", "printer.lan", 8001),
+            ],
+        );
+
+        assert_eq!(groups.len(), 2);
+        assert_eq!(group_of(&groups, "LPrint"), ["label-queue"]);
+        assert_eq!(
+            group_of(&groups, "PostScript Printer Application"),
+            ["postscript-queue"]
+        );
+    }
+
+    /// Destinations on one remote host with no application discovered keep grouping
+    /// by that host, which is how a remote CUPS server's queues stay together.
+    #[test]
+    fn remote_destinations_without_an_application_stay_one_group() {
+        let groups = group_printers(
+            vec![
+                printer_queue("first", "printer.lan", 8881),
+                printer_queue("second", "printer.lan", 8882),
+                printer_queue("third", "printer.lan", 8883),
+            ],
+            Vec::new(),
+        );
+
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].queues().len(), 3);
+        assert!(groups[0].printer_application().is_none());
+    }
+
+    /// An application takes the printers answering on its own port and leaves the
+    /// rest of its host alone, so discovering one application does not rearrange
+    /// destinations it has nothing to do with.
+    #[test]
+    fn an_application_claims_only_the_queue_on_its_own_port() {
+        let groups = group_printers(
+            vec![
+                printer_queue("served", "printer.lan", 8000),
+                printer_queue("unrelated-a", "printer.lan", 8881),
+                printer_queue("unrelated-b", "printer.lan", 8882),
+            ],
+            vec![typed_printer_application("LPrint", "printer.lan", 8000)],
+        );
+
+        assert_eq!(groups.len(), 2);
+        assert_eq!(group_of(&groups, "LPrint"), ["served"]);
+
+        let unrelated = groups
+            .iter()
+            .find(|group| group.printer_application().is_none())
+            .expect("the group of destinations no application claimed");
+        assert_eq!(
+            unrelated
+                .queues()
+                .iter()
+                .map(|queue| queue.id())
+                .collect::<Vec<_>>(),
+            ["unrelated-a", "unrelated-b"]
+        );
+    }
+
+    /// One application advertising under both `_ipp-system._tcp` and
+    /// `_ipps-system._tcp` arrives as two records with different ids, because the
+    /// service type is part of an application's DNS-SD identity. They answer on one
+    /// address, so they are one application and must not become two cards.
+    #[test]
+    fn one_application_advertised_under_two_service_types_is_one_group() {
+        let groups = group_printers(
+            Vec::new(),
+            vec![
+                typed_printer_application("LPrint over ipp", "printer.lan", 8000),
+                typed_printer_application("LPrint over ipps", "printer.lan", 8000),
+            ],
+        );
+
+        assert_eq!(groups.len(), 1);
+        assert!(groups[0].printer_application().is_some());
+    }
+
+    /// The `system-uuid` an application advertises names the PAPPL system on its
+    /// machine, so every application there reports the same one. It must not be
+    /// treated as identifying one of them.
+    #[test]
+    fn applications_sharing_a_system_uuid_stay_separate() {
+        let system_uuid = "8f3b1c52-0000-4000-8000-000000000001";
+        let with_system_uuid = |id: &str, port: u16| {
+            let mut application = typed_printer_application(id, "printer.lan", port);
+            application
+                .txt
+                .insert("system-uuid".to_string(), format!("urn:uuid:{system_uuid}"));
+            application
+        };
+
+        let groups = group_printers(
+            Vec::new(),
+            vec![
+                with_system_uuid("LPrint", 8000),
+                with_system_uuid("PSPA", 8001),
+            ],
+        );
+
+        assert_eq!(groups.len(), 2);
+    }
+
+    /// The path that already worked, kept honest: a local application is named
+    /// `localhost` on both sides, so it still finds its own queues.
+    #[test]
+    fn a_local_application_still_claims_its_own_queues() {
+        let groups = group_printers(
+            vec![printer_queue("local-queue", "localhost", 8000)],
+            vec![
+                typed_printer_application("LPrint", "localhost", 8000),
+                typed_printer_application("PostScript Printer Application", "localhost", 8001),
+            ],
+        );
+
+        assert_eq!(groups.len(), 2);
+        assert_eq!(group_of(&groups, "LPrint"), ["local-queue"]);
+        assert!(
+            group_of(&groups, "PostScript Printer Application").is_empty(),
+            "an application with no queues of its own must not borrow one"
+        );
     }
 
     #[test]
