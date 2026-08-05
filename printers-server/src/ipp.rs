@@ -7,6 +7,50 @@ use url::Url;
 
 use crate::error::{BackendError, BackendResult};
 
+/// Where the scheduler's local socket is found, in the order CUPS builds expect it.
+const SCHEDULER_SOCKETS: &[&str] = &[
+    "/run/cups/cups.sock",
+    "/var/run/cups/cups.sock",
+    "/var/run/cups.sock",
+];
+
+/// The name CUPS settles on when it found no local socket.
+const NETWORK_FALLBACK: &str = "localhost";
+
+/// Points CUPS at the scheduler's local socket when it settled for a network
+/// connection instead.
+///
+/// CUPS prefers the socket but looks for it at the path it was built with, so a build
+/// whose path does not match the running system quietly falls back to `localhost`.
+/// The scheduler then refuses to create a queue for a destination that has none —
+/// it allows that only for a local peer — and printing to a printer that is merely
+/// advertised fails with nothing to say why. `lp` does not fail because it reaches
+/// the socket.
+///
+/// A server the user configured is left alone, and so is a system with no socket.
+/// CUPS tracks the server per thread, so this belongs in each blocking task that
+/// talks to the scheduler.
+pub(crate) fn prefer_scheduler_socket() {
+    if cups_rs::config::get_server() != NETWORK_FALLBACK {
+        return;
+    }
+
+    let Some(socket) = SCHEDULER_SOCKETS
+        .iter()
+        .find(|path| std::path::Path::new(path).exists())
+    else {
+        return;
+    };
+
+    if let Err(error) = cups_rs::config::set_server(Some(socket)) {
+        tracing::debug!(
+            socket,
+            error = ?error,
+            "could not reach the scheduler over its local socket"
+        );
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum NetworkScheme {
     Ipp,
