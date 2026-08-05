@@ -314,22 +314,28 @@ impl<'a> JobBuilder<'a> {
 }
 
 fn parse_jobs(attributes: Vec<IppAttribute>, fallback_printer_id: &str) -> Vec<JobInfo> {
-    // cups-rs does not expose IPP group tags/group boundaries yet. CUPS and IPP
-    // Printer Applications return each job group starting with job-id, so use
-    // that as the boundary while keeping the local destination id as ownership.
+    // cups-rs does not expose IPP group boundaries yet, so a name arriving for the
+    // second time is what says the next job has begun. Treating job-id as the
+    // boundary instead assumed it came first in each group, and it does not: every
+    // attribute CUPS sent before it belonged to the job after, so each job wore the
+    // name of the one before it. The local destination id stays as ownership.
     let mut jobs = Vec::new();
     let mut job = JobBuilder::new(fallback_printer_id);
+    let mut seen = std::collections::HashSet::new();
 
     for attr in attributes {
         let Some(name) = attr.name() else {
             continue;
         };
 
-        if name == "job-id"
-            && let Some(previous) =
+        if !seen.insert(name.clone()) {
+            if let Some(previous) =
                 std::mem::replace(&mut job, JobBuilder::new(fallback_printer_id)).finish()
-        {
-            jobs.push(previous);
+            {
+                jobs.push(previous);
+            }
+            seen.clear();
+            seen.insert(name.clone());
         }
 
         job.apply(&name, &attr);
