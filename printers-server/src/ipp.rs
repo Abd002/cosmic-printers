@@ -7,12 +7,8 @@ use url::Url;
 
 use crate::error::{BackendError, BackendResult};
 
-/// Where the scheduler's local socket is found, in the order CUPS builds expect it.
-const SCHEDULER_SOCKETS: &[&str] = &[
-    "/run/cups/cups.sock",
-    "/var/run/cups/cups.sock",
-    "/var/run/cups.sock",
-];
+/// Where the scheduler declares what it listens on.
+const SCHEDULER_CONF: &str = "/etc/cups/cupsd.conf";
 
 /// The name CUPS settles on when it found no local socket.
 const NETWORK_FALLBACK: &str = "localhost";
@@ -20,35 +16,63 @@ const NETWORK_FALLBACK: &str = "localhost";
 /// Points CUPS at the scheduler's local socket when it settled for a network
 /// connection instead.
 ///
-/// CUPS prefers the socket but looks for it at the path it was built with, so a build
-/// whose path does not match the running system quietly falls back to `localhost`.
-/// The scheduler then refuses to create a queue for a destination that has none —
-/// it allows that only for a local peer — and printing to a printer that is merely
-/// advertised fails with nothing to say why. `lp` does not fail because it reaches
-/// the socket.
+/// CUPS documents the default server as "the local system — either localhost or a
+/// domain socket path", and prefers the socket. It finds that socket by asking
+/// cups-locald over D-Bus, and failing that at the path it was built with, so a build
+/// whose path does not match the running system, on a system with no cups-locald,
+/// quietly settles for `localhost`. The scheduler then refuses to create a queue for
+/// a destination that has none — it allows that only for a local caller — so printing
+/// to a printer that is merely advertised fails with nothing to say why, while `lp`
+/// works because it reaches the socket.
 ///
-/// A server the user configured is left alone, and so is a system with no socket.
-/// CUPS tracks the server per thread, so this belongs in each blocking task that
-/// talks to the scheduler.
+/// Anything configured through `CUPS_SERVER` or a `client.conf` is left alone, since
+/// that is a deliberate choice about which scheduler to use. CUPS tracks the server
+/// per thread, so this belongs in each blocking task that talks to the scheduler.
 pub(crate) fn prefer_scheduler_socket() {
     if cups_rs::config::get_server() != NETWORK_FALLBACK {
         return;
     }
 
-    let Some(socket) = SCHEDULER_SOCKETS
-        .iter()
-        .find(|path| std::path::Path::new(path).exists())
+    let Some(socket) = std::fs::read_to_string(SCHEDULER_CONF)
+        .ok()
+        .map(|conf| declared_sockets(&conf))
+        .unwrap_or_default()
+        .into_iter()
+        .find(|socket| std::path::Path::new(socket).exists())
     else {
         return;
     };
 
-    if let Err(error) = cups_rs::config::set_server(Some(socket)) {
+    if let Err(error) = cups_rs::config::set_server(Some(&socket)) {
         tracing::debug!(
             socket,
             error = ?error,
             "could not reach the scheduler over its local socket"
         );
     }
+}
+
+/// Returns the socket paths a scheduler configuration says it listens on.
+///
+/// Read from the scheduler's own configuration rather than guessed, because where the
+/// socket lives is what differs between systems and it is the scheduler that decides.
+fn declared_sockets(conf: &str) -> Vec<String> {
+    conf.lines()
+        .filter_map(|line| {
+            let mut words = line.split_whitespace();
+            let directive = words.next()?;
+            if !directive.eq_ignore_ascii_case("Listen")
+                && !directive.eq_ignore_ascii_case("SocketPath")
+            {
+                return None;
+            }
+
+            // A network address is not a socket, and only the latter can make this
+            // caller local as far as the scheduler is concerned.
+            let value = words.next()?;
+            value.starts_with('/').then(|| value.to_string())
+        })
+        .collect()
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -324,6 +348,24 @@ pub(crate) fn printer_attrs_request(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The shape Ubuntu and Pop!_OS ship: the socket alongside a network address, and
+    /// a directive that merely starts with the same word.
+    #[test]
+    fn reads_the_socket_the_scheduler_declares() {
+        let conf = "\
+LogLevel warn\n\
+Listen localhost:631\n\
+Listen /run/cups/cups.sock\n\
+ListenBackLog 1024\n";
+
+        assert_eq!(declared_sockets(conf), ["/run/cups/cups.sock"]);
+    }
+
+    #[test]
+    fn a_scheduler_listening_only_on_the_network_declares_no_socket() {
+        assert!(declared_sockets("Port 631\nListen 0.0.0.0:631\n").is_empty());
+    }
 
     #[test]
     fn extracts_ipp_endpoint_and_resource() {
