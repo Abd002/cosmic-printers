@@ -56,6 +56,15 @@ impl DeviceTransport {
         }
     }
 
+    /// Returns whether a URI of this transport names a host.
+    ///
+    /// A device attached to this machine is addressed by name, not by location:
+    /// `usb://Brother/HL-L2350DW` names the make, so reading it as a host gave every
+    /// Brother printer the same one and made two of them look like one device.
+    pub(crate) fn addresses_a_host(self) -> bool {
+        !matches!(self, Self::Usb | Self::OtherLocal)
+    }
+
     /// Returns how strongly this transport should be preferred, lower first.
     ///
     /// A local USB attachment is the most direct route to a printer that is
@@ -311,7 +320,9 @@ pub(super) fn evidence(device_id: Option<&DeviceId>, device_uri: &str) -> Physic
     if let Some(service) = dns_sd_service(device_uri) {
         evidence.set_dns_sd_service(&service);
     }
-    if let Some((host, port)) = uri_endpoint(device_uri) {
+    if DeviceTransport::from_uri(device_uri).addresses_a_host()
+        && let Some((host, port)) = uri_endpoint(device_uri)
+    {
         evidence.set_network_endpoint(&host, port);
     }
     if let Some(serial) = uri_query_value(device_uri, "serial")
@@ -339,18 +350,37 @@ fn normalized_device_uri(uri: &str) -> String {
     let scheme = scheme.to_ascii_lowercase();
     let (authority, path) = rest.split_once('/').unwrap_or((rest, ""));
     let authority = authority.to_ascii_lowercase();
-    let authority = match (scheme.as_str(), authority.rsplit_once(':')) {
-        ("socket", Some((host, "9100"))) => host.to_string(),
-        ("ipp", Some((host, "631"))) | ("ipps", Some((host, "631"))) => host.to_string(),
+    let authority = match authority.rsplit_once(':') {
+        Some((host, port))
+            if Some(port) == default_port(&scheme).map(|it| it.to_string()).as_deref() =>
+        {
+            host.to_string()
+        }
         _ => authority,
     };
 
     format!("{scheme}://{authority}/{path}")
 }
 
+/// Returns the port a scheme is understood to mean when a URI omits one.
+fn default_port(scheme: &str) -> Option<u16> {
+    match scheme {
+        "ipp" | "ipps" => Some(631),
+        "socket" => Some(9100),
+        "http" => Some(80),
+        "https" => Some(443),
+        _ => None,
+    }
+}
+
 /// Extracts a host and port from a device URI, when it has a network authority.
+///
+/// A port the scheme implies counts as named, so `socket://host` and
+/// `socket://host:9100` are recognized as one endpoint rather than as a device whose
+/// port is unknown.
 fn uri_endpoint(uri: &str) -> Option<(String, Option<u16>)> {
-    let (_, rest) = uri.split_once("://")?;
+    let (scheme, rest) = uri.split_once("://")?;
+    let implied = default_port(&scheme.to_ascii_lowercase());
     let authority = rest.split(['/', '?']).next()?;
     let authority = authority.rsplit('@').next()?;
     if authority.is_empty() {
@@ -363,7 +393,7 @@ fn uri_endpoint(uri: &str) -> Option<(String, Option<u16>)> {
             .get(end + 1..)
             .and_then(|suffix| suffix.strip_prefix(':'))
             .and_then(|port| port.parse().ok());
-        return Some((host.to_string(), port));
+        return Some((host.to_string(), port.or(implied)));
     }
 
     match authority.rsplit_once(':') {
@@ -371,9 +401,9 @@ fn uri_endpoint(uri: &str) -> Option<(String, Option<u16>)> {
             Ok(port) => Some((host.to_string(), Some(port))),
             // A colon that is not a port belongs to the host, such as a USB
             // device name containing one.
-            Err(_) => Some((authority.to_string(), None)),
+            Err(_) => Some((authority.to_string(), implied)),
         },
-        None => Some((authority.to_string(), None)),
+        None => Some((authority.to_string(), implied)),
     }
 }
 
@@ -560,6 +590,36 @@ mod tests {
             Some(("Acme".to_string(), None))
         );
         assert_eq!(uri_endpoint("nonsense"), None);
+    }
+
+    /// The port a scheme implies is still a port, so a URI that omits it names a
+    /// whole endpoint rather than a device whose port is unknown.
+    #[test]
+    fn a_uri_that_omits_its_port_still_names_a_whole_endpoint() {
+        assert_eq!(
+            uri_endpoint("socket://192.0.2.50"),
+            Some(("192.0.2.50".to_string(), Some(9100)))
+        );
+        assert_eq!(
+            uri_endpoint("ipp://printer.lan/ipp/print"),
+            Some(("printer.lan".to_string(), Some(631)))
+        );
+        // A vendor scheme implies nothing, so the port stays unknown rather than
+        // being guessed at.
+        assert_eq!(
+            uri_endpoint("lprint://192.0.2.50/"),
+            Some(("192.0.2.50".to_string(), None))
+        );
+    }
+
+    /// `usb://Brother/HL-L2350DW` names the make. Read as a host it gave every
+    /// Brother printer the same one, so two of them looked like one device.
+    #[test]
+    fn a_usb_device_name_is_not_taken_as_a_host() {
+        let evidence = evidence(None, "usb://Brother/HL-L2350DW");
+
+        assert_eq!(evidence.network_hostname, None);
+        assert_eq!(evidence.network_port, None);
     }
 
     #[test]

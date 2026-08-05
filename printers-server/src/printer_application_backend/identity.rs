@@ -428,6 +428,57 @@ mod tests {
         assert!(uris.contains(&"hp:/net/Test_Laser?ip=192.0.2.10"));
     }
 
+    /// A print server exposing two different printers, one per port. They share a
+    /// host and, being raw sockets, report no model to tell them apart, so reading
+    /// the host on its own as identity hid the second behind the first's name.
+    #[test]
+    fn two_printers_on_one_print_server_stay_two_rows() {
+        let printers = group_candidates(
+            [
+                collapse_observations(vec![observation(
+                    "pa-a",
+                    0,
+                    "socket://192.0.2.50:9100",
+                    None,
+                )]),
+                collapse_observations(vec![observation(
+                    "pa-a",
+                    1,
+                    "socket://192.0.2.50:9101",
+                    None,
+                )]),
+            ]
+            .concat(),
+        );
+
+        assert_eq!(printers.len(), 2);
+    }
+
+    /// A USB device URI names the make, not a host, so two printers of one make
+    /// that report no device ID must not be read as answering in the same place.
+    #[test]
+    fn two_usb_printers_of_one_make_stay_two_rows() {
+        let printers = group_candidates(
+            [
+                collapse_observations(vec![observation(
+                    "pa-a",
+                    0,
+                    "usb://Brother/HL-L2350DW",
+                    None,
+                )]),
+                collapse_observations(vec![observation(
+                    "pa-a",
+                    1,
+                    "usb://Brother/MFC-L2710DW",
+                    None,
+                )]),
+            ]
+            .concat(),
+        );
+
+        assert_eq!(printers.len(), 2);
+    }
+
     #[test]
     fn row_identity_is_stable_when_another_application_joins() {
         let device_id = "MFG:Acme;MDL:Test Laser;SN:ABC123;";

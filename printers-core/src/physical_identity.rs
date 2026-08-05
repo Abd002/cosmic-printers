@@ -12,8 +12,11 @@
 //! - **Strong** — an intrinsic identifier of one piece of hardware: a device
 //!   UUID, a serial number, or a MAC address. Sharing one is proof of identity;
 //!   disagreeing on one is proof of difference.
-//! - **Medium** — where the device answers: a network endpoint or hostname.
-//!   Sharing one is suggestive, so it merges only alongside a compatible model.
+//! - **Medium** — where the device answers. A whole endpoint, host and port, is one
+//!   service, so sharing one merges as long as no model contradicts. A host on its
+//!   own is weaker: two printers on one print server share it and differ only by
+//!   port, and a raw socket device usually reports no model to tell them apart, so
+//!   that asks for a model both sides actually named and that agrees.
 //! - **Weak** — a name, model, command set, or description. Never merges on its
 //!   own, because two identical printers on one desk look identical this way.
 //!
@@ -137,12 +140,14 @@ impl PhysicalDeviceEvidence {
     }
 
     /// Returns the endpoint used for medium-strength comparison.
+    ///
+    /// An endpoint needs both halves. Standing a missing port in as zero invented
+    /// evidence, and made every device whose URI named no port at all agree with
+    /// every other on the same host.
     fn endpoint(&self) -> Option<NormalizedEndpoint> {
         let host = self.network_hostname.as_deref()?;
-        Some(NormalizedEndpoint::new(
-            host,
-            self.network_port.unwrap_or(0),
-        ))
+
+        Some(NormalizedEndpoint::new(host, self.network_port?))
     }
 }
 
@@ -227,7 +232,17 @@ impl PhysicalIdentityAggregate {
             return true;
         }
 
-        self.shares_medium_identity(other) && self.model_is_compatible(other)
+        if !self.model_is_compatible(other) {
+            return false;
+        }
+
+        // One host and port is one service, so an absent model does not stand in the
+        // way. A host on its own is weaker: two printers on a print server share it
+        // and differ only by port, and a raw socket device usually reports no model
+        // at all, which would make the model gate say nothing. So that path asks for
+        // a model both sides actually named.
+        intersects(&self.network_endpoints, &other.network_endpoints)
+            || (self.shares_hostname(other) && self.models_agree(other))
     }
 
     /// Returns true when an intrinsic identifier disagrees.
@@ -263,9 +278,20 @@ impl PhysicalIdentityAggregate {
             || intersects(&self.device_uris, &other.device_uris)
     }
 
-    fn shares_medium_identity(&self, other: &Self) -> bool {
-        intersects(&self.network_endpoints, &other.network_endpoints)
-            || intersects(&self.hostnames, &other.hostnames)
+    /// Returns true when both sides answer on the same host, whatever the port.
+    ///
+    /// This is what joins one printer reached two ways — over IPP by one application
+    /// and over AppSocket by another — which no endpoint could, the ports differing.
+    fn shares_hostname(&self, other: &Self) -> bool {
+        intersects(&self.hostnames, &other.hostnames)
+    }
+
+    /// Returns true when both sides named a model and the two agree.
+    ///
+    /// [`Self::model_is_compatible`] accepts an absent model, which is right where
+    /// the location is exact and useless where it is not.
+    fn models_agree(&self, other: &Self) -> bool {
+        !self.models.is_empty() && !other.models.is_empty() && self.model_is_compatible(other)
     }
 
     /// Returns true when the make and model do not contradict each other.
