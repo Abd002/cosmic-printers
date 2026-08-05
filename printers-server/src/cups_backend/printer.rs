@@ -174,10 +174,6 @@ pub async fn set_printer_shared(printer_id: &str, shared: bool) -> BackendResult
 
 pub async fn print_test_page(printer: PrinterEntry) -> BackendResult<i32> {
     tokio::task::spawn_blocking(move || {
-        // Submitting may need the scheduler to make a queue first, which it only does
-        // for a local caller.
-        crate::ipp::prefer_scheduler_socket();
-
         let destination = destination_for_print_job(printer);
         let job = create_job(&destination, "Test Page").cups_err()?;
 
