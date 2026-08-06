@@ -26,7 +26,19 @@ pub(super) fn apply_saved(printers: &mut [PrinterEntry]) {
         return;
     };
 
+    // A default the user chose settles it for every destination, not only for the one it
+    // names: leaving the others as the server reported them would show two defaults, and
+    // the server's is the one that has been overruled.
+    let chosen_default = saved
+        .iter()
+        .find(|entry| entry.is_default)
+        .map(|entry| entry.full_name());
+
     for printer in printers {
+        if let Some(chosen) = &chosen_default {
+            printer.set_is_default(printer.id() == chosen);
+        }
+
         let (queue, instance) = split_queue_instance(printer.id());
         let Some(entry) = saved
             .iter()

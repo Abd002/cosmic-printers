@@ -198,6 +198,11 @@ impl Client {
         )
     }
 
+    /// Leaves this user with no default printer.
+    pub async fn clear_printer_default(&mut self) -> ClientResult<()> {
+        flatten(protocol::CosmicPrintersProxy::clear_printer_default(&mut self.conn).await)
+    }
+
     pub async fn set_printer_option_default(
         &mut self,
         printer_id: &str,

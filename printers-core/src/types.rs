@@ -393,9 +393,18 @@ impl PrinterEntry {
         &self.name
     }
 
-    /// Returns whether this destination is the system default.
+    /// Returns whether this destination is the one a job goes to by default.
     pub fn is_default(&self) -> bool {
         self.is_default
+    }
+
+    /// Records whether this destination is the default.
+    ///
+    /// Set from the user's own saved default where they have one, because that is the one
+    /// that takes effect — a server's opinion is only consulted when the user has expressed
+    /// none.
+    pub fn set_is_default(&mut self, is_default: bool) {
+        self.is_default = is_default;
     }
 
     /// Returns a normalized option by its IPP/CUPS name.
