@@ -92,7 +92,7 @@ pub(in crate::cups_backend) fn supplies_from_device(
 
 /// Reads the supplies out of whichever form the printer answered in.
 fn supplies_from_response(response: &IppResponse) -> Vec<SupplyLevel> {
-    let supplies = attr_strings(response, "printer-supply");
+    let supplies = supply_records(response);
     if !supplies.is_empty() {
         let descriptions = attr_strings(response, "printer-supply-description");
         let supplies = supplies.iter().map(String::as_str).collect::<Vec<_>>();
@@ -107,6 +107,23 @@ fn supplies_from_response(response: &IppResponse) -> Vec<SupplyLevel> {
     reported.merge_options(merge_response_attrs(response, SUPPLY_ATTRIBUTES));
 
     reported.supplies()
+}
+
+/// Reads `printer-supply`, which a printer sends as an octetString rather than as text.
+///
+/// CUPS will not read a value of one syntax as another, so asking for these as strings
+/// answers nothing at all — which is why a printer that reports its supplies perfectly
+/// well looked like one that reports none.
+fn supply_records(response: &IppResponse) -> Vec<String> {
+    let Some(attr) = response.find_attribute("printer-supply", None) else {
+        return Vec::new();
+    };
+
+    (0..attr.count())
+        .filter_map(|index| attr.get_octet_string(index))
+        .map(|record| String::from_utf8_lossy(&record).into_owned())
+        .filter(|record| !record.trim().is_empty())
+        .collect()
 }
 
 fn attr_strings(response: &IppResponse, name: &str) -> Vec<String> {
