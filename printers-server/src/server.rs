@@ -30,7 +30,18 @@ impl Server {
 
     /// Lists the currently cached libcups destinations without performing I/O.
     pub async fn list_printers(&self) -> Result<Vec<PrinterEntry>, Error> {
-        Ok(self.context.available_destinations_cached().await)
+        let mut printers = self.context.available_destinations_cached().await;
+
+        // What a job will actually use is the user's own saved choice, so that is what is
+        // reported rather than what each destination says about itself.
+        tokio::task::spawn_blocking(move || {
+            cups_backend::apply_user_defaults(&mut printers);
+            printers
+        })
+        .await
+        .map_err(|error| Error::Internal {
+            why: error.to_string(),
+        })
     }
 
     /// Starts a background libcups refresh of the available destination cache.
@@ -124,8 +135,8 @@ impl Server {
 
     /// Deletes a configured printer.
     pub async fn delete_printer(&self, printer_id: &str) -> Result<(), Error> {
-        self.printer_entry(printer_id).await?;
-        cups_backend::delete_printer(printer_id)
+        let printer = self.printer_entry(printer_id).await?;
+        cups_backend::delete_printer(printer)
             .await
             .map_err(service_error)
     }
@@ -137,18 +148,36 @@ impl Server {
         enabled: bool,
         reason: &str,
     ) -> Result<(), Error> {
-        self.printer_entry(printer_id).await?;
-        cups_backend::set_printer_accept_jobs(printer_id, enabled, reason)
+        let printer = self.printer_entry(printer_id).await?;
+        cups_backend::set_printer_accept_jobs(printer, enabled, reason.to_string())
             .await
             .map_err(service_error)
     }
 
-    /// Sets the system default printer.
+    /// Sets this user's default printer.
+    ///
+    /// The user's own default rather than the scheduler's, which is both what libcups reads
+    /// first and the only one that can name a destination no queue exists for.
     pub async fn set_printer_default(&self, printer_id: &str) -> Result<(), Error> {
         self.printer_entry(printer_id).await?;
         cups_backend::set_printer_default(printer_id)
             .await
             .map_err(service_error)
+    }
+
+    /// Leaves this user with no default printer.
+    pub async fn clear_printer_default(&self) -> Result<(), Error> {
+        cups_backend::clear_printer_default()
+            .await
+            .map_err(service_error)
+    }
+
+    /// Returns whether this user may administer printers at all.
+    ///
+    /// Answered from the user's own groups, so that an action which could only be refused
+    /// is not offered. The scheduler's refusal is still what enforces it.
+    pub fn may_administer_printers(&self) -> bool {
+        cups_backend::may_administer_printers()
     }
 
     /// Sets a default printer option value.
@@ -166,16 +195,16 @@ impl Server {
 
     /// Enables or disables a printer.
     pub async fn set_printer_enabled(&self, printer_id: &str, enabled: bool) -> Result<(), Error> {
-        self.printer_entry(printer_id).await?;
-        cups_backend::set_printer_enabled(printer_id, enabled)
+        let printer = self.printer_entry(printer_id).await?;
+        cups_backend::set_printer_enabled(printer, enabled)
             .await
             .map_err(service_error)
     }
 
     /// Sets the printer information string.
     pub async fn set_printer_info(&self, printer_id: &str, info: &str) -> Result<(), Error> {
-        self.printer_entry(printer_id).await?;
-        cups_backend::set_printer_info(printer_id, info)
+        let printer = self.printer_entry(printer_id).await?;
+        cups_backend::set_printer_info(printer, info.to_string())
             .await
             .map_err(service_error)
     }
@@ -186,16 +215,16 @@ impl Server {
         printer_id: &str,
         location: &str,
     ) -> Result<(), Error> {
-        self.printer_entry(printer_id).await?;
-        cups_backend::set_printer_location(printer_id, location)
+        let printer = self.printer_entry(printer_id).await?;
+        cups_backend::set_printer_location(printer, location.to_string())
             .await
             .map_err(service_error)
     }
 
     /// Enables or disables printer sharing.
     pub async fn set_printer_shared(&self, printer_id: &str, shared: bool) -> Result<(), Error> {
-        self.printer_entry(printer_id).await?;
-        cups_backend::set_printer_shared(printer_id, shared)
+        let printer = self.printer_entry(printer_id).await?;
+        cups_backend::set_printer_shared(printer, shared)
             .await
             .map_err(service_error)
     }

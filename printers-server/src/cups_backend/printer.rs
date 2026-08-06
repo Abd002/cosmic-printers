@@ -9,7 +9,7 @@ use super::helpers::{
     fill_missing_attrs_from_device_uri, fill_missing_attrs_from_printer_uri, split_queue_instance,
     supplies_from_device,
 };
-use super::polkit_helper;
+use super::{administration, user_defaults};
 use crate::context::Context;
 use crate::error::{BackendError, BackendResult};
 use crate::ipp::is_local_scheduler_uri;
@@ -123,54 +123,94 @@ fn resolve_printer_endpoint_locality(printer: &mut PrinterEntry) {
     printer.set_option("endpoint-is-local", is_local.to_string());
 }
 
-pub async fn delete_printer(printer_id: &str) -> BackendResult<()> {
-    let queue_name = split_queue_instance(printer_id).0;
-    polkit_helper::delete_printer(queue_name).await
+pub async fn delete_printer(printer: PrinterEntry) -> BackendResult<()> {
+    administration::delete_printer(printer).await
 }
 
 pub async fn set_printer_accept_jobs(
-    printer_id: &str,
+    printer: PrinterEntry,
     enabled: bool,
-    reason: &str,
+    reason: String,
 ) -> BackendResult<()> {
-    let queue_name = split_queue_instance(printer_id).0;
-    polkit_helper::set_printer_accept_jobs(queue_name, enabled, reason).await
+    administration::set_accept_jobs(printer, enabled, reason).await
 }
 
-// BUG: This sets the server default but does not clear a user default
-// stored in lpoptions, which can continue to override it.
+/// Records the user's default destination.
+///
+/// The user's own default, not the scheduler's. It is what libcups reads first, so it is
+/// what takes effect; and because it is a name in a file rather than a queue on a server,
+/// it can name a destination that is only advertised — which is the case
+/// `CUPS-Set-Default` cannot serve, having no `/printers/<name>` to point at.
 pub async fn set_printer_default(printer_id: &str) -> BackendResult<()> {
-    let queue_name = split_queue_instance(printer_id).0;
-    polkit_helper::set_printer_default(queue_name).await
+    let printer_id = printer_id.to_string();
+
+    tokio::task::spawn_blocking(move || user_defaults::set_default(&printer_id))
+        .await
+        .map_err(BackendError::Join)?
 }
 
+/// Leaves no destination marked as the user's default.
+pub async fn clear_printer_default() -> BackendResult<()> {
+    tokio::task::spawn_blocking(user_defaults::clear_default)
+        .await
+        .map_err(BackendError::Join)?
+}
+
+/// Records the user's choice for one option, such as a paper size.
+///
+/// Saved as the user's preference rather than changed on the queue, so it needs no
+/// privilege and works for a destination no queue exists for.
 pub async fn set_printer_option_default(
     printer_id: &str,
     option: &str,
     values: &[String],
 ) -> BackendResult<()> {
-    let queue_name = split_queue_instance(printer_id).0;
-    polkit_helper::add_option_default(queue_name, option, values).await
+    let printer_id = printer_id.to_string();
+    let option = option.to_string();
+    let values = values.to_vec();
+
+    tokio::task::spawn_blocking(move || {
+        user_defaults::set_option_default(&printer_id, &option, &values)
+    })
+    .await
+    .map_err(BackendError::Join)?
 }
 
-pub async fn set_printer_enabled(printer_id: &str, enabled: bool) -> BackendResult<()> {
-    let queue_name = split_queue_instance(printer_id).0;
-    polkit_helper::set_printer_enabled(queue_name, enabled).await
+pub async fn set_printer_enabled(printer: PrinterEntry, enabled: bool) -> BackendResult<()> {
+    administration::set_enabled(printer, enabled).await
 }
 
-pub async fn set_printer_info(printer_id: &str, info: &str) -> BackendResult<()> {
-    let queue_name = split_queue_instance(printer_id).0;
-    polkit_helper::set_printer_info(queue_name, info).await
+pub async fn set_printer_info(printer: PrinterEntry, info: String) -> BackendResult<()> {
+    administration::set_info(printer, info).await
 }
 
-pub async fn set_printer_location(printer_id: &str, location: &str) -> BackendResult<()> {
-    let queue_name = split_queue_instance(printer_id).0;
-    polkit_helper::set_printer_location(queue_name, location).await
+pub async fn set_printer_location(printer: PrinterEntry, location: String) -> BackendResult<()> {
+    administration::set_location(printer, location).await
 }
 
-pub async fn set_printer_shared(printer_id: &str, shared: bool) -> BackendResult<()> {
-    let queue_name = split_queue_instance(printer_id).0;
-    polkit_helper::set_printer_shared(queue_name, shared).await
+pub async fn set_printer_shared(printer: PrinterEntry, shared: bool) -> BackendResult<()> {
+    administration::set_shared(printer, shared).await
+}
+
+/// Lays the user's own saved choices over what the destinations reported.
+///
+/// Read on every listing rather than cached, because the file is small and anything on the
+/// system may have changed it — `lp -o`, `lpoptions`, another desktop.
+pub fn apply_user_defaults(printers: &mut [PrinterEntry]) {
+    user_defaults::apply_saved(printers);
+}
+
+/// Returns whether this user may administer printers at all.
+///
+/// The scheduler authenticates a request over the local socket from the caller's own
+/// credentials and then asks whether that user is in its administrative group, so the
+/// answer is knowable here without sending anything. It cannot be changed by asking for a
+/// password either: a user outside the group is refused as `forbidden`, not challenged.
+///
+/// Used to decide what to offer, never as the decision itself — the scheduler's own
+/// refusal remains what enforces this, since its group may not be readable here.
+pub fn may_administer_printers() -> bool {
+    administration::user_may_administer()
 }
 
 /// Returns the supplies a printer reports, asking the printer itself.

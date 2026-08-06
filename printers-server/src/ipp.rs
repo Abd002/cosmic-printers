@@ -96,6 +96,12 @@ impl ParsedUri {
             && is_loopback_host(&self.host)
             && (resource == "/"
                 || resource == "/jobs"
+                // Administration goes to `/admin`, and it has to be recognised as the
+                // scheduler's: only a request made on the default connection reaches the
+                // domain socket, where the scheduler authenticates the caller from the
+                // peer credentials instead of asking for a password.
+                || resource == "/admin"
+                || resource == "/admin/"
                 || resource.starts_with("/printers/")
                 || resource.starts_with("/classes/"))
     }
@@ -118,6 +124,45 @@ impl<T> CupsResultExt<T> for cups_rs::Result<T> {
     fn cups_err(self) -> BackendResult<T> {
         self.map_err(BackendError::Cups)
     }
+}
+
+/// Adds the two attributes every IPP request opens with.
+///
+/// Charset then language, in that order and before anything else: a server reads them
+/// positionally and rejects a request that puts them elsewhere.
+pub(crate) fn add_operation_defaults(request: &mut IppRequest) -> BackendResult<()> {
+    request
+        .add_string(
+            IppTag::Operation,
+            IppValueTag::Charset,
+            "attributes-charset",
+            "utf-8",
+        )
+        .cups_err()?;
+    request
+        .add_string(
+            IppTag::Operation,
+            IppValueTag::Language,
+            "attributes-natural-language",
+            "en",
+        )
+        .cups_err()
+}
+
+/// Returns the system service URI of whatever answers for this printer.
+///
+/// `Create-Printer` and `Delete-Printer` live only on `/ipp/system`, never on a printer,
+/// so changing which printers a service has means addressing the service rather than one
+/// of them.
+pub(crate) fn system_service_uri(printer_uri: &str) -> Option<String> {
+    let parsed = ParsedUri::parse(printer_uri).filter(|parsed| parsed.scheme.is_ipp())?;
+    let mut system = parsed.uri.clone();
+
+    system.set_path("/ipp/system");
+    system.set_query(None);
+    system.set_fragment(None);
+
+    Some(system.to_string())
 }
 
 pub(crate) fn add_requesting_user(request: &mut IppRequest) -> BackendResult<()> {

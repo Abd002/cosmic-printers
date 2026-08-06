@@ -593,24 +593,31 @@ impl PrinterEntry {
         self.option_values("sides-supported")
     }
 
-    /// Returns the default media value.
+    /// Returns the media value a job will use.
+    ///
+    /// The user's own saved choice comes first, because that is the one libcups applies
+    /// when printing: it reads their options last and so overrides the queue's. Showing
+    /// `media-default` in preference would report the queue's value for a printer the user
+    /// has already chosen differently for.
     pub fn default_paper_size(&self) -> Option<&str> {
-        self.option("media-default")
+        self.option("media")
+            .or_else(|| self.option("media-default"))
     }
 
-    /// Sets the default media value.
+    /// Sets the media value, as the user's own choice.
     pub fn set_default_paper_size(&mut self, paper_size: impl Into<String>) {
-        self.set_option("media-default", paper_size);
+        self.set_option("media", paper_size);
     }
 
-    /// Returns the default sides value.
+    /// Returns the sides value a job will use, the user's own choice first.
     pub fn default_print_sides(&self) -> Option<&str> {
-        self.option("sides-default")
+        self.option("sides")
+            .or_else(|| self.option("sides-default"))
     }
 
-    /// Sets the default sides value.
+    /// Sets the sides value, as the user's own choice.
     pub fn set_default_print_sides(&mut self, print_sides: impl Into<String>) {
-        self.set_option("sides-default", print_sides);
+        self.set_option("sides", print_sides);
     }
 
     /// Returns the printer UUID, including aliases used by DNS-SD metadata.
