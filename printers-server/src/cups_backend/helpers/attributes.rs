@@ -1,8 +1,11 @@
 use super::conversion::refresh_printer_endpoint;
 use crate::error::{BackendError, BackendResult};
 use crate::ipp::{CupsResultExt, ensure_success, printer_attrs_request, send_ipp_request};
-use cosmic_settings_printers_core::{EndpointSource, PrinterEntry, is_local_address};
+use cosmic_settings_printers_core::{
+    EndpointSource, PrinterEntry, SupplyLevel, is_local_address, parse_printer_supplies,
+};
 use cups_rs::{ConnectionFlags, Destination, HttpConnection, IppResponse};
+use std::collections::HashMap;
 
 pub(in crate::cups_backend) const PRINTER_ATTRIBUTES: &[&str] = &[
     "printer-uri-supported",
@@ -49,6 +52,68 @@ pub(in crate::cups_backend) fn fill_missing_attrs_from_printer_uri(
     let response = send_ipp_request(request, printer_uri)?;
 
     merge_missing_attrs(printer, &missing, response)
+}
+
+/// What a printer is asked for when reading its supplies.
+///
+/// `printer-supply` is what a printer says about its own supplies. The `marker-*`
+/// attributes are what CUPS synthesises for a queue, asked for here because a printer
+/// driven through a CUPS backend answers with those instead.
+const SUPPLY_ATTRIBUTES: &[&str] = &[
+    "printer-supply",
+    "printer-supply-description",
+    "marker-names",
+    "marker-levels",
+    "marker-colors",
+    "marker-high-levels",
+    "marker-low-levels",
+];
+
+/// Asks the printer itself what supplies it has.
+///
+/// Not the queue: CUPS only carries `marker-*` for a queue once that queue has printed
+/// something, so a printer set up and never used would report nothing at all.
+pub(in crate::cups_backend) fn supplies_from_device(
+    destination: &Destination,
+    printer: &PrinterEntry,
+) -> BackendResult<Vec<SupplyLevel>> {
+    let (device_uri, connection) = connect_to_device(destination, printer)?;
+    let request = printer_attrs_request(
+        &printer_uri_for_request(&device_uri, &connection),
+        SUPPLY_ATTRIBUTES,
+    )?;
+    let response = request
+        .send(&connection, connection.resource_path())
+        .cups_err()?;
+    ensure_success(&response, "Get-Printer-Attributes")?;
+
+    Ok(supplies_from_response(&response))
+}
+
+/// Reads the supplies out of whichever form the printer answered in.
+fn supplies_from_response(response: &IppResponse) -> Vec<SupplyLevel> {
+    let supplies = attr_strings(response, "printer-supply");
+    if !supplies.is_empty() {
+        let descriptions = attr_strings(response, "printer-supply-description");
+        let supplies = supplies.iter().map(String::as_str).collect::<Vec<_>>();
+        let descriptions = descriptions.iter().map(String::as_str).collect::<Vec<_>>();
+
+        return parse_printer_supplies(&supplies, &descriptions);
+    }
+
+    // A CUPS-driven printer answers with the marker attributes instead, which are
+    // read the same way a queue's are.
+    let mut reported = PrinterEntry::new("", "", false, HashMap::new());
+    reported.merge_options(merge_response_attrs(response, SUPPLY_ATTRIBUTES));
+
+    reported.supplies()
+}
+
+fn attr_strings(response: &IppResponse, name: &str) -> Vec<String> {
+    response
+        .find_attribute(name, None)
+        .map(|attr| attr_values(name, attr))
+        .unwrap_or_default()
 }
 
 /// Fetches missing attributes from the destination's underlying device URI.
@@ -134,7 +199,7 @@ fn request_scheme(uri: &str) -> &'static str {
 
 fn connect_to_device(
     destination: &Destination,
-    printer: &mut PrinterEntry,
+    printer: &PrinterEntry,
 ) -> BackendResult<(String, HttpConnection)> {
     let device_uri = printer
         .device_uri()

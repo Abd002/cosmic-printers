@@ -5,7 +5,7 @@ use zlink::Connection;
 pub use cosmic_settings_printers_core::{
     AddPrinterDiscoveryReply, AddPrinterDiscoveryState, ConfigureDiscoveredPrinterRequest,
     ConfigurePrinterReply, DiscoveredPhysicalPrinter, DiscoveryGeneration, Error, GetJobsReply,
-    GroupedDevice, IdentityConfidenceKind, JobFilter, JobInfo, JobState,
+    GetPrinterSuppliesReply, GroupedDevice, IdentityConfidenceKind, JobFilter, JobInfo, JobState,
     ListManualSetupApplicationsReply, ListPrinterApplicationsReply, ListPrintersReply,
     ManualSetupPrinterApplication, PaCandidateState, PrintTestPageReply, PrinterApplication,
     PrinterApplicationCandidateSummary, PrinterApplicationCapabilities,
@@ -273,6 +273,18 @@ impl Client {
                 .await,
         )?;
         Ok(reply.job_id)
+    }
+
+    /// Asks a printer what supplies it has and how full they are.
+    pub async fn printer_supplies(&mut self, printer_id: &str) -> ClientResult<Vec<SupplyLevel>> {
+        let reply = flatten(
+            protocol::CosmicPrintersProxy::get_printer_supplies(
+                &mut self.conn,
+                printer_id.to_owned(),
+            )
+            .await,
+        )?;
+        Ok(reply.supplies)
     }
 
     pub async fn jobs(

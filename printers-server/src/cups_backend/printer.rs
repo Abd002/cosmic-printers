@@ -1,4 +1,4 @@
-use cosmic_settings_printers_core::{PrinterEntry, is_local_address};
+use cosmic_settings_printers_core::{PrinterEntry, SupplyLevel, is_local_address};
 use cups_rs::create_job;
 use std::collections::HashMap;
 use std::net::ToSocketAddrs;
@@ -7,6 +7,7 @@ use std::sync::{LazyLock, Mutex};
 use super::helpers::{
     CupsResultExt, PRINTER_ATTRIBUTES, available_destinations, destination_to_printer_entry,
     fill_missing_attrs_from_device_uri, fill_missing_attrs_from_printer_uri, split_queue_instance,
+    supplies_from_device,
 };
 use super::polkit_helper;
 use crate::context::Context;
@@ -172,6 +173,39 @@ pub async fn set_printer_shared(printer_id: &str, shared: bool) -> BackendResult
     polkit_helper::set_printer_shared(queue_name, shared).await
 }
 
+/// Returns the supplies a printer reports, asking the printer itself.
+///
+/// A print queue only carries supply levels once it has printed something, so asking
+/// the queue would report nothing for a printer that has been set up and not yet used.
+/// What the queue last said is the fallback, and the only source at all for a printer
+/// with no endpoint to ask — one attached over USB, or a virtual destination.
+///
+/// A printer that cannot be reached reports no supplies rather than failing: a page is
+/// not broken because a printer is asleep, and no supplies simply shows no supplies.
+pub async fn printer_supplies(printer: PrinterEntry) -> BackendResult<Vec<SupplyLevel>> {
+    tokio::task::spawn_blocking(move || {
+        let reported = match supplies_from_device(&raw_destination(&printer), &printer) {
+            Ok(supplies) => supplies,
+            Err(error) => {
+                tracing::debug!(
+                    printer_id = printer.id(),
+                    error = ?error,
+                    "could not ask a printer for its supplies"
+                );
+                Vec::new()
+            }
+        };
+
+        if reported.is_empty() {
+            return Ok(printer.supplies());
+        }
+
+        Ok(reported)
+    })
+    .await
+    .map_err(BackendError::Join)?
+}
+
 pub async fn print_test_page(printer: PrinterEntry) -> BackendResult<i32> {
     tokio::task::spawn_blocking(move || {
         let destination = destination_for_print_job(printer);
@@ -206,19 +240,26 @@ pub async fn print_test_page(printer: PrinterEntry) -> BackendResult<i32> {
 /// Left out, CUPS resolves the device URI instead and makes a queue for it on
 /// demand, which is what puts the job somewhere the queue view can find it.
 fn destination_for_print_job(printer: PrinterEntry) -> cups_rs::Destination {
-    let (name, instance) = {
-        let (name, instance) = split_queue_instance(printer.id());
-        (name.to_string(), instance.map(ToString::to_string))
-    };
     let scheduler_holds_the_queue = printer.printer_uri().is_some_and(is_local_scheduler_uri);
+    let mut destination = raw_destination(&printer);
+
+    if !scheduler_holds_the_queue {
+        destination.options.remove(PRINTER_URI_SUPPORTED);
+    }
+
+    destination
+}
+
+/// Converts the normalized printer entry to the raw CUPS type, as it stands.
+fn raw_destination(printer: &PrinterEntry) -> cups_rs::Destination {
+    let (name, instance) = split_queue_instance(printer.id());
 
     cups_rs::Destination {
-        name,
-        instance,
+        name: name.to_string(),
+        instance: instance.map(ToString::to_string),
         is_default: printer.is_default(),
         options: printer
             .options()
-            .filter(|(name, _)| scheduler_holds_the_queue || *name != PRINTER_URI_SUPPORTED)
             .map(|(name, value)| (name.to_string(), value.to_string()))
             .collect(),
     }

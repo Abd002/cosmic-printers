@@ -1,7 +1,8 @@
 use cosmic_settings_printers_core::{
     AddPrinterDiscoveryReply, ConfigureDiscoveredPrinterRequest, ConfigurePrinterReply, Error,
-    GetJobsReply, ListManualSetupApplicationsReply, ListPrinterApplicationsReply,
-    ListPrintersReply, PrintTestPageReply, PrintersEvent, StartAddPrinterDiscoveryReply,
+    GetJobsReply, GetPrinterSuppliesReply, ListManualSetupApplicationsReply,
+    ListPrinterApplicationsReply, ListPrintersReply, PrintTestPageReply, PrintersEvent,
+    StartAddPrinterDiscoveryReply,
 };
 use futures_util::Stream;
 
@@ -91,6 +92,11 @@ pub trait CosmicPrintersProxy {
         &mut self,
         printer_id: String,
     ) -> zlink::Result<Result<PrintTestPageReply, Error>>;
+
+    async fn get_printer_supplies(
+        &mut self,
+        printer_id: String,
+    ) -> zlink::Result<Result<GetPrinterSuppliesReply, Error>>;
 
     async fn get_jobs(
         &mut self,

@@ -1,7 +1,7 @@
 use cosmic_settings_printers_core::{
     AddPrinterDiscoveryReply, ConfigureDiscoveredPrinterRequest, ConfigurePrinterReply, Error,
     JobInfo, ListManualSetupApplicationsReply, PrinterApplication, PrinterEntry, PrintersEvent,
-    StartAddPrinterDiscoveryReply,
+    StartAddPrinterDiscoveryReply, SupplyLevel,
 };
 use futures_util::{Stream, StreamExt};
 use tokio::sync::broadcast;
@@ -196,6 +196,15 @@ impl Server {
     pub async fn set_printer_shared(&self, printer_id: &str, shared: bool) -> Result<(), Error> {
         self.printer_entry(printer_id).await?;
         cups_backend::set_printer_shared(printer_id, shared)
+            .await
+            .map_err(service_error)
+    }
+
+    /// Asks a printer what supplies it has and how full they are.
+    pub async fn printer_supplies(&self, printer_id: &str) -> Result<Vec<SupplyLevel>, Error> {
+        let printer = self.printer_entry(printer_id).await?;
+
+        cups_backend::printer_supplies(printer)
             .await
             .map_err(service_error)
     }

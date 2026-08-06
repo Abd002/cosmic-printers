@@ -27,7 +27,10 @@ fn print_printer(printer: &PrinterEntry) {
     println!("  port: {:?}", printer.port());
     println!("  web-page: {:?}", printer.web_page());
     for supply in printer.supplies() {
-        println!("    {}: {}%", supply.name, supply.level_percent);
+        println!(
+            "    {}: {:?}% colors={:?} warning={:?}",
+            supply.name, supply.level_percent, supply.colors, supply.warning
+        );
     }
     println!("  options:");
 
