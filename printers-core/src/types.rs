@@ -2,10 +2,54 @@ use crate::grouping::DeviceIdentity;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 
-#[derive(Debug, Clone, Deserialize, Serialize, zlink::introspect::Type)]
-pub struct SupplyLevel {
-    pub name: String,
+/// One colour a supply holds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize, zlink::introspect::Type)]
+pub struct SupplyRgb {
+    pub red: u8,
+    pub green: u8,
+    pub blue: u8,
+}
+
+/// Which way a supply's level moves as it approaches needing attention.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize, zlink::introspect::Type)]
+pub enum SupplyWarningDirection {
+    /// Something that is used up: it starts full and needs attention as it empties.
+    AtOrBelow,
+    /// Something that fills up: it starts empty and needs attention as it fills.
+    AtOrAbove,
+}
+
+/// The level at which a supply needs attention, and which side of it is bad.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize, zlink::introspect::Type)]
+pub struct SupplyWarning {
     pub level_percent: u8,
+    pub direction: SupplyWarningDirection,
+}
+
+impl SupplyWarning {
+    /// Returns whether a level has reached the point of needing attention.
+    pub fn is_reached_by(&self, level_percent: u8) -> bool {
+        match self.direction {
+            SupplyWarningDirection::AtOrBelow => level_percent <= self.level_percent,
+            SupplyWarningDirection::AtOrAbove => level_percent >= self.level_percent,
+        }
+    }
+}
+
+/// One supply a printer reports, as the printer describes it.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, zlink::introspect::Type)]
+pub struct SupplyLevel {
+    /// What the printer calls this supply, which is free-form marketing text and
+    /// says nothing reliable about how the supply works.
+    pub name: String,
+    /// Absent when the printer reported no level it knows.
+    pub level_percent: Option<u8>,
+    /// The colours this supply holds, in the order reported. More than one means one
+    /// cartridge holding several inks. Empty when it reports no colour.
+    pub colors: Vec<SupplyRgb>,
+    /// Absent when the printer did not say where this supply needs attention, which
+    /// is the common case: most report no bounds at all.
+    pub warning: Option<SupplyWarning>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize, zlink::introspect::Type)]
@@ -586,20 +630,57 @@ impl PrinterEntry {
         self.option("endpoint-address")
     }
 
-    /// Returns all reported supply levels.
+    /// Returns the supplies this destination last reported.
+    ///
+    /// Read from the `marker-*` attributes, which a print queue only carries once it
+    /// has printed something, so this is the last resort behind asking the printer
+    /// itself. It is still the only source for a destination with no network endpoint
+    /// to ask, such as one attached over USB.
+    ///
+    /// The attributes are parallel arrays, so how many supplies there are is taken
+    /// from the levels: those are integers and cannot contain the comma the values
+    /// were joined with, whereas a name can. Every other array is read by index, so
+    /// one that is short leaves later supplies without that detail rather than
+    /// shifting them onto the wrong supply.
     pub fn supplies(&self) -> Vec<SupplyLevel> {
-        let names = self.option_values("marker-names");
-        let levels = self.option_values("marker-levels");
+        let levels = self.aligned_values("marker-levels");
+        let colors = self.aligned_values("marker-colors");
+        let highs = self.aligned_values("marker-high-levels");
+        let lows = self.aligned_values("marker-low-levels");
+        let names = self.aligned_values("marker-names");
+        // A name array of the wrong length was split where a name contained a comma,
+        // and where cannot be recovered. A supply wearing another supply's name is
+        // worse than one with no name at all.
+        let names = if names.len() == levels.len() {
+            names
+        } else {
+            Vec::new()
+        };
 
-        names
-            .into_iter()
-            .zip(levels)
-            .filter_map(|(name, level)| {
-                let level_percent = level.parse::<i32>().ok()?.clamp(0, 100) as u8;
-                Some(SupplyLevel {
-                    name,
-                    level_percent,
-                })
+        levels
+            .iter()
+            .enumerate()
+            .map(|(index, level)| {
+                let number = |values: &[&str]| {
+                    values
+                        .get(index)
+                        .and_then(|value| value.trim().parse::<i32>().ok())
+                };
+                let high = number(&highs);
+
+                SupplyLevel {
+                    name: names.get(index).unwrap_or(&"").trim().to_string(),
+                    level_percent: level
+                        .trim()
+                        .parse::<i32>()
+                        .ok()
+                        .and_then(|level| supply_level_percent(level, high)),
+                    colors: colors
+                        .get(index)
+                        .map(|value| parse_supply_colors(value))
+                        .unwrap_or_default(),
+                    warning: supply_warning(high, number(&lows)),
+                }
             })
             .collect()
     }
@@ -617,6 +698,17 @@ impl PrinterEntry {
             .unwrap_or_default()
     }
 
+    /// Splits a multi-valued option, keeping empty values where they were.
+    ///
+    /// The `marker-*` attributes are parallel arrays addressed by index, so dropping
+    /// an empty value from one of them would move every later supply's details onto
+    /// the wrong supply.
+    fn aligned_values(&self, name: &str) -> Vec<&str> {
+        self.option(name)
+            .map(|value| value.split(',').collect())
+            .unwrap_or_default()
+    }
+
     /// Merges a partial or resolved DNS-SD record into this discovered printer.
     pub fn merge_discovery_record(&mut self, incoming: Self) {
         if self.name.is_empty() {
@@ -625,6 +717,148 @@ impl PrinterEntry {
 
         self.merge_options(incoming.options);
     }
+}
+
+/// Reads the colours one supply reports.
+///
+/// A cartridge holding several inks names them as one run of hex triplets with
+/// nothing between, so a value may hold more than one colour. A supply with no colour
+/// of its own says `none`, and a value this cannot read names no colour rather than
+/// guessing at one.
+pub fn parse_supply_colors(value: &str) -> Vec<SupplyRgb> {
+    let mut colors = Vec::new();
+    let mut rest = value.trim();
+
+    while let Some(digits) = rest.strip_prefix('#') {
+        let Some(triplet) = digits.get(..6) else {
+            break;
+        };
+        let channel = |at: usize| u8::from_str_radix(&triplet[at..at + 2], 16).ok();
+        let (Some(red), Some(green), Some(blue)) = (channel(0), channel(2), channel(4)) else {
+            break;
+        };
+
+        colors.push(SupplyRgb { red, green, blue });
+        rest = &digits[6..];
+    }
+
+    colors
+}
+
+/// Reads a reported level as a percentage.
+///
+/// A negative level is not a level: it is how a printer says it does not know one, and
+/// reading it as zero would be indistinguishable from an empty cartridge. A printer
+/// whose top is above 100 is counting something rather than reporting a percentage, so
+/// the count is taken as a fraction of that top.
+pub fn supply_level_percent(level: i32, high: Option<i32>) -> Option<u8> {
+    if level < 0 {
+        return None;
+    }
+
+    match high {
+        Some(high) if high > 100 => {
+            Some((i64::from(level) * 100 / i64::from(high)).clamp(0, 100) as u8)
+        }
+        _ => Some(level.clamp(0, 100) as u8),
+    }
+}
+
+/// Reads where a supply needs attention from the bounds it reports.
+///
+/// A supply that is used up reports a top of 100 and a bottom that is where it needs
+/// replacing. A receptacle that fills up reports a bottom of 0 and a top that is where
+/// it needs emptying. Bounds saying neither are not a third kind of supply, they are a
+/// printer reporting bounds it does not have, so nothing is marked — which is also
+/// what happens for the many printers that report no bounds at all.
+pub fn supply_warning(high: Option<i32>, low: Option<i32>) -> Option<SupplyWarning> {
+    let (high, low) = (high?, low?);
+
+    if high == 100 && low > 0 && low != 100 {
+        return Some(SupplyWarning {
+            level_percent: low as u8,
+            direction: SupplyWarningDirection::AtOrBelow,
+        });
+    }
+
+    if low == 0 && high > 0 && high < 100 {
+        return Some(SupplyWarning {
+            level_percent: high as u8,
+            direction: SupplyWarningDirection::AtOrAbove,
+        });
+    }
+
+    None
+}
+
+/// Reads the supplies a printer reports in `printer-supply`.
+///
+/// Each value is a list of `key=value` pairs describing one supply. Keys this does not
+/// know are ignored, because the vocabulary is the printer's to extend, and a supply
+/// naming no level is left out rather than shown as empty.
+///
+/// `printer-supply-description` is a parallel array of human-readable names, so it is
+/// passed alongside and read by index.
+pub fn parse_printer_supplies(supplies: &[&str], descriptions: &[&str]) -> Vec<SupplyLevel> {
+    supplies
+        .iter()
+        .enumerate()
+        .filter_map(|(index, supply)| {
+            let mut level = None;
+            let mut high = None;
+            let mut low = None;
+            let mut colorant = None;
+            let mut consumed = None;
+
+            for pair in supply.split(';') {
+                let Some((key, value)) = pair.split_once('=') else {
+                    continue;
+                };
+                let value = value.trim();
+
+                match key.trim().to_ascii_lowercase().as_str() {
+                    "level" => level = value.parse::<i32>().ok(),
+                    "maxcapacity" | "highlevel" => high = value.parse::<i32>().ok(),
+                    "lowlevel" => low = value.parse::<i32>().ok(),
+                    "colorantname" => colorant = Some(value.to_string()),
+                    // The printer says outright which way this supply works, which is
+                    // better evidence than inferring it from its bounds.
+                    "class" => {
+                        consumed = match value.to_ascii_lowercase().as_str() {
+                            "supplythatisconsumed" => Some(true),
+                            "receptaclethatisfilled" => Some(false),
+                            _ => None,
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
+            let warning = match consumed {
+                Some(true) => low.filter(|low| *low > 0).map(|low| SupplyWarning {
+                    level_percent: low.clamp(0, 100) as u8,
+                    direction: SupplyWarningDirection::AtOrBelow,
+                }),
+                Some(false) => high.filter(|high| *high > 0).map(|high| SupplyWarning {
+                    level_percent: high.clamp(0, 100) as u8,
+                    direction: SupplyWarningDirection::AtOrAbove,
+                }),
+                None => supply_warning(high, low),
+            };
+
+            Some(SupplyLevel {
+                name: descriptions
+                    .get(index)
+                    .map(|description| description.trim().to_string())
+                    .filter(|description| !description.is_empty())
+                    .or(colorant)
+                    .unwrap_or_default(),
+                level_percent: supply_level_percent(level?, high),
+                colors: Vec::new(),
+                warning,
+            })
+        })
+        .collect()
 }
 
 fn preferred_printer_uri(value: &str) -> Option<&str> {
@@ -659,6 +893,208 @@ mod printer_entry_tests {
                 .map(|(name, value)| (name.to_string(), value.to_string()))
                 .collect(),
         )
+    }
+
+    /// Four toners and a waste box, exactly as a Kyocera reports them. The toners are
+    /// used up and warn as they empty; the box fills up and warns as it fills.
+    #[test]
+    fn reads_four_toners_and_a_waste_box() {
+        let printer = printer(&[
+            ("marker-colors", "#00FFFF,#FF00FF,#FFFF00,#000000,none"),
+            ("marker-high-levels", "100,100,100,100,95"),
+            ("marker-levels", "92,92,92,95,0"),
+            ("marker-low-levels", "3,3,3,3,0"),
+            (
+                "marker-names",
+                "Cyan TK-5490CS,Magenta TK-5490MS,Yellow TK-5490YS,Black TK-5490KS,Waste Toner Box",
+            ),
+            ("marker-types", "toner,toner,toner,toner,waste-toner"),
+        ]);
+        let supplies = printer.supplies();
+
+        assert_eq!(supplies.len(), 5);
+        assert_eq!(supplies[0].name, "Cyan TK-5490CS");
+        assert_eq!(supplies[0].level_percent, Some(92));
+        assert_eq!(
+            supplies[0].colors,
+            [SupplyRgb {
+                red: 0x00,
+                green: 0xFF,
+                blue: 0xFF
+            }]
+        );
+        assert_eq!(
+            supplies[0].warning,
+            Some(SupplyWarning {
+                level_percent: 3,
+                direction: SupplyWarningDirection::AtOrBelow,
+            })
+        );
+
+        let waste = &supplies[4];
+        assert_eq!(waste.name, "Waste Toner Box");
+        assert_eq!(waste.level_percent, Some(0));
+        assert!(waste.colors.is_empty());
+        assert_eq!(
+            waste.warning,
+            Some(SupplyWarning {
+                level_percent: 95,
+                direction: SupplyWarningDirection::AtOrAbove,
+            })
+        );
+        assert!(
+            !waste
+                .warning
+                .is_some_and(|warning| warning.is_reached_by(0))
+        );
+    }
+
+    /// A cartridge holding several inks names them as one run with no separator.
+    #[test]
+    fn a_cartridge_holding_several_inks_reports_each_of_them() {
+        let printer = printer(&[
+            ("marker-colors", "#00FFFF#FF00FF#FFFF00,#000000"),
+            ("marker-high-levels", "100,100"),
+            ("marker-levels", "100,50"),
+            ("marker-low-levels", "2,2"),
+            ("marker-names", "tri-color cartridge,black cartridge"),
+        ]);
+        let supplies = printer.supplies();
+
+        assert_eq!(supplies.len(), 2);
+        assert_eq!(supplies[0].colors.len(), 3);
+        assert_eq!(supplies[1].colors.len(), 1);
+    }
+
+    /// A short array leaves later supplies without that detail rather than moving
+    /// every one of them onto the wrong supply.
+    #[test]
+    fn a_short_array_does_not_shift_the_supplies_after_it() {
+        let printer = printer(&[
+            ("marker-colors", "#00FFFF,#FF00FF"),
+            ("marker-levels", "10,20,30"),
+            ("marker-names", "Cyan,Magenta,Yellow"),
+        ]);
+        let supplies = printer.supplies();
+
+        assert_eq!(supplies.len(), 3);
+        assert_eq!(supplies[2].name, "Yellow");
+        assert_eq!(supplies[2].level_percent, Some(30));
+        assert!(supplies[2].colors.is_empty());
+    }
+
+    /// A name may contain the comma the values were joined with. Where it was split
+    /// cannot be recovered, so no supply is named rather than each wearing the name of
+    /// another.
+    #[test]
+    fn names_that_do_not_match_the_supply_count_are_left_out() {
+        let printer = printer(&[
+            ("marker-levels", "10,20"),
+            ("marker-names", "Toner Cartridge, Black,Waste Box"),
+        ]);
+        let supplies = printer.supplies();
+
+        assert_eq!(supplies.len(), 2);
+        assert!(supplies.iter().all(|supply| supply.name.is_empty()));
+        assert_eq!(supplies[0].level_percent, Some(10));
+        assert_eq!(supplies[1].level_percent, Some(20));
+    }
+
+    /// A negative level is how a printer says it does not know one.
+    #[test]
+    fn an_unreported_level_is_absent_rather_than_empty() {
+        let supplies = printer(&[("marker-levels", "-1,-2,0")]).supplies();
+
+        assert_eq!(supplies[0].level_percent, None);
+        assert_eq!(supplies[1].level_percent, None);
+        assert_eq!(supplies[2].level_percent, Some(0));
+    }
+
+    /// A printer counting something rather than reporting a percentage says so with a
+    /// top above 100.
+    #[test]
+    fn a_counted_level_is_read_against_the_top_reported() {
+        let printer = printer(&[("marker-high-levels", "512"), ("marker-levels", "256")]);
+
+        assert_eq!(printer.supplies()[0].level_percent, Some(50));
+    }
+
+    #[test]
+    fn bounds_that_describe_neither_kind_of_supply_mark_nothing() {
+        let consumable = supply_warning(Some(100), Some(3));
+        assert_eq!(
+            consumable.map(|warning| warning.direction),
+            Some(SupplyWarningDirection::AtOrBelow)
+        );
+        assert_eq!(
+            supply_warning(Some(95), Some(0)).map(|warning| warning.direction),
+            Some(SupplyWarningDirection::AtOrAbove)
+        );
+
+        // Full and empty at once is a printer reporting bounds it does not have.
+        assert_eq!(supply_warning(Some(100), Some(0)), None);
+        assert_eq!(supply_warning(Some(100), Some(100)), None);
+        assert_eq!(supply_warning(Some(0), Some(0)), None);
+        assert_eq!(supply_warning(Some(3), Some(100)), None);
+        assert_eq!(supply_warning(None, None), None);
+        assert_eq!(supply_warning(Some(100), None), None);
+    }
+
+    #[test]
+    fn a_colour_it_cannot_read_names_no_colour() {
+        assert_eq!(parse_supply_colors("none"), []);
+        assert_eq!(parse_supply_colors(""), []);
+        assert_eq!(parse_supply_colors("#12345"), []);
+        assert_eq!(
+            parse_supply_colors("#00ffff"),
+            [SupplyRgb {
+                red: 0,
+                green: 255,
+                blue: 255
+            }]
+        );
+        // What was read is kept, and reading stops where it cannot continue.
+        assert_eq!(parse_supply_colors("#00FFFF junk").len(), 1);
+    }
+
+    /// What a printer reports for itself, which needs no queue to have printed first.
+    #[test]
+    fn reads_the_supplies_a_printer_reports_for_itself() {
+        let supplies = parse_printer_supplies(
+            &[
+                "index=1;class=supplyThatIsConsumed;type=toner;unit=percent;maxcapacity=100;level=92;lowlevel=3;colorantname=cyan;",
+                "index=2;class=receptacleThatIsFilled;type=wasteToner;unit=percent;maxcapacity=95;level=0;lowlevel=0;",
+            ],
+            &["Cyan TK-5490CS"],
+        );
+
+        assert_eq!(supplies.len(), 2);
+        assert_eq!(supplies[0].name, "Cyan TK-5490CS");
+        assert_eq!(supplies[0].level_percent, Some(92));
+        assert_eq!(
+            supplies[0].warning,
+            Some(SupplyWarning {
+                level_percent: 3,
+                direction: SupplyWarningDirection::AtOrBelow,
+            })
+        );
+
+        // No description was reported for the second, so it falls back to its colorant.
+        assert_eq!(supplies[1].name, "");
+        assert_eq!(
+            supplies[1].warning,
+            Some(SupplyWarning {
+                level_percent: 95,
+                direction: SupplyWarningDirection::AtOrAbove,
+            })
+        );
+    }
+
+    #[test]
+    fn a_supply_reporting_no_level_is_left_out() {
+        let supplies = parse_printer_supplies(&["index=1;type=toner;maxcapacity=100;"], &[]);
+
+        assert!(supplies.is_empty());
     }
 
     #[test]
@@ -787,6 +1223,11 @@ pub struct ListPrintersReply {
 #[derive(Debug, Clone, Deserialize, Serialize, zlink::introspect::Type)]
 pub struct ListPrinterApplicationsReply {
     pub printer_applications: Vec<PrinterApplication>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, zlink::introspect::Type)]
+pub struct GetPrinterSuppliesReply {
+    pub supplies: Vec<SupplyLevel>,
 }
 
 /// What changed, so a client knows which cache to re-read.

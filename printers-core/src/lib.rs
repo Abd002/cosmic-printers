@@ -20,8 +20,10 @@ pub use physical_identity::{
     PhysicalDeviceObservation, PhysicalIdentityAggregate, group_by_physical_device,
 };
 pub use types::{
-    EndpointSource, GetJobsReply, GroupedDevice, JobFilter, JobInfo, JobState,
-    ListPrinterApplicationsReply, ListPrintersReply, PrintTestPageReply, PrinterApplication,
-    PrinterApplicationCapabilities, PrinterApplicationId, PrinterApplicationState, PrinterEntry,
-    PrinterStatus, PrintersEvent, PrintersEventKind, SupplyLevel, SystemEndpoint,
+    EndpointSource, GetJobsReply, GetPrinterSuppliesReply, GroupedDevice, JobFilter, JobInfo,
+    JobState, ListPrinterApplicationsReply, ListPrintersReply, PrintTestPageReply,
+    PrinterApplication, PrinterApplicationCapabilities, PrinterApplicationId,
+    PrinterApplicationState, PrinterEntry, PrinterStatus, PrintersEvent, PrintersEventKind,
+    SupplyLevel, SupplyRgb, SupplyWarning, SupplyWarningDirection, SystemEndpoint,
+    parse_printer_supplies, parse_supply_colors, supply_level_percent, supply_warning,
 };
