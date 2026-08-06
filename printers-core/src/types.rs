@@ -805,6 +805,9 @@ pub fn parse_printer_supplies(supplies: &[&str], descriptions: &[&str]) -> Vec<S
         .enumerate()
         .filter_map(|(index, supply)| {
             let mut level = None;
+            // What the supply holds when full, which is the scale a level is read
+            // against — not a point at which anything needs doing.
+            let mut capacity = None;
             let mut high = None;
             let mut low = None;
             let mut colorant = None;
@@ -818,7 +821,8 @@ pub fn parse_printer_supplies(supplies: &[&str], descriptions: &[&str]) -> Vec<S
 
                 match key.trim().to_ascii_lowercase().as_str() {
                     "level" => level = value.parse::<i32>().ok(),
-                    "maxcapacity" | "highlevel" => high = value.parse::<i32>().ok(),
+                    "maxcapacity" => capacity = value.parse::<i32>().ok(),
+                    "highlevel" => high = value.parse::<i32>().ok(),
                     "lowlevel" => low = value.parse::<i32>().ok(),
                     "colorantname" => colorant = Some(value.to_string()),
                     // The printer says outright which way this supply works, which is
@@ -851,14 +855,48 @@ pub fn parse_printer_supplies(supplies: &[&str], descriptions: &[&str]) -> Vec<S
                     .get(index)
                     .map(|description| description.trim().to_string())
                     .filter(|description| !description.is_empty())
-                    .or(colorant)
+                    .or_else(|| colorant.clone())
                     .unwrap_or_default(),
-                level_percent: supply_level_percent(level?, high),
-                colors: Vec::new(),
+                level_percent: supply_level_percent(level?, capacity),
+                colors: colorant
+                    .as_deref()
+                    .and_then(colorant_color)
+                    .into_iter()
+                    .collect(),
                 warning,
             })
         })
         .collect()
+}
+
+/// Returns the colour a named colorant is.
+///
+/// A printer describing its own supplies names the colorant rather than giving a
+/// colour, and those names come from a fixed vocabulary — unlike the supply's own name,
+/// which is free-form text and says nothing reliable. These are the same colours CUPS
+/// writes when it turns the one into the other.
+///
+/// A colorant not named here has no colour to draw, which is also what `unknown` and
+/// `none` mean.
+fn colorant_color(name: &str) -> Option<SupplyRgb> {
+    let rgb = |red, green, blue| Some(SupplyRgb { red, green, blue });
+
+    match name.trim().to_ascii_lowercase().as_str() {
+        "black" | "photoblack" | "matteblack" => rgb(0x00, 0x00, 0x00),
+        "cyan" | "process-cyan" => rgb(0x00, 0xFF, 0xFF),
+        "magenta" | "process-magenta" => rgb(0xFF, 0x00, 0xFF),
+        "yellow" | "process-yellow" => rgb(0xFF, 0xFF, 0x00),
+        "lightcyan" | "photocyan" => rgb(0xE0, 0xFF, 0xFF),
+        "lightmagenta" | "photomagenta" => rgb(0xFF, 0xE0, 0xFF),
+        "lightblack" | "gray" | "grey" | "lightgray" | "lightgrey" => rgb(0x80, 0x80, 0x80),
+        "red" => rgb(0xFF, 0x00, 0x00),
+        "green" => rgb(0x00, 0xFF, 0x00),
+        "blue" => rgb(0x00, 0x00, 0xFF),
+        "orange" => rgb(0xFF, 0xA5, 0x00),
+        "violet" => rgb(0xEE, 0x82, 0xEE),
+        "white" => rgb(0xFF, 0xFF, 0xFF),
+        _ => None,
+    }
 }
 
 fn preferred_printer_uri(value: &str) -> Option<&str> {
@@ -1058,12 +1096,13 @@ mod printer_entry_tests {
     }
 
     /// What a printer reports for itself, which needs no queue to have printed first.
+    /// This one states where each supply needs attention, so both are marked.
     #[test]
     fn reads_the_supplies_a_printer_reports_for_itself() {
         let supplies = parse_printer_supplies(
             &[
                 "index=1;class=supplyThatIsConsumed;type=toner;unit=percent;maxcapacity=100;level=92;lowlevel=3;colorantname=cyan;",
-                "index=2;class=receptacleThatIsFilled;type=wasteToner;unit=percent;maxcapacity=95;level=0;lowlevel=0;",
+                "index=2;class=receptacleThatIsFilled;type=wasteToner;unit=percent;maxcapacity=100;level=0;highlevel=95;colorantname=unknown;",
             ],
             &["Cyan TK-5490CS"],
         );
@@ -1072,6 +1111,14 @@ mod printer_entry_tests {
         assert_eq!(supplies[0].name, "Cyan TK-5490CS");
         assert_eq!(supplies[0].level_percent, Some(92));
         assert_eq!(
+            supplies[0].colors,
+            [SupplyRgb {
+                red: 0x00,
+                green: 0xFF,
+                blue: 0xFF
+            }]
+        );
+        assert_eq!(
             supplies[0].warning,
             Some(SupplyWarning {
                 level_percent: 3,
@@ -1079,14 +1126,92 @@ mod printer_entry_tests {
             })
         );
 
-        // No description was reported for the second, so it falls back to its colorant.
-        assert_eq!(supplies[1].name, "");
+        // No description was reported for the second, so it falls back to its colorant,
+        // which names no colour of its own.
+        assert_eq!(supplies[1].name, "unknown");
+        assert!(supplies[1].colors.is_empty());
         assert_eq!(
             supplies[1].warning,
             Some(SupplyWarning {
                 level_percent: 95,
                 direction: SupplyWarningDirection::AtOrAbove,
             })
+        );
+    }
+
+    /// Exactly what `ippeveprinter` reports, which is the shape most printers have: a
+    /// capacity and a level, and no word on where either needs attention.
+    ///
+    /// The capacity is the scale a level is read against. Reading it as the point of
+    /// attention put a mark at the far end of every waste tank.
+    #[test]
+    fn a_capacity_is_not_a_point_of_attention() {
+        let supplies = parse_printer_supplies(
+            &[
+                "index=1;class=receptacleThatIsFilled;type=wasteToner;unit=percent;maxcapacity=100;level=25;colorantname=unknown;",
+                "index=2;class=supplyThatIsConsumed;type=toner;unit=percent;maxcapacity=100;level=75;colorantname=black;",
+            ],
+            &["Toner Waste Tank", "Black Toner"],
+        );
+
+        assert_eq!(supplies.len(), 2);
+        assert_eq!(supplies[0].name, "Toner Waste Tank");
+        assert_eq!(supplies[0].level_percent, Some(25));
+        assert_eq!(supplies[0].warning, None);
+
+        assert_eq!(supplies[1].name, "Black Toner");
+        assert_eq!(supplies[1].level_percent, Some(75));
+        assert_eq!(supplies[1].warning, None);
+        assert_eq!(
+            supplies[1].colors,
+            [SupplyRgb {
+                red: 0,
+                green: 0,
+                blue: 0
+            }]
+        );
+    }
+
+    /// A printer describing its own supplies names the colorant rather than giving a
+    /// colour, so the ink bars are coloured by that name.
+    #[test]
+    fn a_named_colorant_gives_the_bar_its_colour() {
+        let supplies = parse_printer_supplies(
+            &[
+                "index=1;class=supplyThatIsConsumed;type=ink;unit=percent;maxcapacity=100;level=50;colorantname=cyan;",
+                "index=2;class=supplyThatIsConsumed;type=ink;unit=percent;maxcapacity=100;level=33;colorantname=magenta;",
+                "index=3;class=supplyThatIsConsumed;type=ink;unit=percent;maxcapacity=100;level=67;colorantname=yellow;",
+                "index=4;class=supplyThatIsConsumed;type=ink;unit=percent;maxcapacity=100;level=10;colorantname=fuchsia;",
+            ],
+            &[],
+        );
+
+        let colors = supplies
+            .iter()
+            .map(|supply| supply.colors.first().copied())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            colors,
+            [
+                Some(SupplyRgb {
+                    red: 0x00,
+                    green: 0xFF,
+                    blue: 0xFF
+                }),
+                Some(SupplyRgb {
+                    red: 0xFF,
+                    green: 0x00,
+                    blue: 0xFF
+                }),
+                Some(SupplyRgb {
+                    red: 0xFF,
+                    green: 0xFF,
+                    blue: 0x00
+                }),
+                // A colorant nobody standardised names no colour rather than a guess.
+                None,
+            ]
         );
     }
 
