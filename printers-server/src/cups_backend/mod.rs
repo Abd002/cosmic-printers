@@ -9,5 +9,5 @@ pub use printer::{
     apply_user_defaults, clear_printer_default, delete_printer, mark_administrable,
     may_administer_printers, print_test_page, printer_supplies, refresh_available_destinations,
     reload_printer, set_printer_accept_jobs, set_printer_default, set_printer_enabled,
-    set_printer_info, set_printer_location, set_printer_option_default, set_printer_shared,
+    set_printer_info, set_printer_location, set_printer_option_default,
 };

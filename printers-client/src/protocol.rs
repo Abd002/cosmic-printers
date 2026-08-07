@@ -84,12 +84,6 @@ pub trait CosmicPrintersProxy {
         location: String,
     ) -> zlink::Result<Result<(), Error>>;
 
-    async fn set_printer_shared(
-        &mut self,
-        printer_id: String,
-        shared: bool,
-    ) -> zlink::Result<Result<(), Error>>;
-
     async fn print_test_page(
         &mut self,
         printer_id: String,

@@ -282,20 +282,6 @@ impl Server {
         outcome
     }
 
-    /// Enables or disables printer sharing.
-    pub async fn set_printer_shared(&self, printer_id: &str, shared: bool) -> Result<(), Error> {
-        let printer = self.printer_entry(printer_id).await?;
-        let outcome = cups_backend::set_printer_shared(printer, shared)
-            .await
-            .map_err(service_error);
-
-        if outcome.is_ok() {
-            self.reload_into_cache(printer_id).await;
-        }
-
-        outcome
-    }
-
     /// Asks a printer what supplies it has and how full they are.
     pub async fn printer_supplies(&self, printer_id: &str) -> Result<Vec<SupplyLevel>, Error> {
         let printer = self.printer_entry(printer_id).await?;

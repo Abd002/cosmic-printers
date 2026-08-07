@@ -261,17 +261,6 @@ impl Client {
         )
     }
 
-    pub async fn set_printer_shared(&mut self, printer_id: &str, shared: bool) -> ClientResult<()> {
-        flatten(
-            protocol::CosmicPrintersProxy::set_printer_shared(
-                &mut self.conn,
-                printer_id.to_owned(),
-                shared,
-            )
-            .await,
-        )
-    }
-
     pub async fn print_test_page(&mut self, printer_id: &str) -> ClientResult<i32> {
         let reply = flatten(
             protocol::CosmicPrintersProxy::print_test_page(&mut self.conn, printer_id.to_owned())

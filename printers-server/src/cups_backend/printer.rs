@@ -192,10 +192,6 @@ pub async fn set_printer_location(printer: PrinterEntry, location: String) -> Ba
     administration::set_location(printer, location).await
 }
 
-pub async fn set_printer_shared(printer: PrinterEntry, shared: bool) -> BackendResult<()> {
-    administration::set_shared(printer, shared).await
-}
-
 /// Re-reads one printer's attributes, so a change just made to it can be seen at once.
 ///
 /// A whole refresh is far too slow to answer "did that take effect": it spends five seconds

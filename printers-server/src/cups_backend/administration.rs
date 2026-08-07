@@ -175,35 +175,6 @@ pub(super) async fn set_accept_jobs(
     .await
 }
 
-/// Shares the printer, or stops sharing it.
-///
-/// Sharing has no standard spelling: it is not a settable attribute on the scheduler and
-/// a Printer Application has no notion of it at all, so this is the scheduler's own
-/// operation and is offered only there. In the current model a shared printer is a printer
-/// on a sharing server rather than a flag on a local one, and that server does not exist
-/// yet — so there is nothing newer to send instead.
-pub(super) async fn set_shared(printer: PrinterEntry, shared: bool) -> BackendResult<()> {
-    let Owner::Scheduler = owner_of(&printer) else {
-        return Err(BackendError::OperationNotSupported {
-            operation: "share a printer that the local scheduler does not hold".to_string(),
-        });
-    };
-    let queue_uri = local_printer_uri(printer.id(), false);
-
-    send(
-        IppOperation::CupsAddModifyPrinter,
-        "CUPS-Add-Modify-Printer",
-        SCHEDULER_ADMIN_URI.to_string(),
-        queue_uri,
-        move |request| {
-            request
-                .add_boolean(IppTag::Printer, "printer-is-shared", shared)
-                .cups_err()
-        },
-    )
-    .await
-}
-
 /// Removes the printer.
 pub(super) async fn delete_printer(printer: PrinterEntry) -> BackendResult<()> {
     match owner_of(&printer) {
