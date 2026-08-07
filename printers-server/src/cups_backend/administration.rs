@@ -12,17 +12,30 @@
 //! implements neither `Delete-Printer` nor a system service, and no standard attribute
 //! carries sharing at all.
 
+use crate::ipp::IppTimeouts;
 use cosmic_settings_printers_core::PrinterEntry;
 use cups_rs::{IppOperation, IppRequest, IppStatus, IppTag, IppValueTag};
 
 use super::helpers::{
     CupsResultExt, Owner, add_requesting_user, ensure_success, local_printer_uri, owner_of,
-    send_ipp_request,
+    send_ipp_request_with_timeouts,
 };
 use crate::error::{BackendError, BackendResult};
 
 /// Where the scheduler takes the operations that predate the system service.
 const SCHEDULER_ADMIN_URI: &str = "ipp://localhost/admin/";
+
+/// How long to allow for reaching the service that holds a printer.
+///
+/// The quarter of a second a lookup is given is far too little here. An administrative request
+/// goes to the printer's own endpoint, whose host is usually a `.local` name that has to be
+/// resolved over mDNS, and then to a TLS handshake — a printer that answers perfectly well is
+/// otherwise reported as never having replied. Matches what asking a device for its attributes
+/// already allows itself.
+const ADMIN_TIMEOUTS: IppTimeouts = IppTimeouts {
+    connect_ms: 5000,
+    response_seconds: 30.0,
+};
 
 /// Where the scheduler names the groups it lets administer printers.
 const CUPS_FILES_CONF: &str = "/etc/cups/cups-files.conf";
@@ -327,7 +340,7 @@ async fn send(
         add_requesting_user(&mut request)?;
         attributes(&mut request)?;
 
-        let response = send_ipp_request(request, &target)?;
+        let response = send_ipp_request_with_timeouts(request, &target, ADMIN_TIMEOUTS)?;
 
         ensure_success(&response, operation_name)
     })
