@@ -5,9 +5,9 @@ use std::net::ToSocketAddrs;
 use std::sync::{LazyLock, Mutex};
 
 use super::helpers::{
-    CupsResultExt, PRINTER_ATTRIBUTES, available_destinations, destination_to_printer_entry,
-    fill_missing_attrs_from_device_uri, fill_missing_attrs_from_printer_uri, split_queue_instance,
-    supplies_from_device,
+    CupsResultExt, Owner, PRINTER_ATTRIBUTES, available_destinations, destination_to_printer_entry,
+    fill_missing_attrs_from_device_uri, fill_missing_attrs_from_printer_uri, owner_of,
+    split_queue_instance, supplies_from_device,
 };
 use super::{administration, user_defaults};
 use crate::context::Context;
@@ -190,6 +190,26 @@ pub async fn set_printer_location(printer: PrinterEntry, location: String) -> Ba
 
 pub async fn set_printer_shared(printer: PrinterEntry, shared: bool) -> BackendResult<()> {
     administration::set_shared(printer, shared).await
+}
+
+/// Marks each destination with whether an administrative change could reach it.
+///
+/// Two things have to hold: some service has a queue for it, and this user is in the group
+/// the scheduler administers by. Neither can be discovered by trying — a destination that
+/// is only advertised answers `not-found` from a scheduler that never had it, and a user
+/// outside the group is answered `forbidden` with no way to authenticate — so both are
+/// settled here, before anything is offered.
+pub fn mark_administrable(printers: &mut [PrinterEntry]) {
+    let may_administer = may_administer_printers();
+
+    for printer in printers.iter_mut() {
+        let held_by_a_service = !matches!(owner_of(printer), Owner::Unowned);
+
+        printer.set_option(
+            "can-administer",
+            (held_by_a_service && may_administer).to_string(),
+        );
+    }
 }
 
 /// Lays the user's own saved choices over what the destinations reported.

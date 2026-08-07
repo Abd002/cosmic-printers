@@ -393,6 +393,20 @@ impl PrinterEntry {
         &self.name
     }
 
+    /// Returns whether an administrative change to this destination could be sent at all.
+    ///
+    /// False for two quite different reasons, and the caller should say which: no service
+    /// holds a queue for it — a destination that is only advertised has nothing to rename,
+    /// stop, or remove — or this user is not in the group the scheduler administers by.
+    /// Either way the action is worth withholding rather than offering to fail.
+    ///
+    /// This does not gate the user's own preferences. A default printer, a paper size and a
+    /// sides setting are saved for the user and need no queue and no privilege, so they
+    /// stay available everywhere.
+    pub fn can_administer(&self) -> bool {
+        self.option("can-administer") == Some("true")
+    }
+
     /// Returns whether this destination is the one a job goes to by default.
     pub fn is_default(&self) -> bool {
         self.is_default

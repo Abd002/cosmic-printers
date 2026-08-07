@@ -33,9 +33,12 @@ impl Server {
         let mut printers = self.context.available_destinations_cached().await;
 
         // What a job will actually use is the user's own saved choice, so that is what is
-        // reported rather than what each destination says about itself.
+        // reported rather than what each destination says about itself. Whether each one can
+        // be administered at all is settled here too, so nothing is offered that could only
+        // be refused.
         tokio::task::spawn_blocking(move || {
             cups_backend::apply_user_defaults(&mut printers);
+            cups_backend::mark_administrable(&mut printers);
             printers
         })
         .await
