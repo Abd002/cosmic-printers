@@ -29,22 +29,21 @@ pub(super) fn apply_saved(printers: &mut [PrinterEntry]) {
     // A default the user chose settles it for every destination, not only for the one it
     // names: leaving the others as the server reported them would show two defaults, and
     // the server's is the one that has been overruled.
+    //
+    // With nothing named in the user's file the question passes to libcups, which knows the
+    // rest of the order — a system-wide default, then the scheduler's own. Deciding here that
+    // there is no default would be wrong twice: it contradicts where a job would actually go,
+    // and it hides a default an administrator set for the machine.
     let chosen_default = saved
         .iter()
         .find(|entry| entry.is_default)
-        .map(|entry| entry.full_name());
-
-    // Having saved preferences but naming no default is itself an answer — it is what taking
-    // the default back out looks like. Without this the destination that used to be the
-    // default keeps saying so, because the flag was read from the file as it was then and
-    // nothing since has contradicted it.
-    let user_has_preferences = !saved.is_empty();
+        .map(|entry| entry.full_name())
+        .or_else(Destinations::default_destination_name);
 
     for printer in printers {
         match &chosen_default {
             Some(chosen) => printer.set_is_default(printer.id() == chosen),
-            None if user_has_preferences => printer.set_is_default(false),
-            None => {}
+            None => printer.set_is_default(false),
         }
 
         let (queue, instance) = split_queue_instance(printer.id());
