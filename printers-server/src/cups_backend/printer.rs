@@ -192,6 +192,38 @@ pub async fn set_printer_shared(printer: PrinterEntry, shared: bool) -> BackendR
     administration::set_shared(printer, shared).await
 }
 
+/// Re-reads one printer's attributes, so a change just made to it can be seen at once.
+///
+/// A whole refresh is far too slow to answer "did that take effect": it spends five seconds
+/// enumerating and then reaches every destination in turn, which on a network of any size runs
+/// to tens of seconds, and a second refresh asked for while the first is running is dropped
+/// rather than queued. A caller that changes one printer and then waits for all of them to be
+/// re-read sees its own change appear something like a minute later — indistinguishable, from
+/// the outside, from the change never happening.
+///
+/// One printer is one round trip, so the operation that changed it can afford to re-read it
+/// before returning.
+pub async fn reload_printer(printer: PrinterEntry) -> BackendResult<PrinterEntry> {
+    tokio::task::spawn_blocking(move || {
+        let mut printer = printer;
+        let destination = raw_destination(&printer);
+
+        if printer.printer_uri().is_some_and(is_local_scheduler_uri) {
+            reload_attrs_from_printer_uri(&mut printer, PRINTER_ATTRIBUTES)?;
+        } else if printer.device_uri().is_some() {
+            reload_attrs_from_device_uri(&destination, &mut printer, PRINTER_ATTRIBUTES)?;
+        } else {
+            reload_attrs_from_printer_uri(&mut printer, PRINTER_ATTRIBUTES)?;
+        }
+
+        resolve_printer_endpoint_locality(&mut printer);
+
+        Ok(printer)
+    })
+    .await
+    .map_err(BackendError::Join)?
+}
+
 /// Marks each destination with whether an administrative change could reach it.
 ///
 /// Two things have to hold: some service has a queue for it, and this user is in the group

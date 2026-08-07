@@ -34,9 +34,17 @@ pub(super) fn apply_saved(printers: &mut [PrinterEntry]) {
         .find(|entry| entry.is_default)
         .map(|entry| entry.full_name());
 
+    // Having saved preferences but naming no default is itself an answer — it is what taking
+    // the default back out looks like. Without this the destination that used to be the
+    // default keeps saying so, because the flag was read from the file as it was then and
+    // nothing since has contradicted it.
+    let user_has_preferences = !saved.is_empty();
+
     for printer in printers {
-        if let Some(chosen) = &chosen_default {
-            printer.set_is_default(printer.id() == chosen);
+        match &chosen_default {
+            Some(chosen) => printer.set_is_default(printer.id() == chosen),
+            None if user_has_preferences => printer.set_is_default(false),
+            None => {}
         }
 
         let (queue, instance) = split_queue_instance(printer.id());

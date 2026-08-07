@@ -136,6 +136,31 @@ impl Server {
         .boxed()
     }
 
+    /// Re-reads one printer into the cache after changing it.
+    ///
+    /// So that a caller which changes something and then lists the printers sees its own change
+    /// rather than the value from before it. A whole refresh is far too slow to serve as the
+    /// answer to "did that work" — it enumerates for five seconds and then reaches every
+    /// destination in turn — and one asked for while another is running is dropped rather than
+    /// queued, so waiting for one takes the better part of a minute.
+    ///
+    /// A printer that cannot be re-read is left as it was. The change was still made, and
+    /// failing the operation because the display is stale would be the wrong way round.
+    async fn reload_into_cache(&self, printer_id: &str) {
+        let Ok(printer) = self.printer_entry(printer_id).await else {
+            return;
+        };
+
+        match cups_backend::reload_printer(printer).await {
+            Ok(updated) => self.context.update_available_destination(updated),
+            Err(error) => tracing::debug!(
+                printer_id,
+                error = ?error,
+                "could not re-read a printer after changing it"
+            ),
+        }
+    }
+
     /// Deletes a configured printer.
     pub async fn delete_printer(&self, printer_id: &str) -> Result<(), Error> {
         let printer = self.printer_entry(printer_id).await?;
@@ -152,9 +177,15 @@ impl Server {
         reason: &str,
     ) -> Result<(), Error> {
         let printer = self.printer_entry(printer_id).await?;
-        cups_backend::set_printer_accept_jobs(printer, enabled, reason.to_string())
+        let outcome = cups_backend::set_printer_accept_jobs(printer, enabled, reason.to_string())
             .await
-            .map_err(service_error)
+            .map_err(service_error);
+
+        if outcome.is_ok() {
+            self.reload_into_cache(printer_id).await;
+        }
+
+        outcome
     }
 
     /// Sets this user's default printer.
@@ -199,17 +230,29 @@ impl Server {
     /// Enables or disables a printer.
     pub async fn set_printer_enabled(&self, printer_id: &str, enabled: bool) -> Result<(), Error> {
         let printer = self.printer_entry(printer_id).await?;
-        cups_backend::set_printer_enabled(printer, enabled)
+        let outcome = cups_backend::set_printer_enabled(printer, enabled)
             .await
-            .map_err(service_error)
+            .map_err(service_error);
+
+        if outcome.is_ok() {
+            self.reload_into_cache(printer_id).await;
+        }
+
+        outcome
     }
 
     /// Sets the printer information string.
     pub async fn set_printer_info(&self, printer_id: &str, info: &str) -> Result<(), Error> {
         let printer = self.printer_entry(printer_id).await?;
-        cups_backend::set_printer_info(printer, info.to_string())
+        let outcome = cups_backend::set_printer_info(printer, info.to_string())
             .await
-            .map_err(service_error)
+            .map_err(service_error);
+
+        if outcome.is_ok() {
+            self.reload_into_cache(printer_id).await;
+        }
+
+        outcome
     }
 
     /// Sets the printer location.
@@ -219,17 +262,29 @@ impl Server {
         location: &str,
     ) -> Result<(), Error> {
         let printer = self.printer_entry(printer_id).await?;
-        cups_backend::set_printer_location(printer, location.to_string())
+        let outcome = cups_backend::set_printer_location(printer, location.to_string())
             .await
-            .map_err(service_error)
+            .map_err(service_error);
+
+        if outcome.is_ok() {
+            self.reload_into_cache(printer_id).await;
+        }
+
+        outcome
     }
 
     /// Enables or disables printer sharing.
     pub async fn set_printer_shared(&self, printer_id: &str, shared: bool) -> Result<(), Error> {
         let printer = self.printer_entry(printer_id).await?;
-        cups_backend::set_printer_shared(printer, shared)
+        let outcome = cups_backend::set_printer_shared(printer, shared)
             .await
-            .map_err(service_error)
+            .map_err(service_error);
+
+        if outcome.is_ok() {
+            self.reload_into_cache(printer_id).await;
+        }
+
+        outcome
     }
 
     /// Asks a printer what supplies it has and how full they are.
