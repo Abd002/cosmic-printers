@@ -126,6 +126,24 @@ impl<T> CupsResultExt<T> for cups_rs::Result<T> {
     }
 }
 
+/// Rewrites a URI to address the same service over loopback.
+///
+/// A Printer Application refuses to be administered by anything that did not come from the
+/// machine it runs on, and it decides that from the address the request arrived on — so a
+/// request sent to its own advertised `.local` name is answered `forbidden` even when it comes
+/// from that very machine. The same request to `localhost` succeeds. Only ever applied to an
+/// endpoint already established as being on this machine.
+pub(crate) fn loopback_uri(uri: &str) -> Option<String> {
+    let parsed = ParsedUri::parse(uri).filter(|parsed| parsed.scheme.is_ipp())?;
+    let mut local = parsed.uri.clone();
+
+    local.set_host(Some("localhost")).ok()?;
+    // `set_host` drops a port that matches the scheme default, and these rarely use it.
+    local.set_port(Some(parsed.port)).ok()?;
+
+    Some(local.to_string())
+}
+
 /// Returns the system service URI of whatever answers for this printer.
 ///
 /// `Create-Printer` and `Delete-Printer` live only on `/ipp/system`, never on a printer,

@@ -1,6 +1,6 @@
 use cosmic_settings_printers_core::PrinterEntry;
 
-use crate::ipp::{is_local_scheduler_uri, system_service_uri};
+use crate::ipp::{is_local_scheduler_uri, loopback_uri, system_service_uri};
 
 /// Which service holds a destination, and so where administering it has to be sent.
 ///
@@ -37,9 +37,18 @@ pub(in crate::cups_backend) fn owner_of(printer: &PrinterEntry) -> Owner {
         return Owner::Scheduler;
     }
 
-    match system_service_uri(printer_uri) {
+    // A service on this machine has to be addressed over loopback to be administered at all:
+    // it judges whether a request is local from the address it arrived on, and answers one
+    // sent to its own advertised name `forbidden` even when it came from the same machine.
+    let addressable = if printer.endpoint_is_local() {
+        loopback_uri(printer_uri).unwrap_or_else(|| printer_uri.to_string())
+    } else {
+        printer_uri.to_string()
+    };
+
+    match system_service_uri(&addressable) {
         Some(system_uri) => Owner::Service {
-            printer_uri: printer_uri.to_string(),
+            printer_uri: addressable,
             system_uri,
         },
         None => Owner::Unowned,
@@ -130,6 +139,39 @@ mod tests {
         assert_eq!(
             owner_of(&printer(Some("dnssd://Acme%20Laser._ipps._tcp.local/"))),
             Owner::Unowned
+        );
+    }
+
+    /// A service on this machine is addressed over loopback, because it refuses to be
+    /// administered by anything that did not arrive that way — even from this machine.
+    #[test]
+    fn a_service_on_this_machine_is_administered_over_loopback() {
+        let mut local = printer(Some("ipps://desktop.local:8001/ipp/print/Acme_Laser"));
+        local.set_option("endpoint-is-local", "true");
+
+        assert_eq!(
+            owner_of(&local),
+            Owner::Service {
+                printer_uri: "ipps://localhost:8001/ipp/print/Acme_Laser".to_string(),
+                system_uri: "ipps://localhost:8001/ipp/system".to_string(),
+            }
+        );
+    }
+
+    /// A service on another machine keeps the name it answered on: rewriting that to loopback
+    /// would address this machine instead, which is a different printer or none.
+    #[test]
+    fn a_service_elsewhere_keeps_the_host_it_answered_on() {
+        let mut remote = printer(Some("ipps://desktop.local:8001/ipp/print/Acme_Laser"));
+        remote.set_option("endpoint-is-local", "false");
+
+        let Owner::Service { printer_uri, .. } = owner_of(&remote) else {
+            panic!("a printer answering elsewhere is not the scheduler's");
+        };
+
+        assert_eq!(
+            printer_uri,
+            "ipps://desktop.local:8001/ipp/print/Acme_Laser"
         );
     }
 }
