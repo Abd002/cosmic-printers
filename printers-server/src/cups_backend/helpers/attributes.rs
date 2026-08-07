@@ -282,28 +282,33 @@ fn merge_response_attrs(response: &IppResponse, attrs: &[&str]) -> Vec<(String, 
 }
 
 /// Converts all values of an IPP attribute into strings.
+///
+/// The value's own tag decides how to read it. Trying the text form first and falling back to
+/// the numeric one when nothing came of it looks equivalent, but is not: an empty text value
+/// yields no string, and asking a text attribute for an integer answers zero — so a printer
+/// with its location cleared reported a location of `0`.
 fn attr_values(name: &str, attr: cups_rs::IppAttribute) -> Vec<String> {
-    if name == "printer-is-accepting-jobs" {
-        return (0..attr.count())
-            .map(|index| attr.get_boolean(index).to_string())
-            .collect();
+    use cups_rs::IppValueTag::{Boolean, Enum, Integer};
+
+    let values = 0..attr.count();
+
+    // A boolean reads as `false`/`true` rather than `0`/`1`, since it is shown and compared as a
+    // word elsewhere. The name is still honoured because a server may send this one as an integer.
+    if attr.value_tag() == Boolean || name == "printer-is-accepting-jobs" {
+        return values.map(|at| attr.get_boolean(at).to_string()).collect();
     }
 
-    let values = (0..attr.count())
-        .filter_map(|index| attr.get_string(index))
-        .filter_map(|value| {
-            let value = value.trim();
-            (!value.is_empty()).then(|| value.to_string())
-        })
-        .collect::<Vec<_>>();
-
-    if values.is_empty() {
-        (0..attr.count())
-            .map(|index| attr.get_integer(index).to_string())
-            .collect()
-    } else {
-        values
+    if matches!(attr.value_tag(), Integer | Enum) {
+        return values.map(|at| attr.get_integer(at).to_string()).collect();
     }
+
+    values
+        .filter_map(|at| attr.get_string(at))
+        // An empty value carries nothing to show, and callers treat a present-but-empty option
+        // differently from an absent one.
+        .filter(|value| !value.trim().is_empty())
+        .map(|value| value.trim().to_string())
+        .collect()
 }
 
 #[cfg(test)]
