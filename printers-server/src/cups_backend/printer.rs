@@ -44,6 +44,10 @@ fn run_available_destinations_refresh(worker_context: Context) -> BackendResult<
                 .merge_available_destination(destination_to_printer_entry(destination.clone()));
         }
     })?;
+    // Reached only if the enumeration finished, which is what makes it safe to treat what it saw
+    // as the whole of what exists and forget the rest.
+    worker_context.retain_available_destinations(&destinations.keys().cloned().collect());
+
     let mut printers = destinations
         .into_values()
         .map(|destination| {

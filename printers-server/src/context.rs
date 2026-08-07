@@ -36,6 +36,14 @@ struct Model {
     /// application that does not answer has not stopped having them, and offering
     /// to set up a printer that is already set up is worse than saying nothing.
     configured_devices: HashMap<String, RememberedConfiguredDevices>,
+    /// How many complete enumerations in a row have not mentioned each cached
+    /// destination.
+    ///
+    /// Absence has to be counted rather than acted on at once. An enumeration
+    /// listens for a fixed few seconds, so a printer that answers a moment late is
+    /// missing from that pass without having gone anywhere; dropping it there and
+    /// restoring it on the next pass is the flicker that a counter avoids.
+    enumeration_misses: HashMap<String, u8>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -233,15 +241,65 @@ impl Context {
     }
 
     pub(crate) fn remove_available_destination(&self, id: &str) {
-        let changed = self
+        let mut model = self
             .model
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .available_destinations
-            .remove(id)
-            .is_some();
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let changed = model.available_destinations.remove(id).is_some();
+        model.enumeration_misses.remove(id);
+        drop(model);
 
         if changed {
+            self.emit_available_destinations_changed();
+        }
+    }
+
+    /// Drops destinations that complete enumerations have stopped mentioning.
+    ///
+    /// `present` is everything one full pass saw, so anything cached and not named in it was not
+    /// there to be seen. Only a *complete* pass may be given here: a partial one says nothing
+    /// about what it did not reach, and treating it as the whole truth would remove working
+    /// printers.
+    ///
+    /// Nothing else prunes. Removal arrives through the enumeration callback only while a browse
+    /// is running, which is no help for a queue that went away between two passes — deleted with
+    /// `lpadmin`, switched off, or taken off the network. Without this such a destination stays
+    /// listed until the daemon restarts.
+    pub(crate) fn retain_available_destinations(&self, present: &HashSet<String>) {
+        /// How many passes in a row must miss a destination before it is dropped.
+        const MISSES_BEFORE_DROPPING: u8 = 2;
+
+        let mut model = self
+            .model
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+        let missing = model
+            .available_destinations
+            .keys()
+            .filter(|id| !present.contains(*id))
+            .cloned()
+            .collect::<HashSet<_>>();
+
+        // A destination seen again has not been missing at all, so its count starts over rather
+        // than carrying one pass of absence towards a later, unrelated one.
+        model
+            .enumeration_misses
+            .retain(|id, _| missing.contains(id));
+
+        let mut removed = false;
+        for id in missing {
+            let misses = model.enumeration_misses.entry(id.clone()).or_default();
+            *misses = misses.saturating_add(1);
+
+            if *misses >= MISSES_BEFORE_DROPPING {
+                model.enumeration_misses.remove(&id);
+                removed |= model.available_destinations.remove(&id).is_some();
+            }
+        }
+        drop(model);
+
+        if removed {
             self.emit_available_destinations_changed();
         }
     }
@@ -868,6 +926,61 @@ mod tests {
             PrintersEventKind::AvailableDestinationsChanged
         );
         assert!(context.available_destinations_cached().await.is_empty());
+    }
+
+    /// One pass missing a destination is not evidence it has gone: enumeration listens for a
+    /// fixed few seconds and a printer can answer late. Dropping it here and restoring it next
+    /// pass is visible flicker.
+    #[tokio::test]
+    async fn a_destination_missing_from_one_pass_is_kept() {
+        let context = Context::new();
+        context.update_available_destination(destination("office", "first floor"));
+
+        context.retain_available_destinations(&HashSet::new());
+
+        assert_eq!(context.available_destinations_cached().await.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_destination_missing_from_two_passes_running_is_dropped() {
+        let context = Context::new();
+        context.update_available_destination(destination("office", "first floor"));
+
+        context.retain_available_destinations(&HashSet::new());
+        context.retain_available_destinations(&HashSet::new());
+
+        assert!(context.available_destinations_cached().await.is_empty());
+    }
+
+    /// The count is about being missing *in a row*. A printer that answers late every other pass
+    /// would otherwise accumulate misses and eventually be dropped while still present.
+    #[tokio::test]
+    async fn being_seen_again_starts_the_count_over() {
+        let context = Context::new();
+        context.update_available_destination(destination("office", "first floor"));
+        let present = HashSet::from(["office".to_string()]);
+
+        for _ in 0..4 {
+            context.retain_available_destinations(&HashSet::new());
+            context.retain_available_destinations(&present);
+        }
+
+        assert_eq!(context.available_destinations_cached().await.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn pruning_leaves_the_destinations_a_pass_did_see() {
+        let context = Context::new();
+        context.update_available_destination(destination("office", "first floor"));
+        context.update_available_destination(destination("studio", "attic"));
+
+        let present = HashSet::from(["studio".to_string()]);
+        context.retain_available_destinations(&present);
+        context.retain_available_destinations(&present);
+
+        let cached = context.available_destinations_cached().await;
+        assert_eq!(cached.len(), 1);
+        assert_eq!(cached[0].id(), "studio");
     }
 
     #[tokio::test]

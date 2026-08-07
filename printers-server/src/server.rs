@@ -164,9 +164,18 @@ impl Server {
     /// Deletes a configured printer.
     pub async fn delete_printer(&self, printer_id: &str) -> Result<(), Error> {
         let printer = self.printer_entry(printer_id).await?;
-        cups_backend::delete_printer(printer)
+        let outcome = cups_backend::delete_printer(printer)
             .await
-            .map_err(service_error)
+            .map_err(service_error);
+
+        // Every other change re-reads the printer; this one has nothing left to read, so the
+        // cached copy is dropped instead. Waiting for an enumeration to notice would leave a
+        // deleted printer on display for the better part of a minute.
+        if outcome.is_ok() {
+            self.context.remove_available_destination(printer_id);
+        }
+
+        outcome
     }
 
     /// Enables or disables accepting jobs for a printer.
