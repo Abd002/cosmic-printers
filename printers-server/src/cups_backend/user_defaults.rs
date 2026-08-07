@@ -111,5 +111,48 @@ fn edit(change: impl FnOnce(&mut Destinations) -> cups_rs::Result<()>) -> Backen
     let mut destinations = Destinations::load_lpoptions().cups_err()?;
 
     change(&mut destinations).cups_err()?;
-    destinations.save_to_lpoptions().cups_err()
+    destinations.save_to_lpoptions().cups_err()?;
+
+    mirror_to_the_legacy_file();
+    Ok(())
+}
+
+/// Copies what was just saved to the path libcups 2 reads.
+///
+/// The two libraries do not agree on where a user's saved destinations live: this one honours
+/// `XDG_CONFIG_HOME` and so may use `~/.config/cups/lpoptions`, while libcups 2 only ever reads
+/// `~/.cups/lpoptions`. Which file gets written therefore depends on the environment this
+/// process happened to inherit — and on a desktop most print dialogs, `lp` and `lpstat` are
+/// still the other library. A default printer that only half the system honours is not a
+/// default, so both are kept in step.
+///
+/// Failure is not worth failing the operation over: the preference *was* saved where this
+/// library will read it, and printing from here will honour it either way.
+fn mirror_to_the_legacy_file() {
+    let (Ok(written), Some(legacy)) = (
+        cups_rs::user_lpoptions_path(),
+        cups_rs::legacy_lpoptions_path(),
+    ) else {
+        return;
+    };
+
+    if written == legacy {
+        return;
+    }
+
+    let copy = std::fs::read(&written).and_then(|contents| {
+        if let Some(parent) = std::path::Path::new(&legacy).parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&legacy, contents)
+    });
+
+    if let Err(error) = copy {
+        tracing::debug!(
+            from = written,
+            to = legacy,
+            error = ?error,
+            "could not mirror the saved preferences to the path libcups 2 reads"
+        );
+    }
 }
