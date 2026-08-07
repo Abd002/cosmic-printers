@@ -29,6 +29,15 @@ pub(in crate::cups_backend) const PRINTER_ATTRIBUTES: &[&str] = &[
     "sides-supported",
     "printer-uuid",
     "device-uuid",
+    // Which of its own values a service will let us change. Worth carrying, because a server
+    // that will not take one does not necessarily say so: a Printer Application answers
+    // `successful-ok` — "Printer attributes set." — and ignores an attribute outside this list,
+    // so without it a change that did nothing is indistinguishable from one that worked.
+    //
+    // Both spellings, because the two eras disagree: a Printer Application says
+    // `printer-settable-attributes` and the scheduler says the same with `-supported`.
+    "printer-settable-attributes",
+    "printer-settable-attributes-supported",
 ];
 
 /// Re-reads attributes through the entry's `printer-uri-supported` URI.

@@ -241,6 +241,20 @@ async fn set_printer_text(
     let owner = owner_of(&printer);
     let target = printer_target(&printer)?;
 
+    // Ask first, because the answer cannot be trusted afterwards. A Printer Application replies
+    // `successful-ok` — "Printer attributes set." — to a request naming an attribute it will not
+    // change, and leaves the value exactly as it was. Reporting that as success would be a lie
+    // the caller has no way to catch, so a service that has published what it will accept is
+    // taken at its word.
+    //
+    // The scheduler is exempt: the five attributes it lists are only the ones it takes *this*
+    // way, and the fallback below reaches the others.
+    if !matches!(owner, Owner::Scheduler) && !settable_on(&printer, attribute) {
+        return Err(BackendError::OperationNotSupported {
+            operation: format!("change '{attribute}', which this printer does not allow"),
+        });
+    }
+
     let attributes = {
         let value = value.clone();
         move |request: &mut IppRequest| {
@@ -282,6 +296,56 @@ async fn set_printer_text(
         },
     )
     .await
+}
+
+/// Returns whether any administrative operation could reach this destination.
+///
+/// Narrower than "something answers for it", because in the current model most destinations
+/// have nothing to administer. A printer reached over DNS-SD has no permanent queue: CUPS makes
+/// one on demand and reaps it when it goes idle, so there is nothing to stop or start, and a
+/// location or description written to it would be discarded with the queue. Administration in
+/// the sense CUPS 2.x meant it belongs to a server that keeps its queues — the local scheduler
+/// here, or a sharing server — and asking anything else only earns a refusal, or worse a
+/// success that changed nothing.
+///
+/// So: a queue the scheduler holds, or a service that has published what it will let us change.
+/// Anything else is left alone.
+pub(super) fn can_be_administered(printer: &PrinterEntry) -> bool {
+    if !user_may_administer() {
+        return false;
+    }
+
+    match owner_of(printer) {
+        Owner::Scheduler => true,
+        Owner::Service { .. } => !published_settable(printer).is_empty(),
+        Owner::Unowned => false,
+    }
+}
+
+/// The attributes a service says it will let us change, under either spelling.
+///
+/// A Printer Application says `printer-settable-attributes`; the scheduler spells the same thing
+/// with `-supported`.
+fn published_settable(printer: &PrinterEntry) -> Vec<String> {
+    [
+        "printer-settable-attributes",
+        "printer-settable-attributes-supported",
+    ]
+    .into_iter()
+    .flat_map(|name| printer.option_values(name))
+    .collect()
+}
+
+/// Returns whether this service said it will let the attribute be changed.
+///
+/// True when it has published no such list at all: silence is not a refusal, and withholding
+/// an operation a printer might well accept is the worse mistake.
+fn settable_on(printer: &PrinterEntry, attribute: &str) -> bool {
+    // A Printer Application says `printer-settable-attributes`; the scheduler spells the same
+    // thing with `-supported`. Either counts.
+    let published = published_settable(printer);
+
+    published.is_empty() || published.iter().any(|listed| listed.trim() == attribute)
 }
 
 /// Returns whether the standard operation failed in a way the scheduler's own might not.

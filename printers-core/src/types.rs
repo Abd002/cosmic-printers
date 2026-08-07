@@ -715,7 +715,7 @@ impl PrinterEntry {
             .collect()
     }
 
-    fn option_values(&self, name: &str) -> Vec<String> {
+    pub fn option_values(&self, name: &str) -> Vec<String> {
         self.option(name)
             .map(|value| {
                 value

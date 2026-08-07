@@ -5,8 +5,8 @@ use std::net::ToSocketAddrs;
 use std::sync::{LazyLock, Mutex};
 
 use super::helpers::{
-    CupsResultExt, Owner, PRINTER_ATTRIBUTES, available_destinations, destination_to_printer_entry,
-    owner_of, reload_attrs_from_device_uri, reload_attrs_from_printer_uri, split_queue_instance,
+    CupsResultExt, PRINTER_ATTRIBUTES, available_destinations, destination_to_printer_entry,
+    reload_attrs_from_device_uri, reload_attrs_from_printer_uri, split_queue_instance,
     supplies_from_device,
 };
 use super::{administration, user_defaults};
@@ -232,15 +232,10 @@ pub async fn reload_printer(printer: PrinterEntry) -> BackendResult<PrinterEntry
 /// outside the group is answered `forbidden` with no way to authenticate — so both are
 /// settled here, before anything is offered.
 pub fn mark_administrable(printers: &mut [PrinterEntry]) {
-    let may_administer = may_administer_printers();
-
     for printer in printers.iter_mut() {
-        let held_by_a_service = !matches!(owner_of(printer), Owner::Unowned);
+        let administrable = administration::can_be_administered(printer);
 
-        printer.set_option(
-            "can-administer",
-            (held_by_a_service && may_administer).to_string(),
-        );
+        printer.set_option("can-administer", administrable.to_string());
     }
 }
 
