@@ -3,9 +3,7 @@ mod conversion;
 mod destinations;
 mod identity;
 
-pub(super) use crate::ipp::{
-    CupsResultExt, add_operation_defaults, add_requesting_user, ensure_success, send_ipp_request,
-};
+pub(super) use crate::ipp::{CupsResultExt, add_requesting_user, ensure_success, send_ipp_request};
 pub(super) use attributes::{
     PRINTER_ATTRIBUTES, fill_missing_attrs_from_device_uri, fill_missing_attrs_from_printer_uri,
     supplies_from_device,

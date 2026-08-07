@@ -52,7 +52,6 @@ pub async fn get_jobs(printer: &PrinterEntry, filter: &str) -> BackendResult<Vec
 fn get_jobs_request(printer_uri: &str, which_jobs: &str) -> BackendResult<IppRequest> {
     let mut request = IppRequest::new(IppOperation::GetJobs).cups_err()?;
 
-    add_operation_defaults(&mut request)?;
     request
         .add_string(
             IppTag::Operation,
@@ -122,7 +121,6 @@ pub async fn move_job(
     tokio::task::spawn_blocking(move || {
         let mut request = IppRequest::new(IppOperation::CupsMoveJob).cups_err()?;
 
-        add_operation_defaults(&mut request)?;
         request
             .add_string(
                 IppTag::Operation,
@@ -161,7 +159,6 @@ async fn send_job_request(
     tokio::task::spawn_blocking(move || {
         let mut request = IppRequest::new(operation).cups_err()?;
 
-        add_operation_defaults(&mut request)?;
         request
             .add_string(
                 IppTag::Operation,
@@ -181,25 +178,6 @@ async fn send_job_request(
     })
     .await
     .map_err(BackendError::Join)?
-}
-
-fn add_operation_defaults(request: &mut IppRequest) -> BackendResult<()> {
-    request
-        .add_string(
-            IppTag::Operation,
-            IppValueTag::Charset,
-            "attributes-charset",
-            "utf-8",
-        )
-        .cups_err()?;
-    request
-        .add_string(
-            IppTag::Operation,
-            IppValueTag::Language,
-            "attributes-natural-language",
-            "en",
-        )
-        .cups_err()
 }
 
 /// Returns the URI to address this printer's jobs at.

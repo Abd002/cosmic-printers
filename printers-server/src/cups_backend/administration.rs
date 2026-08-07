@@ -16,8 +16,8 @@ use cosmic_settings_printers_core::PrinterEntry;
 use cups_rs::{IppOperation, IppRequest, IppStatus, IppTag, IppValueTag};
 
 use super::helpers::{
-    CupsResultExt, Owner, add_operation_defaults, add_requesting_user, ensure_success,
-    local_printer_uri, owner_of, send_ipp_request,
+    CupsResultExt, Owner, add_requesting_user, ensure_success, local_printer_uri, owner_of,
+    send_ipp_request,
 };
 use crate::error::{BackendError, BackendResult};
 
@@ -309,9 +309,13 @@ async fn send(
     attributes: impl FnOnce(&mut IppRequest) -> BackendResult<()> + Send + 'static,
 ) -> BackendResult<()> {
     tokio::task::spawn_blocking(move || {
+        // `IppRequest::new` already opens the request with `attributes-charset` and
+        // `attributes-natural-language`, so nothing may add them again. A second pair is a
+        // protocol violation that the scheduler answers `successful-ok` to and then ignores
+        // every printer-group attribute of — a change that silently does nothing. Verified
+        // against cupsd 2.4.7: the same request applies with one pair and is dropped with two.
         let mut request = IppRequest::new(operation).cups_err()?;
 
-        add_operation_defaults(&mut request)?;
         request
             .add_string(
                 IppTag::Operation,

@@ -126,29 +126,6 @@ impl<T> CupsResultExt<T> for cups_rs::Result<T> {
     }
 }
 
-/// Adds the two attributes every IPP request opens with.
-///
-/// Charset then language, in that order and before anything else: a server reads them
-/// positionally and rejects a request that puts them elsewhere.
-pub(crate) fn add_operation_defaults(request: &mut IppRequest) -> BackendResult<()> {
-    request
-        .add_string(
-            IppTag::Operation,
-            IppValueTag::Charset,
-            "attributes-charset",
-            "utf-8",
-        )
-        .cups_err()?;
-    request
-        .add_string(
-            IppTag::Operation,
-            IppValueTag::Language,
-            "attributes-natural-language",
-            "en",
-        )
-        .cups_err()
-}
-
 /// Returns the system service URI of whatever answers for this printer.
 ///
 /// `Create-Printer` and `Delete-Printer` live only on `/ipp/system`, never on a printer,
