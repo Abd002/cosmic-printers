@@ -6,8 +6,8 @@ use std::sync::{LazyLock, Mutex};
 
 use super::helpers::{
     CupsResultExt, Owner, PRINTER_ATTRIBUTES, available_destinations, destination_to_printer_entry,
-    fill_missing_attrs_from_device_uri, fill_missing_attrs_from_printer_uri, owner_of,
-    split_queue_instance, supplies_from_device,
+    owner_of, reload_attrs_from_device_uri, reload_attrs_from_printer_uri, split_queue_instance,
+    supplies_from_device,
 };
 use super::{administration, user_defaults};
 use crate::context::Context;
@@ -62,11 +62,11 @@ fn fill_printer_attrs(printers: &mut [(cups_rs::Destination, PrinterEntry)], con
             let context = context.clone();
             scope.spawn(move || {
                 let result = if printer.printer_uri().is_some_and(is_local_scheduler_uri) {
-                    fill_missing_attrs_from_printer_uri(printer, PRINTER_ATTRIBUTES)
+                    reload_attrs_from_printer_uri(printer, PRINTER_ATTRIBUTES)
                 } else if printer.device_uri().is_some() {
-                    fill_missing_attrs_from_device_uri(destination, printer, PRINTER_ATTRIBUTES)
+                    reload_attrs_from_device_uri(destination, printer, PRINTER_ATTRIBUTES)
                 } else {
-                    fill_missing_attrs_from_printer_uri(printer, PRINTER_ATTRIBUTES)
+                    reload_attrs_from_printer_uri(printer, PRINTER_ATTRIBUTES)
                 };
                 finish_printer_enrichment(&context, printer, result);
             });

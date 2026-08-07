@@ -5,7 +5,7 @@ mod identity;
 
 pub(super) use crate::ipp::{CupsResultExt, add_requesting_user, ensure_success, send_ipp_request};
 pub(super) use attributes::{
-    PRINTER_ATTRIBUTES, fill_missing_attrs_from_device_uri, fill_missing_attrs_from_printer_uri,
+    PRINTER_ATTRIBUTES, reload_attrs_from_device_uri, reload_attrs_from_printer_uri,
     supplies_from_device,
 };
 pub(super) use conversion::destination_to_printer_entry;

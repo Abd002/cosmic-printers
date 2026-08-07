@@ -31,27 +31,27 @@ pub(in crate::cups_backend) const PRINTER_ATTRIBUTES: &[&str] = &[
     "device-uuid",
 ];
 
-/// Fetches missing attributes through the entry's `printer-uri-supported` URI.
+/// Re-reads attributes through the entry's `printer-uri-supported` URI.
 ///
 /// For configured queues this normally targets the CUPS server. A discovered
 /// printer may instead expose its device endpoint as `printer-uri-supported`.
-pub(in crate::cups_backend) fn fill_missing_attrs_from_printer_uri(
+///
+/// Every requested attribute is asked for, not only the ones the entry is missing. Most of
+/// these change while a printer is in use — where it says it is, what it says about itself,
+/// whether it is taking work — so skipping the ones already held would make a refresh unable
+/// to refresh: a value changed on the printer would be written, take effect, and never be
+/// shown again until the daemon restarted.
+pub(in crate::cups_backend) fn reload_attrs_from_printer_uri(
     printer: &mut PrinterEntry,
     attrs: &[&str],
 ) -> BackendResult<()> {
-    let missing = missing_attrs(printer, attrs);
-
-    if missing.is_empty() {
-        return Ok(());
-    }
-
     let printer_uri = printer.printer_uri().ok_or_else(|| {
         BackendError::Internal(format!("queue '{}' has no printer URI", printer.id()))
     })?;
-    let request = printer_attrs_request(printer_uri, &missing)?;
+    let request = printer_attrs_request(printer_uri, attrs)?;
     let response = send_ipp_request(request, printer_uri)?;
 
-    merge_missing_attrs(printer, &missing, response)
+    merge_attrs(printer, attrs, response)
 }
 
 /// What a printer is asked for when reading its supplies.
@@ -133,8 +133,11 @@ fn attr_strings(response: &IppResponse, name: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// Fetches missing attributes from the destination's underlying device URI.
-pub(in crate::cups_backend) fn fill_missing_attrs_from_device_uri(
+/// Re-reads attributes from the destination's underlying device URI.
+///
+/// As above, everything requested is asked for rather than only what is absent, because a
+/// refresh exists to notice what changed.
+pub(in crate::cups_backend) fn reload_attrs_from_device_uri(
     destination: &Destination,
     printer: &mut PrinterEntry,
     attrs: &[&str],
@@ -142,17 +145,12 @@ pub(in crate::cups_backend) fn fill_missing_attrs_from_device_uri(
     let (device_uri, connection) = connect_to_device(destination, printer)?;
     apply_connection_endpoint(printer, &connection);
 
-    let missing = missing_attrs(printer, attrs);
-    if missing.is_empty() {
-        return Ok(());
-    }
-    let request =
-        printer_attrs_request(&printer_uri_for_request(&device_uri, &connection), &missing)?;
+    let request = printer_attrs_request(&printer_uri_for_request(&device_uri, &connection), attrs)?;
     let response = request
         .send(&connection, connection.resource_path())
         .cups_err()?;
 
-    merge_missing_attrs(printer, &missing, response)?;
+    merge_attrs(printer, attrs, response)?;
     apply_connection_endpoint(printer, &connection);
     Ok(())
 }
@@ -247,22 +245,14 @@ fn apply_connection_endpoint(printer: &mut PrinterEntry, connection: &HttpConnec
     printer.set_endpoint_source(EndpointSource::Connected);
 }
 
-fn missing_attrs<'a>(printer: &PrinterEntry, attrs: &'a [&str]) -> Vec<&'a str> {
-    attrs
-        .iter()
-        .copied()
-        .filter(|attr| printer.option(attr).is_none())
-        .collect()
-}
-
-fn merge_missing_attrs(
+fn merge_attrs(
     printer: &mut PrinterEntry,
-    missing: &[&str],
+    attrs: &[&str],
     response: IppResponse,
 ) -> BackendResult<()> {
     ensure_success(&response, "Get-Printer-Attributes")?;
 
-    printer.merge_options(merge_response_attrs(&response, missing));
+    printer.merge_options(merge_response_attrs(&response, attrs));
     refresh_printer_endpoint(printer);
     Ok(())
 }
