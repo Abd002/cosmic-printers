@@ -3,6 +3,14 @@ members = [
     "printers-core",
     "printers-client",
     "printers-server",
+    "printers-ui",
+    "printers-app",
+]
+# Keep the heavyweight UI and standalone application out of default workspace builds.
+default-members = [
+    "printers-core",
+    "printers-client",
+    "printers-server",
 ]
 resolver = "3"
 

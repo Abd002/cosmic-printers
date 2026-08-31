@@ -1,1 +1,10 @@
 /target/
+/.flatpak-builder/
+/packaging/flatpak/build-dir/
+/packaging/flatpak/repo/
+/packaging/flatpak/vendor/
+/packaging/flatpak/Printers.flatpak
+/packaging/flatpak/generated-cargo-config.toml
+/packaging/
+monitor.sh
+printers-client/examples/

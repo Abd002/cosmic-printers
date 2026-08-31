@@ -1,0 +1,42 @@
+[package]
+name = "cosmic-printers-ui"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+cosmic-settings-printers-core = { path = "../printers-core" }
+cosmic-settings-printers-client = { path = "../printers-client" }
+
+# Keep libcups3 optional so COSMIC Settings does not inherit the native dependency.
+cosmic-settings-printers-server = { path = "../printers-server", optional = true }
+
+# The host lockfile must choose libcosmic's revision; competing revisions have incompatible types.
+# Keep features minimal because Cargo unifies dependency features into every host.
+libcosmic = { git = "https://github.com/pop-os/libcosmic", default-features = false, features = [
+    # Provides Task and the context drawer.
+    "winit",
+    # Required by xdg-open and event-feed reconnect delays.
+    "tokio",
+] }
+
+# Use iced's futures facade so subscription channel types match.
+futures = "0.3"
+i18n-embed = { version = "0.16", features = ["fluent-system", "desktop-requester"] }
+i18n-embed-fl = "0.10"
+rust-embed = "8"
+slab = "0.4"
+tokio = { version = "1", features = ["rt", "time", "process"] }
+tracing = "0.1"
+
+# The headless embedded example supplies the runtime and logging that the toolkit normally owns.
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[[example]]
+name = "embedded_backend"
+required-features = ["embedded"]
+
+[features]
+default = []
+embedded = ["dep:cosmic-settings-printers-server"]

@@ -1,6 +1,8 @@
 use cosmic_settings_printers_core::{
-    Error, GetJobsReply, ListDiscoveredPrintersReply, ListPrinterApplicationsReply,
-    ListPrintersReply, PrintTestPageReply, PrintersEvent,
+    AddPrinterDiscoveryReply, ConfigureDiscoveredPrinterRequest, ConfigurePrinterReply, Error,
+    GetJobsReply, GetPrinterSuppliesReply, ListManualSetupApplicationsReply,
+    ListPrinterApplicationsReply, ListPrintersReply, PrintTestPageReply, PrintersEvent,
+    StartAddPrinterDiscoveryReply,
 };
 use futures_util::Stream;
 
@@ -8,17 +10,40 @@ use futures_util::Stream;
 pub trait CosmicPrintersProxy {
     async fn list_printers(&mut self) -> zlink::Result<Result<ListPrintersReply, Error>>;
 
+    async fn get_printer(
+        &mut self,
+        printer_id: String,
+    ) -> zlink::Result<Result<cosmic_settings_printers_core::PrinterEntry, Error>>;
+
     async fn refresh_available_destinations(&mut self) -> zlink::Result<Result<(), Error>>;
 
     async fn start_printer_application_discovery(&mut self) -> zlink::Result<Result<(), Error>>;
 
-    async fn list_discovered_printers(
-        &mut self,
-    ) -> zlink::Result<Result<ListDiscoveredPrintersReply, Error>>;
-
     async fn list_printer_applications(
         &mut self,
     ) -> zlink::Result<Result<ListPrinterApplicationsReply, Error>>;
+
+    async fn start_add_printer_discovery(
+        &mut self,
+    ) -> zlink::Result<Result<StartAddPrinterDiscoveryReply, Error>>;
+
+    async fn get_add_printer_discovery(
+        &mut self,
+    ) -> zlink::Result<Result<AddPrinterDiscoveryReply, Error>>;
+
+    async fn configure_discovered_printer(
+        &mut self,
+        request: ConfigureDiscoveredPrinterRequest,
+    ) -> zlink::Result<Result<ConfigurePrinterReply, Error>>;
+
+    async fn get_printer_configuration(
+        &mut self,
+        operation_id: String,
+    ) -> zlink::Result<Result<ConfigurePrinterReply, Error>>;
+
+    async fn list_manual_setup_printer_applications(
+        &mut self,
+    ) -> zlink::Result<Result<ListManualSetupApplicationsReply, Error>>;
 
     #[zlink(more)]
     async fn watch_printers(
@@ -36,6 +61,8 @@ pub trait CosmicPrintersProxy {
 
     async fn set_printer_default(&mut self, printer_id: String)
     -> zlink::Result<Result<(), Error>>;
+
+    async fn clear_printer_default(&mut self) -> zlink::Result<Result<(), Error>>;
 
     async fn set_printer_option_default(
         &mut self,
@@ -62,16 +89,15 @@ pub trait CosmicPrintersProxy {
         location: String,
     ) -> zlink::Result<Result<(), Error>>;
 
-    async fn set_printer_shared(
-        &mut self,
-        printer_id: String,
-        shared: bool,
-    ) -> zlink::Result<Result<(), Error>>;
-
     async fn print_test_page(
         &mut self,
         printer_id: String,
     ) -> zlink::Result<Result<PrintTestPageReply, Error>>;
+
+    async fn get_printer_supplies(
+        &mut self,
+        printer_id: String,
+    ) -> zlink::Result<Result<GetPrinterSuppliesReply, Error>>;
 
     async fn get_jobs(
         &mut self,
