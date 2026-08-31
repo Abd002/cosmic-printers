@@ -38,6 +38,70 @@ pub enum Error {
 
     /// Catch-all for IPP/CUPS failures that don't fit a category above.
     CupsFailed { why: String },
+
+    /// Add Printer results were requested before discovery was started.
+    AddPrinterDiscoveryNotStarted,
+
+    /// The request quoted a discovery generation that is no longer current, so
+    /// the devices it described may be gone. Start discovery again.
+    AddPrinterDiscoveryExpired { generation: u64 },
+
+    /// No physical printer with this id exists in the current generation.
+    DiscoveredPhysicalPrinterNotFound { printer_id: String },
+
+    /// No Printer Application candidate with this id belongs to that printer.
+    PrinterApplicationCandidateNotFound { candidate_id: String },
+
+    /// The Printer Application is no longer being advertised.
+    PrinterApplicationNotFound { application_id: String },
+
+    /// The Printer Application is known but could not be reached.
+    PrinterApplicationUnavailable { application_id: String },
+
+    /// The Printer Application requires credentials. Setup continues in its own
+    /// web interface; this service never collects or forwards a password.
+    PrinterApplicationAuthenticationRequired { application_id: String },
+
+    /// The Printer Application does not implement an operation the flow needs.
+    PrinterApplicationOperationNotSupported {
+        application_id: String,
+        operation: String,
+    },
+
+    /// This device already has a printer in that Printer Application.
+    DiscoveredPrinterAlreadyConfigured {
+        application_id: String,
+        printer_name: String,
+    },
+
+    /// The Printer Application refused to create the printer.
+    PrinterConfigurationRejected {
+        application_id: String,
+        status: String,
+        why: String,
+    },
+
+    /// The request was sent but the outcome could not be established, and it was
+    /// not retried because that could create a second printer.
+    PrinterConfigurationUnknownOutcome {
+        application_id: String,
+        printer_name: String,
+    },
+
+    /// The printer cannot be created automatically; setup has to continue in the
+    /// Printer Application's own interface.
+    PrinterConfigurationManualActionRequired {
+        application_id: String,
+        web_interface_uri: Option<String>,
+        why: String,
+    },
+
+    /// A Printer Application's response did not follow the protocol.
+    MalformedPrinterApplicationResponse {
+        application_id: String,
+        operation: String,
+        why: String,
+    },
 }
 
 impl std::fmt::Display for Error {
@@ -63,6 +127,77 @@ impl std::fmt::Display for Error {
             Error::DeviceUnreachable { why } => write!(f, "device unreachable: {why}"),
             Error::Internal { why } => write!(f, "internal error: {why}"),
             Error::CupsFailed { why } => write!(f, "CUPS error: {why}"),
+            Error::AddPrinterDiscoveryNotStarted => {
+                f.write_str("printer discovery has not been started")
+            }
+            Error::AddPrinterDiscoveryExpired { generation } => write!(
+                f,
+                "printer discovery results from generation {generation} are no longer current"
+            ),
+            Error::DiscoveredPhysicalPrinterNotFound { printer_id } => {
+                write!(f, "discovered printer '{printer_id}' was not found")
+            }
+            Error::PrinterApplicationCandidateNotFound { candidate_id } => {
+                write!(
+                    f,
+                    "printer application candidate '{candidate_id}' was not found"
+                )
+            }
+            Error::PrinterApplicationNotFound { application_id } => {
+                write!(f, "printer application '{application_id}' was not found")
+            }
+            Error::PrinterApplicationUnavailable { application_id } => {
+                write!(f, "printer application '{application_id}' is unavailable")
+            }
+            Error::PrinterApplicationAuthenticationRequired { application_id } => write!(
+                f,
+                "printer application '{application_id}' requires authentication"
+            ),
+            Error::PrinterApplicationOperationNotSupported {
+                application_id,
+                operation,
+            } => write!(
+                f,
+                "printer application '{application_id}' does not support '{operation}'"
+            ),
+            Error::DiscoveredPrinterAlreadyConfigured {
+                application_id,
+                printer_name,
+            } => write!(
+                f,
+                "printer application '{application_id}' already has a printer '{printer_name}' for this device"
+            ),
+            Error::PrinterConfigurationRejected {
+                application_id,
+                status,
+                why,
+            } => write!(
+                f,
+                "printer application '{application_id}' rejected the printer ({status}): {why}"
+            ),
+            Error::PrinterConfigurationUnknownOutcome {
+                application_id,
+                printer_name,
+            } => write!(
+                f,
+                "printer application '{application_id}' did not confirm whether '{printer_name}' was created"
+            ),
+            Error::PrinterConfigurationManualActionRequired {
+                application_id,
+                why,
+                ..
+            } => write!(
+                f,
+                "printer application '{application_id}' needs manual setup: {why}"
+            ),
+            Error::MalformedPrinterApplicationResponse {
+                application_id,
+                operation,
+                why,
+            } => write!(
+                f,
+                "printer application '{application_id}' returned an invalid '{operation}' response: {why}"
+            ),
         }
     }
 }

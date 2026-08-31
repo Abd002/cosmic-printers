@@ -10,13 +10,6 @@ pub(crate) enum BackendError {
     #[error("failed to enumerate CUPS printers: {0}")]
     FailedToGetPrinters(#[source] cups_rs::Error),
 
-    #[error("{operation} failed over D-Bus: {source}")]
-    Zbus {
-        operation: &'static str,
-        #[source]
-        source: zbus::Error,
-    },
-
     #[error("blocking task failed: {0}")]
     Join(#[source] tokio::task::JoinError),
 
@@ -48,20 +41,11 @@ pub(crate) enum BackendError {
     #[error("{operation} failed with IPP status {status}")]
     IppStatus { operation: String, status: String },
 
-    #[error("{operation} was rejected: {why}")]
-    HelperRejected {
-        operation: &'static str,
-        why: String,
-    },
+    #[error("no service holds a queue for '{printer}' to administer")]
+    NoQueueToAdminister { printer: String },
 
     #[error("{0}")]
     Internal(String),
-}
-
-impl BackendError {
-    pub(crate) fn zbus(operation: &'static str, source: zbus::Error) -> Self {
-        Self::Zbus { operation, source }
-    }
 }
 
 impl From<cups_rs::Error> for BackendError {
@@ -100,14 +84,13 @@ impl From<BackendError> for Error {
             BackendError::Cups(source) => Self::CupsFailed {
                 why: source.to_string(),
             },
-            BackendError::Zbus { operation, source } => Self::CupsFailed {
-                why: format!("{operation}: {source}"),
-            },
             BackendError::IppStatus { operation, status } => Self::CupsFailed {
                 why: format!("{operation} failed with status {status}"),
             },
-            BackendError::HelperRejected { operation, why } => Self::CupsFailed {
-                why: format!("{operation}: {why}"),
+            // Not a failure of the request so much as of the premise: there is nothing
+            // holding this destination for an administrative change to reach.
+            BackendError::NoQueueToAdminister { printer } => Self::OperationNotSupported {
+                operation: format!("administer '{printer}', which no service holds a queue for"),
             },
         }
     }

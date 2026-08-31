@@ -3,10 +3,15 @@ use std::path::PathBuf;
 use zlink::Connection;
 
 pub use cosmic_settings_printers_core::{
-    Error, GetJobsReply, GroupedDevice, JobFilter, JobInfo, JobState, ListDiscoveredPrintersReply,
-    ListPrinterApplicationsReply, ListPrintersReply, PrintTestPageReply, PrinterApplication,
-    PrinterApplicationState, PrinterEntry, PrinterStatus, PrintersEvent, PrintersEventKind,
-    SupplyLevel, group_printers, printers_match,
+    AddPrinterDiscoveryReply, AddPrinterDiscoveryState, ConfigureDiscoveredPrinterRequest,
+    ConfigurePrinterReply, DiscoveredPhysicalPrinter, DiscoveryGeneration, Error, GetJobsReply,
+    GetPrinterSuppliesReply, GroupedDestination, IdentityConfidenceKind, JobFilter, JobInfo,
+    JobState, ListManualSetupApplicationsReply, ListPrinterApplicationsReply, ListPrintersReply,
+    ManualSetupPrinterApplication, PaCandidateState, PrintTestPageReply, PrinterApplication,
+    PrinterApplicationCandidateSummary, PrinterApplicationCapabilities,
+    PrinterApplicationScanState, PrinterApplicationScanStatus, PrinterApplicationState,
+    PrinterConfigurationState, PrinterEntry, PrinterStatus, PrintersEvent, PrintersEventKind,
+    StartAddPrinterDiscoveryReply, SupplyLevel, group_printers, printers_match,
 };
 
 mod protocol;
@@ -60,11 +65,9 @@ pub async fn connect() -> ClientResult<Client> {
 }
 
 pub struct Client {
-    #[deprecated(note = "use the high-level Client methods instead")]
-    pub conn: Connection<zlink::unix::Stream>,
+    conn: Connection<zlink::unix::Stream>,
 }
 
-#[allow(deprecated)]
 impl Client {
     pub async fn connect() -> ClientResult<Self> {
         let path = socket_path()?;
@@ -80,6 +83,12 @@ impl Client {
         Ok(reply.printers)
     }
 
+    pub async fn printer(&mut self, printer_id: &str) -> ClientResult<PrinterEntry> {
+        flatten(
+            protocol::CosmicPrintersProxy::get_printer(&mut self.conn, printer_id.to_owned()).await,
+        )
+    }
+
     /// Starts a background libcups refresh of the available destination cache.
     pub async fn refresh_available_destinations(&mut self) -> ClientResult<()> {
         flatten(protocol::CosmicPrintersProxy::refresh_available_destinations(&mut self.conn).await)
@@ -93,14 +102,49 @@ impl Client {
         )
     }
 
-    /// Returns printers discovered through Printer Applications.
-    pub async fn discovered_printers(&mut self) -> ClientResult<Vec<PrinterEntry>> {
-        let reply =
-            flatten(protocol::CosmicPrintersProxy::list_discovered_printers(&mut self.conn).await)?;
-        Ok(reply.printers)
+    pub async fn start_add_printer_discovery(
+        &mut self,
+    ) -> ClientResult<StartAddPrinterDiscoveryReply> {
+        flatten(protocol::CosmicPrintersProxy::start_add_printer_discovery(&mut self.conn).await)
     }
 
-    /// Returns the current Printer Application cache without starting discovery.
+    pub async fn add_printer_discovery(&mut self) -> ClientResult<AddPrinterDiscoveryReply> {
+        flatten(protocol::CosmicPrintersProxy::get_add_printer_discovery(&mut self.conn).await)
+    }
+
+    pub async fn configure_discovered_printer(
+        &mut self,
+        request: ConfigureDiscoveredPrinterRequest,
+    ) -> ClientResult<ConfigurePrinterReply> {
+        flatten(
+            protocol::CosmicPrintersProxy::configure_discovered_printer(&mut self.conn, request)
+                .await,
+        )
+    }
+
+    pub async fn printer_configuration(
+        &mut self,
+        operation_id: &str,
+    ) -> ClientResult<ConfigurePrinterReply> {
+        flatten(
+            protocol::CosmicPrintersProxy::get_printer_configuration(
+                &mut self.conn,
+                operation_id.to_owned(),
+            )
+            .await,
+        )
+    }
+
+    pub async fn manual_setup_printer_applications(
+        &mut self,
+    ) -> ClientResult<Vec<ManualSetupPrinterApplication>> {
+        let reply = flatten(
+            protocol::CosmicPrintersProxy::list_manual_setup_printer_applications(&mut self.conn)
+                .await,
+        )?;
+        Ok(reply.printer_applications)
+    }
+
     pub async fn printer_applications(&mut self) -> ClientResult<Vec<PrinterApplication>> {
         let reply = flatten(
             protocol::CosmicPrintersProxy::list_printer_applications(&mut self.conn).await,
@@ -147,6 +191,10 @@ impl Client {
             )
             .await,
         )
+    }
+
+    pub async fn clear_printer_default(&mut self) -> ClientResult<()> {
+        flatten(protocol::CosmicPrintersProxy::clear_printer_default(&mut self.conn).await)
     }
 
     pub async fn set_printer_option_default(
@@ -207,23 +255,23 @@ impl Client {
         )
     }
 
-    pub async fn set_printer_shared(&mut self, printer_id: &str, shared: bool) -> ClientResult<()> {
-        flatten(
-            protocol::CosmicPrintersProxy::set_printer_shared(
-                &mut self.conn,
-                printer_id.to_owned(),
-                shared,
-            )
-            .await,
-        )
-    }
-
     pub async fn print_test_page(&mut self, printer_id: &str) -> ClientResult<i32> {
         let reply = flatten(
             protocol::CosmicPrintersProxy::print_test_page(&mut self.conn, printer_id.to_owned())
                 .await,
         )?;
         Ok(reply.job_id)
+    }
+
+    pub async fn printer_supplies(&mut self, printer_id: &str) -> ClientResult<Vec<SupplyLevel>> {
+        let reply = flatten(
+            protocol::CosmicPrintersProxy::get_printer_supplies(
+                &mut self.conn,
+                printer_id.to_owned(),
+            )
+            .await,
+        )?;
+        Ok(reply.supplies)
     }
 
     pub async fn jobs(
@@ -235,7 +283,7 @@ impl Client {
             protocol::CosmicPrintersProxy::get_jobs(
                 &mut self.conn,
                 printer_id.to_owned(),
-                job_filter_protocol_value(filter).to_owned(),
+                job_filter(filter).to_owned(),
             )
             .await,
         )?;
@@ -303,7 +351,7 @@ fn flatten<T>(
         .map_err(ClientError::Service)
 }
 
-fn job_filter_protocol_value(filter: JobFilter) -> &'static str {
+fn job_filter(filter: JobFilter) -> &'static str {
     match filter {
         JobFilter::Active => "active",
         JobFilter::Completed => "completed",
@@ -311,18 +359,14 @@ fn job_filter_protocol_value(filter: JobFilter) -> &'static str {
     }
 }
 
-#[doc(hidden)]
-#[deprecated(note = "use the high-level Client methods instead")]
-pub use protocol::CosmicPrintersProxy;
-
 #[cfg(test)]
 mod tests {
-    use super::{JobFilter, job_filter_protocol_value};
+    use super::{JobFilter, job_filter};
 
     #[test]
     fn job_filters_match_service_values() {
-        assert_eq!(job_filter_protocol_value(JobFilter::Active), "active");
-        assert_eq!(job_filter_protocol_value(JobFilter::Completed), "completed");
-        assert_eq!(job_filter_protocol_value(JobFilter::All), "all");
+        assert_eq!(job_filter(JobFilter::Active), "active");
+        assert_eq!(job_filter(JobFilter::Completed), "completed");
+        assert_eq!(job_filter(JobFilter::All), "all");
     }
 }

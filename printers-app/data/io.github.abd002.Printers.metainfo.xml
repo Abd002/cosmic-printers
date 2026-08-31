@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.abd002.Printers</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <name>Printers</name>
+  <summary>Configure printers and manage print jobs</summary>
+  <developer id="io.github.abd002">
+    <name>AbdElRahman Khalifa</name>
+  </developer>
+  <description>
+    <p>
+      Printers is a Linux desktop application for configuring printers,
+      viewing printer details, and managing print jobs.
+    </p>
+  </description>
+  <url type="homepage">https://github.com/Abd002/cosmic-printers</url>
+  <launchable type="desktop-id">io.github.abd002.Printers.desktop</launchable>
+  <provides>
+    <binary>printers</binary>
+  </provides>
+  <categories>
+    <category>Settings</category>
+    <category>HardwareSettings</category>
+  </categories>
+  <content_rating type="oars-1.1" />
+  <releases>
+    <release version="0.1.0" date="2026-08-30" type="development" />
+  </releases>
+</component>
