@@ -14,7 +14,6 @@ use cosmic_settings_printers_core::{JobFilter, JobInfo, JobState, PrinterEntry};
 
 use crate::{backend, style, widgets};
 
-const QUEUE_CONTENT_PADDING: [u16; 4] = [0, 32, 32, 32];
 const QUEUE_ROW_PADDING: [u16; 2] = [12, 24];
 const QUEUE_ROW_SPACING: u16 = 16;
 const QUEUE_CONTROLS_WIDTH: f32 = 64.0;
@@ -637,7 +636,6 @@ pub fn queue_view(state: &State) -> Element<'_, Message> {
 
     let queue_surface = widget::mouse_area(
         container(content)
-            .padding(QUEUE_CONTENT_PADDING)
             .width(Length::Fill)
             .height(Length::Fixed(QUEUE_SURFACE_HEIGHT)),
     )

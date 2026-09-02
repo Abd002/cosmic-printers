@@ -206,6 +206,41 @@ impl GroupedDestination {
     pub fn device_uri_prefix(&self) -> Option<&str> {
         self.identity.uri()
     }
+
+    /// Returns a concise title for a queue-only group.
+    pub fn queues_title(&self) -> String {
+        if let Some(model) = shared_queue_value(self.queues.iter().map(PrinterEntry::model)) {
+            return model.to_owned();
+        }
+
+        if self.queues.iter().all(PrinterEntry::endpoint_is_local) {
+            "Local physical device".to_owned()
+        } else if let Some(hostname) =
+            shared_queue_value(self.queues.iter().map(PrinterEntry::hostname))
+        {
+            format!("{hostname} printers")
+        } else {
+            "Remotely discovered printers".to_owned()
+        }
+    }
+
+    /// Returns the shared web endpoint for a queue-only group.
+    pub fn queues_web_page(&self) -> Option<String> {
+        if self.queues.iter().all(PrinterEntry::endpoint_is_local) {
+            Some(format!("http://localhost:{}", self.port()?))
+        } else {
+            Some(format!("http://{}", self.hostname()?))
+        }
+    }
+}
+
+fn shared_queue_value<'a>(values: impl Iterator<Item = Option<&'a str>>) -> Option<&'a str> {
+    let mut values = values.filter_map(|value| {
+        let value = value?.trim();
+        (!value.is_empty()).then_some(value)
+    });
+    let first = values.next()?;
+    values.all(|value| value.eq_ignore_ascii_case(first)).then_some(first)
 }
 
 impl GroupedDestination {
