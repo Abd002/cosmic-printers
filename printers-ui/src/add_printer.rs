@@ -18,7 +18,6 @@ use cosmic_settings_printers_core::{
 };
 
 const SEARCH_WIDTH: f32 = 314.0;
-const CONTENT_SIDE_PADDING: u16 = 40;
 const PRINTER_ROW_HEIGHT: f32 = 54.0;
 const APPLICATION_ROW_HEIGHT: f32 = 48.0;
 const MAX_VISIBLE_ROWS: usize = 4;
@@ -563,15 +562,18 @@ pub fn dialog(state: &State) -> Element<'_, Message> {
         DialogView::SelectApplication { printer_id } => select_application_view(state, printer_id),
         DialogView::Added => added_printers_view(state),
     };
-    let footer_label = match state.view {
-        DialogView::ManualSetup | DialogView::Added => fl!("close"),
-        _ => fl!("cancel"),
-    };
 
-    widget::dialog()
-        .control(body)
-        .primary_action(widget::button::standard(footer_label).on_press(Message::Close))
-        .apply(Element::from)
+    let dialog = widget::dialog().control(body);
+
+    let dialog = match state.view {
+        DialogView::Added | DialogView::ManualSetup => dialog.primary_action(
+            widget::button::standard(fl!("close")).on_press(Message::Close),
+        ),
+        _ => dialog.secondary_action(
+            widget::button::standard(fl!("cancel")).on_press(Message::Close),
+        ),
+    };
+    dialog.apply(Element::from)
 }
 
 fn discovery_view(state: &State) -> Element<'_, Message> {
@@ -592,7 +594,9 @@ fn discovery_view(state: &State) -> Element<'_, Message> {
         settings = settings.push(manual_setup_prompt());
     }
 
-    padded_content(settings, [spacing.space_l, CONTENT_SIDE_PADDING])
+    settings
+        .width(Length::Fill)
+        .into()
 }
 
 fn manual_setup_view(state: &State) -> Element<'_, Message> {
@@ -613,15 +617,14 @@ fn manual_setup_view(state: &State) -> Element<'_, Message> {
 
     let spacing = cosmic::theme::active().cosmic().spacing;
 
-    padded_content(
-        column::with_capacity(2)
-            .spacing(spacing.space_xxs)
-            .push(regular_heading(fl!(
-                "use-a-printer-application-to-manually-set-up-a-printer"
-            )))
-            .push(application_list(rows)),
-        [spacing.space_xxl, CONTENT_SIDE_PADDING],
-    )
+    column::with_capacity(2)
+        .spacing(spacing.space_xxs)
+        .push(regular_heading(fl!(
+            "use-a-printer-application-to-manually-set-up-a-printer"
+        )))
+        .push(application_list(rows))
+        .width(Length::Fill)
+        .into()
 }
 
 fn select_application_view<'a>(state: &'a State, printer_id: &str) -> Element<'a, Message> {
@@ -641,19 +644,18 @@ fn select_application_view<'a>(state: &'a State, printer_id: &str) -> Element<'a
 
     let spacing = cosmic::theme::active().cosmic().spacing;
 
-    padded_content(
-        column::with_capacity(2)
-            .spacing(spacing.space_xxs)
-            .push(regular_heading(fl!(
-                "choose-the-printer-application-to-set-up-your-printer"
-            )))
-            .push(application_list(if rows.is_empty() {
-                vec![plain_row(fl!("no-printer-applications-found"))]
-            } else {
-                rows
-            })),
-        [spacing.space_xxl, CONTENT_SIDE_PADDING],
-    )
+    column::with_capacity(2)
+        .spacing(spacing.space_xxs)
+        .push(regular_heading(fl!(
+            "choose-the-printer-application-to-set-up-your-printer"
+        )))
+        .push(application_list(if rows.is_empty() {
+            vec![plain_row(fl!("no-printer-applications-found"))]
+        } else {
+            rows
+        }))
+        .width(Length::Fill)
+        .into()
 }
 
 fn added_printers_view(state: &State) -> Element<'_, Message> {
@@ -676,26 +678,15 @@ fn added_printers_view(state: &State) -> Element<'_, Message> {
                 .class(cosmic::theme::Svg::Custom(primary_svg())),
         );
 
-    padded_content(
-        column::with_capacity(2)
-            .spacing(spacing.space_xxs)
-            .push(
-                column::with_capacity(2)
-                    .spacing(spacing.space_xxs)
-                    .push(section_heading(fl!("added-printers")))
-                    .push(list_view(rows)),
-            )
-            .push(description),
-        [spacing.space_l, CONTENT_SIDE_PADDING],
-    )
-}
-
-fn padded_content<'a>(
-    content: impl Into<Element<'a, Message>>,
-    padding: [u16; 2],
-) -> Element<'a, Message> {
-    container(content)
-        .padding(padding)
+    column::with_capacity(2)
+        .spacing(spacing.space_xxs)
+        .push(
+            column::with_capacity(2)
+                .spacing(spacing.space_xxs)
+                .push(section_heading(fl!("added-printers")))
+                .push(list_view(rows)),
+        )
+        .push(description)
         .width(Length::Fill)
         .into()
 }

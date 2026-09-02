@@ -112,6 +112,7 @@ pub const SUPPLY_BAR_HEIGHT: f32 = 20.0;
 pub const SUPPLY_TRACK_HEIGHT: f32 = 12.0;
 pub const SUPPLY_PERCENTAGE_WIDTH: f32 = 48.0;
 pub const SUPPLY_DOT_SIZE: f32 = 8.0;
+pub const INLINE_EDIT_HEIGHT: f32 = 32.0;
 /// The mark stands taller than the bar so it reads over whatever is under it.
 pub const SUPPLY_MARK_WIDTH: f32 = 2.0;
 pub const SUPPLY_MARK_HEIGHT: f32 = 16.0;

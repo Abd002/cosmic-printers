@@ -213,9 +213,7 @@ impl cosmic::Application for App {
                 .list
                 .add_printer_dialog()
                 .map(|dialog| add_printer::dialog(dialog).map(Message::from)),
-            Screen::Details => {
-                details::dialog_view(&self.details).map(|it| it.map(Message::Details))
-            }
+            Screen::Details => None,
         }
     }
 

@@ -672,6 +672,8 @@ fn printer_group(state: &State, group: GroupedDestination) -> Element<'static, M
 
     if let Some(application) = group.printer_application() {
         card = card.add(printer_application_header(application));
+    } else if group.queues().len() > 1 {
+        card = card.add(grouped_queue_header(&group));
     }
 
     for printer in group.queues() {
@@ -698,6 +700,31 @@ fn printer_application_header(application: &PrinterApplication) -> Element<'stat
         .spacing(spacing.space_xxxs);
 
     if let Some(web_page) = printer_application_web_page(application) {
+        header = header.push(icon_button(
+            crate::icons::web_page(),
+            Message::OpenPrinterWebPage(web_page),
+        ));
+    }
+
+    header
+        .padding([spacing.space_xxs, spacing.space_m])
+        .width(Length::Fill)
+        .apply(Element::from)
+}
+
+fn grouped_queue_header(group: &GroupedDestination) -> Element<'static, Message> {
+    let spacing = cosmic::theme::active().cosmic().spacing;
+    let title = text::heading(group.queues_title())
+        .width(Length::Fill)
+        .wrapping(Wrapping::None)
+        .ellipsize(Ellipsize::End(EllipsizeHeightLimit::Lines(1)));
+
+    let mut header = row::with_capacity(2)
+        .push(title)
+        .align_y(Alignment::Center)
+        .spacing(spacing.space_xxxs);
+
+    if let Some(web_page) = group.queues_web_page() {
         header = header.push(icon_button(
             crate::icons::web_page(),
             Message::OpenPrinterWebPage(web_page),

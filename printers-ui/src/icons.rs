@@ -3,10 +3,6 @@
 use cosmic::widget::icon;
 use std::sync::LazyLock;
 
-pub(crate) fn edit() -> &'static str {
-    *EDIT
-}
-
 pub(crate) fn web_page() -> &'static str {
     "web-browser-symbolic"
 }
@@ -14,9 +10,6 @@ pub(crate) fn web_page() -> &'static str {
 pub(crate) fn printer_queue() -> &'static str {
     *PRINTER_QUEUE
 }
-
-static EDIT: LazyLock<&'static str> =
-    LazyLock::new(|| resolve("edit-symbolic", "document-edit-symbolic"));
 
 static PRINTER_QUEUE: LazyLock<&'static str> =
     LazyLock::new(|| resolve("printer-queue-symbolic", "printer-printing-symbolic"));
@@ -52,7 +45,6 @@ mod tests {
     ];
 
     const FALLBACKS: &[(&str, &str)] = &[
-        ("edit-symbolic", "document-edit-symbolic"),
         ("printer-queue-symbolic", "printer-printing-symbolic"),
     ];
 

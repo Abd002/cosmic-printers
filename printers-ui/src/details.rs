@@ -9,8 +9,8 @@ use cosmic::{Apply, Element, surface};
 use cosmic_settings_printers_core::{PrinterStatus, SupplyLevel, SupplyRgb, SupplyWarning};
 
 use crate::style::{
-    RADIUS_SUPPLY_BAR, SUPPLY_BAR_HEIGHT, SUPPLY_DOT_SIZE, SUPPLY_GRAPH_HEIGHT,
-    SUPPLY_LABEL_HEIGHT, SUPPLY_MARK_HEIGHT, SUPPLY_MARK_WIDTH, SUPPLY_OUTLINE_TOLERANCE,
+    INLINE_EDIT_HEIGHT, RADIUS_SUPPLY_BAR, SUPPLY_BAR_HEIGHT, SUPPLY_DOT_SIZE, SUPPLY_GRAPH_HEIGHT,
+    SUPPLY_LABEL_HEIGHT, SUPPLY_OUTLINE_TOLERANCE,
     SUPPLY_PERCENTAGE_WIDTH, SUPPLY_TRACK_HEIGHT,
 };
 use cosmic_settings_printers_core::PrinterEntry;
@@ -22,14 +22,12 @@ use crate::backend::Backend;
 pub enum Message {
     /// Returns to the printer list.
     GoBack,
-    /// Opens the location editor.
-    EditLocation(String),
+    /// Toggles the location editor.
+    LocationEdit(bool),
     /// Updates the location draft.
-    EditLocationChanged(String),
+    LocationInput(String),
     /// Saves the printer location.
-    SubmitLocation(String, String),
-    /// Closes the location editor.
-    CancelDialog,
+    LocationSubmit,
     /// Loads a printer into the page.
     LoadPrinter {
         /// Printer to display.
@@ -96,18 +94,11 @@ pub struct State {
     backend: Backend,
     printer: Option<PrinterEntry>,
     available_printers: Vec<PrinterEntry>,
-    dialog: Option<Dialog>,
+    editing_location: bool,
+    location_input: String,
     is_default: bool,
     supplies: Vec<SupplyLevel>,
     active_jobs: Option<usize>,
-}
-
-#[derive(Clone, Debug)]
-enum Dialog {
-    EditLocation {
-        printer_id: String,
-        location: String,
-    },
 }
 
 impl State {
@@ -155,17 +146,15 @@ impl State {
                     Task::none()
                 }
             }
-            Message::CancelDialog => {
-                self.dialog = None;
+            Message::LocationEdit(editing) => {
+                self.editing_location = editing;
                 Task::none()
             }
-            Message::EditLocationChanged(location) => {
-                self.update_location_draft(location);
+            Message::LocationInput(location) => {
+                self.location_input = location;
                 Task::none()
             }
-            Message::SubmitLocation(printer_id, location) => {
-                self.submit_location(printer_id, location)
-            }
+            Message::LocationSubmit => self.submit_location(),
             Message::Surface(action) => cosmic::task::message(M::from(Request::Surface(action))),
             Message::ToggleDefaultPrinter(printer_id, true) => {
                 self.is_default = true;
@@ -181,10 +170,6 @@ impl State {
             Message::PrinterDeleted(result) => self.finish_printer_deletion(result),
             Message::PrinterDefaultSet(result) => Self::finish_default_printer_update(result),
             Message::PrinterLocationSet(result) => Self::finish_location_update(result),
-            Message::EditLocation(printer_id) => {
-                self.open_location_dialog(printer_id);
-                Task::none()
-            }
             Message::SelectPaperSize(printer_id, index) => {
                 self.select_paper_size(printer_id, index)
             }
@@ -209,6 +194,8 @@ impl State {
         is_default: bool,
         available_printers: Vec<PrinterEntry>,
     ) {
+        self.location_input = printer.location().unwrap_or_default().to_string();
+        self.editing_location = false;
         self.supplies = printer.supplies();
         self.active_jobs = None;
         self.printer = Some(printer);
@@ -216,7 +203,7 @@ impl State {
         self.available_printers = available_printers;
     }
 
-    // Preserve dialog drafts while refreshing cached destination data.
+    // Preserve location draft while refreshing cached destination data.
     fn refresh_printers(&mut self, printers: Vec<PrinterEntry>) -> bool {
         let Some(shown) = self
             .printer
@@ -232,6 +219,9 @@ impl State {
 
         match refreshed {
             Some(refreshed) if changed => {
+                if !self.editing_location {
+                    self.location_input = refreshed.location().unwrap_or_default().to_string();
+                }
                 self.supplies = refreshed.supplies();
                 self.is_default = refreshed.is_default();
                 self.printer = Some(refreshed);
@@ -241,6 +231,7 @@ impl State {
                 self.supplies.clear();
                 self.active_jobs = None;
                 self.is_default = false;
+                self.editing_location = false;
             }
             Some(_) => {}
         }
@@ -284,26 +275,18 @@ impl State {
         }
     }
 
-    fn update_location_draft(&mut self, location: String) {
-        if let Some(Dialog::EditLocation {
-            location: current, ..
-        }) = &mut self.dialog
-        {
-            *current = location;
-        }
-    }
-
-    fn submit_location<M>(&mut self, printer_id: String, location: String) -> Task<M>
+    fn submit_location<M>(&mut self) -> Task<M>
     where
         M: 'static + Send + From<Message>,
     {
-        self.dialog = None;
+        self.editing_location = false;
 
-        if let Some(printer) = self
-            .printer
-            .as_mut()
-            .filter(|printer| printer.id() == printer_id)
-        {
+        let Some(printer_id) = self.printer.as_ref().map(|p| p.id().to_string()) else {
+            return Task::none();
+        };
+        let location = self.location_input.clone();
+
+        if let Some(printer) = self.printer.as_mut() {
             printer.set_location(location.clone());
         }
         let backend = self.backend.clone();
@@ -400,20 +383,6 @@ impl State {
         M: 'static + Send + From<crate::list::Message>,
     {
         Self::finish_optimistic_change(result, "location")
-    }
-
-    fn open_location_dialog(&mut self, printer_id: String) {
-        let location = self
-            .printer
-            .as_ref()
-            .filter(|printer| printer.id() == printer_id)
-            .and_then(|printer| printer.location().map(str::to_owned))
-            .unwrap_or_default();
-
-        self.dialog = Some(Dialog::EditLocation {
-            printer_id,
-            location,
-        });
     }
 
     fn select_paper_size<M>(&mut self, printer_id: String, index: usize) -> Task<M>
@@ -522,36 +491,6 @@ pub fn header_view(state: &State) -> Option<Element<'_, Message>> {
     state.printer.as_ref().map(details_header)
 }
 
-/// Returns the active details dialog.
-pub fn dialog_view(state: &State) -> Option<Element<'_, Message>> {
-    state.dialog.as_ref().map(|dialog| match dialog {
-        Dialog::EditLocation {
-            printer_id,
-            location,
-        } => {
-            let input = widget::text_input("", location)
-                .on_input(Message::EditLocationChanged)
-                .on_submit({
-                    let printer_id = printer_id.clone();
-                    move |location| Message::SubmitLocation(printer_id.clone(), location)
-                });
-
-            let primary_action = widget::button::suggested(fl!("save")).on_press(
-                Message::SubmitLocation(printer_id.clone(), location.clone()),
-            );
-            let secondary_action =
-                widget::button::standard(fl!("cancel")).on_press(Message::CancelDialog);
-
-            widget::dialog()
-                .title(fl!("location"))
-                .control(input)
-                .primary_action(primary_action)
-                .secondary_action(secondary_action)
-                .apply(Element::from)
-        }
-    })
-}
-
 /// Returns the empty details view.
 pub fn nothing_selected_view() -> Element<'static, Message> {
     text::body(fl!("no-printer-selected")).apply(Element::from)
@@ -588,18 +527,22 @@ pub fn printer_information_view<'a>(state: &'a State, title: &'a str) -> Element
 
     settings::section()
         .title(title)
-        .add(settings::item(fl!("location"), location_value(printer)))
+        .add(
+            settings::item::builder(fl!("location"))
+                .flex_control(location_control(state, printer))
+                .align_items(Alignment::Center),
+        )
         .add(settings::item(
             fl!("model"),
-            value_text(printer.model().unwrap_or_default().to_string()),
+            value_text(display_or_unknown(printer.model())),
         ))
         .add(settings::item(
             fl!("device-name"),
-            value_text(printer.name().to_string()),
+            value_text(display_or_unknown(Some(printer.name()).filter(|n| !n.is_empty()))),
         ))
         .add(settings::item(
             fl!("driver-version"),
-            value_text(printer.driver_version().unwrap_or_default().to_string()),
+            value_text(display_or_unknown(printer.driver_version())),
         ))
         .apply(Element::from)
 }
@@ -900,22 +843,32 @@ fn supply_rows(supplies: usize) -> usize {
 }
 
 // Location changes require a managed queue and scheduler administration access.
-fn location_value(printer: &PrinterEntry) -> Element<'static, Message> {
-    let location = printer.location().unwrap_or_default().to_string();
-
+fn location_control<'a>(state: &'a State, printer: &'a PrinterEntry) -> Element<'a, Message> {
     if !printer.can_administer() {
-        return value_text(location);
+        return value_text(display_or_unknown(printer.location()));
     }
 
-    row::with_capacity(2)
+    let input = widget::editable_input(
+        fl!("unknown"),
+        &state.location_input,
+        state.editing_location,
+        Message::LocationEdit,
+    )
+    .width(250.0)
+    .padding([0, 8])
+    .on_input(Message::LocationInput)
+    .on_unfocus(Message::LocationSubmit)
+    .on_submit(|_| Message::LocationSubmit);
+
+    container(input)
+        .height(Length::Fixed(INLINE_EDIT_HEIGHT))
+        .align_x(Alignment::End)
         .align_y(Alignment::Center)
-        .spacing(cosmic::theme::active().cosmic().space_xxs())
-        .push(value_text(location))
-        .push(
-            widget::button::icon(widget::icon::from_name(crate::icons::edit()))
-                .on_press(Message::EditLocation(printer.id().to_string())),
-        )
-        .apply(Element::from)
+        .into()
+}
+
+fn display_or_unknown(value: Option<&str>) -> String {
+    value.map(str::to_string).unwrap_or_else(|| fl!("unknown"))
 }
 
 fn queue_item(label: String, value: String, message: Message) -> Element<'static, Message> {
@@ -954,7 +907,6 @@ fn supply_graph(supply: &SupplyLevel) -> Element<'static, Message> {
                 .spacing(8)
                 .push(
                     text::body(supply_name(supply))
-                        .width(Length::Fill)
                         .wrapping(Wrapping::None)
                         .ellipsize(Ellipsize::End(EllipsizeHeightLimit::Lines(1))),
                 )
@@ -1033,22 +985,22 @@ fn progress_track(supply: &SupplyLevel, colors: &[Color]) -> Element<'static, Me
         .class(crate::widgets::fill_container(
             crate::style::supply_track(),
             RADIUS_SUPPLY_BAR,
-        ));
+        )).into();
+    track
+    // let Some(warning) = supply.warning else {
+    //     return track.into();
+    // };
 
-    let Some(warning) = supply.warning else {
-        return track.into();
-    };
-
-    cosmic::iced::widget::stack![
-        container(track)
-            .width(Length::Fill)
-            .height(Length::Fixed(SUPPLY_BAR_HEIGHT))
-            .align_y(Alignment::Center),
-        warning_mark(warning, supply.level_percent),
-    ]
-    .width(Length::Fill)
-    .height(Length::Fixed(SUPPLY_BAR_HEIGHT))
-    .into()
+    // cosmic::iced::widget::stack![
+    //     container(track)
+    //         .width(Length::Fill)
+    //         .height(Length::Fixed(SUPPLY_BAR_HEIGHT))
+    //         .align_y(Alignment::Center),
+    //     warning_mark(warning, supply.level_percent),
+    // ]
+    // .width(Length::Fill)
+    // .height(Length::Fixed(SUPPLY_BAR_HEIGHT))
+    // .into()
 }
 
 fn supply_fill(level: Option<u8>, colors: &[Color]) -> Element<'static, Message> {
@@ -1094,39 +1046,39 @@ fn band(color: Color) -> container::Container<'static, Message, cosmic::Theme> {
         .class(style)
 }
 
-fn warning_mark(warning: SupplyWarning, level: Option<u8>) -> Element<'static, Message> {
-    let reached = level.is_some_and(|level| warning.is_reached_by(level));
-    let before = warning.level_percent.min(100);
-    let after = 100_u8.saturating_sub(before);
-    let mut marks = row::with_capacity(3)
-        .width(Length::Fill)
-        .height(Length::Fixed(SUPPLY_BAR_HEIGHT))
-        .align_y(Alignment::Center);
+// fn warning_mark(warning: SupplyWarning, level: Option<u8>) -> Element<'static, Message> {
+//     let reached = level.is_some_and(|level| warning.is_reached_by(level));
+//     let before = warning.level_percent.min(100);
+//     let after = 100_u8.saturating_sub(before);
+//     let mut marks = row::with_capacity(3)
+//         .width(Length::Fill)
+//         .height(Length::Fixed(SUPPLY_BAR_HEIGHT))
+//         .align_y(Alignment::Center);
 
-    if before > 0 {
-        marks = marks.push(horizontal_space().width(Length::FillPortion(u16::from(before))));
-    }
+//     if before > 0 {
+//         marks = marks.push(horizontal_space().width(Length::FillPortion(u16::from(before))));
+//     }
 
-    marks = marks.push(
-        container(horizontal_space())
-            .width(Length::Fixed(SUPPLY_MARK_WIDTH))
-            .height(Length::Fixed(SUPPLY_MARK_HEIGHT))
-            .class(crate::widgets::fill_container(
-                if reached {
-                    crate::style::status_stopped()
-                } else {
-                    cosmic::theme::active().cosmic().on_bg_color().into()
-                },
-                1.0,
-            )),
-    );
+//     marks = marks.push(
+//         container(horizontal_space())
+//             .width(Length::Fixed(SUPPLY_MARK_WIDTH))
+//             .height(Length::Fixed(SUPPLY_MARK_HEIGHT))
+//             .class(crate::widgets::fill_container(
+//                 if reached {
+//                     crate::style::status_stopped()
+//                 } else {
+//                     cosmic::theme::active().cosmic().on_bg_color().into()
+//                 },
+//                 1.0,
+//             )),
+//     );
 
-    if after > 0 {
-        marks = marks.push(horizontal_space().width(Length::FillPortion(u16::from(after))));
-    }
+//     if after > 0 {
+//         marks = marks.push(horizontal_space().width(Length::FillPortion(u16::from(after))));
+//     }
 
-    marks.into()
-}
+//     marks.into()
+// }
 
 fn bar_colors(supply: &SupplyLevel) -> Vec<Color> {
     supply
