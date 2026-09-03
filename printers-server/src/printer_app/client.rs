@@ -141,6 +141,15 @@ impl PaRequest {
         Ok(self)
     }
 
+    pub(super) fn integer(mut self, name: &str, value: i32) -> Result<Self, PaError> {
+        self.request
+            .add_integer(IppTag::Operation, IppValueTag::Integer, name, value)
+            .cups_err()
+            .map_err(PaError::from_backend)?;
+
+        Ok(self)
+    }
+
     /// Adds a multi-valued keyword attribute, skipping an empty list.
     pub(super) fn keywords(mut self, name: &str, values: &[&str]) -> Result<Self, PaError> {
         if values.is_empty() {

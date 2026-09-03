@@ -100,6 +100,41 @@ impl State {
         );
     }
 
+    pub(crate) fn remove_cached_application_printer(
+        &self,
+        application_id: &str,
+        printer: &ConfiguredPrinter,
+    ) {
+        let mut model = self.locked_model();
+
+        let remove_printers =
+            if let Some(remembered) = model.application_printers.get_mut(application_id) {
+                remembered
+                    .printers
+                    .retain(|cached| !same_application_printer(cached, printer));
+                remembered.printers.is_empty()
+            } else {
+                false
+            };
+        if remove_printers {
+            model.application_printers.remove(application_id);
+        }
+
+        let remove_devices =
+            if let Some(remembered) = model.configured_devices.get_mut(application_id) {
+                remembered.by_device_uri.retain(|device_uri, name| {
+                    printer.device_uri.as_deref() != Some(device_uri.as_str())
+                        && !name.eq_ignore_ascii_case(&printer.name)
+                });
+                remembered.by_device_uri.is_empty()
+            } else {
+                false
+            };
+        if remove_devices {
+            model.configured_devices.remove(application_id);
+        }
+    }
+
     /// Returns what this application recently answered about each device's drivers.
     pub(crate) fn remembered_driver_answers(
         &self,
@@ -148,5 +183,65 @@ impl State {
                 },
             );
         }
+    }
+}
+
+fn same_application_printer(left: &ConfiguredPrinter, right: &ConfiguredPrinter) -> bool {
+    left.name.eq_ignore_ascii_case(&right.name)
+        || left
+            .printer_uri
+            .as_deref()
+            .zip(right.printer_uri.as_deref())
+            .is_some_and(|(left, right)| left == right)
+        || left
+            .device_uri
+            .as_deref()
+            .zip(right.device_uri.as_deref())
+            .is_some_and(|(left, right)| left == right)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn printer(name: &str, device_uri: &str) -> ConfiguredPrinter {
+        ConfiguredPrinter {
+            printer_id: Some(1),
+            name: name.to_string(),
+            device_uri: Some(device_uri.to_string()),
+            printer_uri: Some(format!("ipp://localhost:8000/ipp/print/{name}")),
+            printer_uuid: None,
+            web_interface_uri: None,
+        }
+    }
+
+    #[test]
+    fn removing_one_cached_application_printer_keeps_the_other_cached_printers() {
+        let context = State::new();
+        let deleted = printer("Deleted", "socket://192.0.2.10");
+        let kept = printer("Kept", "socket://192.0.2.11");
+
+        context.remember_application_printers("app", vec![deleted.clone(), kept.clone()]);
+        context.remember_configured_devices(
+            "app",
+            HashMap::from([
+                (
+                    deleted.device_uri.clone().expect("test printer has URI"),
+                    deleted.name.clone(),
+                ),
+                (
+                    kept.device_uri.clone().expect("test printer has URI"),
+                    kept.name.clone(),
+                ),
+            ]),
+        );
+
+        context.remove_cached_application_printer("app", &deleted);
+
+        assert_eq!(context.remembered_application_printers("app"), vec![kept]);
+        assert_eq!(
+            context.remembered_configured_devices("app"),
+            HashMap::from([("socket://192.0.2.11".to_string(), "Kept".to_string())])
+        );
     }
 }

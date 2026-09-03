@@ -18,21 +18,25 @@ pub(super) fn read_printer_attrs(
     printer: &mut PrinterEntry,
     owned: &[OwnedPrinter],
 ) -> BackendResult<()> {
+    let owner = reconcile::find_owner(printer, owned);
+    if let Some(owner) = owner {
+        printer.set_printer_application_id(&owner.application_id);
+    }
+
     if printer.printer_uri().is_some_and(is_local_scheduler_uri) {
         return reload_attrs_from_printer_uri(printer, PRINTER_ATTRIBUTES);
     }
 
-    if let Some(owner) = reconcile::find_owner(printer, owned) {
+    if let Some(owner) = owner {
         apply_owning_application(printer, owner);
 
         return reload_attrs_from_printer_uri(printer, PRINTER_ATTRIBUTES);
     }
 
-    if printer.device_uri().is_some() {
-        return reload_attrs_from_device_uri(destination, printer, PRINTER_ATTRIBUTES);
+    match printer.device_uri() {
+        Some(_) => reload_attrs_from_device_uri(destination, printer, PRINTER_ATTRIBUTES),
+        None => reload_attrs_from_printer_uri(printer, PRINTER_ATTRIBUTES),
     }
-
-    reload_attrs_from_printer_uri(printer, PRINTER_ATTRIBUTES)
 }
 
 /// Applies the owning application's exact printer URI and web page to a destination.
@@ -50,7 +54,7 @@ fn apply_owning_application(printer: &mut PrinterEntry, owner: &OwnedPrinter) {
 
 /// Which service holds a destination, and so where administering it has to be sent.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(in crate::cups) enum Owner {
+pub(crate) enum Owner {
     /// The local scheduler holds a queue for it, and is administered through `/admin`
     /// because it offers no system service of its own.
     Scheduler,
@@ -66,7 +70,7 @@ pub(in crate::cups) enum Owner {
 }
 
 /// Decides which service holds a destination.
-pub(in crate::cups) fn owner_of(printer: &PrinterEntry) -> Owner {
+pub(crate) fn owner_of(printer: &PrinterEntry) -> Owner {
     let Some(printer_uri) = printer.printer_uri() else {
         return Owner::Unowned;
     };
