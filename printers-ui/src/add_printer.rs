@@ -311,13 +311,12 @@ impl State {
         M: 'static + Send + From<Message>,
     {
         match reply.state {
-            PrinterConfigurationState::Creating
-            | PrinterConfigurationState::AwaitingAdvertisement => {
+            PrinterConfigurationState::Creating => {
                 self.pending_operation = Some(reply.operation_id);
-                // Destination refresh lets the daemon match the newly advertised queue.
                 Action::RefreshPrinters
             }
-            PrinterConfigurationState::Reconciled
+            PrinterConfigurationState::AwaitingAdvertisement
+            | PrinterConfigurationState::Reconciled
             | PrinterConfigurationState::AlreadyConfigured => {
                 self.error = None;
                 self.added.push(AddedPrinter {
