@@ -3,6 +3,7 @@
 use std::sync::OnceLock;
 
 use cosmic::app::{Core, Settings, Task, context_drawer};
+use cosmic::iced::widget::scrollable::{self as iced_scrollable, AbsoluteOffset};
 use cosmic::iced::{Length, Subscription, window};
 use cosmic::widget::{self, column, scrollable};
 use cosmic::{ApplicationExt, Apply, Element};
@@ -27,6 +28,7 @@ enum Message {
     Details(details::Message),
     Queue(queue::Message),
     Request(Request),
+    PrintersScrolled(AbsoluteOffset),
     CloseQueue,
 }
 
@@ -84,6 +86,8 @@ impl Default for Titles {
 struct App {
     core: Core,
     screen: Screen,
+    printers_scroll_id: widget::Id,
+    printers_scroll_offset: AbsoluteOffset,
     queue_open: bool,
     titles: Titles,
     list: list::State,
@@ -111,6 +115,8 @@ impl cosmic::Application for App {
         let mut app = Self {
             core,
             screen: Screen::Printers,
+            printers_scroll_id: widget::Id::unique(),
+            printers_scroll_offset: AbsoluteOffset::default(),
             queue_open: false,
             titles: Titles::default(),
             list: list::State::default(),
@@ -151,6 +157,10 @@ impl cosmic::Application for App {
             Message::List(message) => self.list.update(message),
             Message::Details(message) => self.details.update(message),
             Message::Queue(message) => self.queue.update(message),
+            Message::PrintersScrolled(offset) => {
+                self.printers_scroll_offset = offset;
+                Task::none()
+            }
             Message::CloseQueue => {
                 self.close_queue();
                 Task::none()
@@ -162,7 +172,10 @@ impl cosmic::Application for App {
             }
             Message::Request(Request::GoBack) => {
                 self.screen = Screen::Printers;
-                Task::none()
+                iced_scrollable::scroll_to(
+                    self.printers_scroll_id.clone(),
+                    self.printers_scroll_offset.into(),
+                )
             }
             Message::Request(Request::ShowQueue) => {
                 self.queue_open = true;
@@ -187,11 +200,18 @@ impl cosmic::Application for App {
             Screen::Details => self.details_view(spacing.space_l),
         };
 
-        content
+        let scrollable = content
             .padding([spacing.space_m, spacing.space_l])
             .apply(scrollable)
-            .height(Length::Fill)
-            .apply(Element::from)
+            .height(Length::Fill);
+
+        match self.screen {
+            Screen::Printers => scrollable
+                .id(self.printers_scroll_id.clone())
+                .on_scroll(|viewport| Message::PrintersScrolled(viewport.absolute_offset()))
+                .into(),
+            Screen::Details => scrollable.into(),
+        }
     }
 
     fn view_window(&self, id: window::Id) -> Element<'_, Message> {
