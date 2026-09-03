@@ -3,7 +3,7 @@
 use std::sync::OnceLock;
 
 use cosmic::app::{Core, Settings, Task, context_drawer};
-use cosmic::iced::{Length, Subscription};
+use cosmic::iced::{Length, Subscription, window};
 use cosmic::widget::{self, column, scrollable};
 use cosmic::{ApplicationExt, Apply, Element};
 use cosmic_printers_ui::{Backend, Request, add_printer, details, list, queue, strings};
@@ -124,6 +124,7 @@ impl cosmic::Application for App {
         };
 
         let backend = backend();
+        app.list.set_dialog_application_id(Self::APP_ID);
         app.list.set_backend(backend.clone());
         app.details.set_backend(backend.clone());
         app.queue.set_backend(backend);
@@ -193,6 +194,13 @@ impl cosmic::Application for App {
             .apply(Element::from)
     }
 
+    fn view_window(&self, id: window::Id) -> Element<'_, Message> {
+        self.list
+            .add_printer_window(id)
+            .map(|dialog| add_printer::dialog(dialog).map(Message::from))
+            .unwrap_or_else(|| widget::space::horizontal().into())
+    }
+
     fn context_drawer(&self) -> Option<context_drawer::ContextDrawer<'_, Message>> {
         if !self.queue_open || !self.queue.has_printer() {
             return None;
@@ -207,18 +215,18 @@ impl cosmic::Application for App {
         )
     }
 
-    fn dialog(&self) -> Option<Element<'_, Message>> {
-        match self.screen {
-            Screen::Printers => self
-                .list
-                .add_printer_dialog()
-                .map(|dialog| add_printer::dialog(dialog).map(Message::from)),
-            Screen::Details => None,
-        }
+    fn on_escape(&mut self) -> Task<Message> {
+        self.list
+            .update(list::Message::AddPrinter(add_printer::Message::Close))
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        Subscription::run(printer_events).map(Message::List)
+        Subscription::batch([
+            Subscription::run(printer_events).map(Message::List),
+            window::close_events()
+                .map(list::Message::AddPrinterDialogClosed)
+                .map(Message::List),
+        ])
     }
 }
 
