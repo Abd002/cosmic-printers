@@ -4,12 +4,13 @@ use crate::backend::{Backend, BackendError};
 use cosmic::app::Task;
 use cosmic::iced::core::text::{Ellipsize, EllipsizeHeightLimit, Wrapping};
 use cosmic::iced::widget::scrollable::{Direction, Scrollbar};
-use cosmic::iced::{Alignment, Length};
+use cosmic::iced::{Alignment, Length, Padding, Size, window};
 use cosmic::widget::{
-    self, button, column, container, icon, row, scrollable, space::horizontal as horizontal_space,
+    self, button, column, container, icon, row, scrollable,
+    space::{horizontal as horizontal_space, vertical as vertical_space},
     text,
 };
-use cosmic::{Apply, Element};
+use cosmic::{Apply, Element, cosmic_theme};
 use cosmic_settings_printers_core::{
     AddPrinterDiscoveryReply, AddPrinterDiscoveryState, ConfigureDiscoveredPrinterRequest,
     ConfigurePrinterReply, DiscoveredPhysicalPrinter, DiscoveryGeneration, Error as PrinterError,
@@ -17,10 +18,10 @@ use cosmic_settings_printers_core::{
     PrinterConfigurationState, PrinterEntry,
 };
 
-const SEARCH_WIDTH: f32 = 314.0;
+const INITIAL_WINDOW_SIZE: Size = Size::new(680.0, 570.0);
+const SEARCH_MAX_WIDTH: f32 = 314.0;
 const PRINTER_ROW_HEIGHT: f32 = 54.0;
 const APPLICATION_ROW_HEIGHT: f32 = 48.0;
-const MAX_VISIBLE_ROWS: usize = 4;
 
 /// Active Add Printer dialog view.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -47,6 +48,7 @@ pub enum DialogView {
 #[derive(Clone, Debug)]
 pub struct State {
     backend: Backend,
+    window_id: Option<window::Id>,
     /// Search query.
     pub search: String,
     /// Current user-visible error.
@@ -80,6 +82,7 @@ impl State {
     pub fn new(backend: Backend, configured_printers: Vec<PrinterEntry>) -> Self {
         Self {
             backend,
+            window_id: None,
             search: String::new(),
             error: None,
             configured_printers,
@@ -94,6 +97,14 @@ impl State {
     /// Sets the printer backend.
     pub fn set_backend(&mut self, backend: Backend) {
         self.backend = backend;
+    }
+
+    pub(crate) fn set_window_id(&mut self, window_id: window::Id) {
+        self.window_id = Some(window_id);
+    }
+
+    pub(crate) fn window_id(&self) -> Option<window::Id> {
+        self.window_id
     }
 
     /// Starts and loads a discovery round.
@@ -119,6 +130,12 @@ impl State {
     {
         match message {
             Message::Close => Action::Close,
+            Message::DragWindow => self.window_id.map_or(Action::None, |window_id| {
+                Action::Task(window::drag::<cosmic::Action<M>>(window_id))
+            }),
+            Message::ToggleMaximizeWindow => self.window_id.map_or(Action::None, |window_id| {
+                Action::Task(window::toggle_maximize::<cosmic::Action<M>>(window_id))
+            }),
             Message::Search(search) => {
                 self.search = search;
                 Action::None
@@ -420,11 +437,37 @@ impl State {
     }
 }
 
+pub(crate) fn open_window<M>(application_id: &str) -> (window::Id, Task<M>)
+where
+    M: 'static + Send,
+{
+    let mut settings = window::Settings {
+        decorations: false,
+        min_size: Some(Size::new(360.0, 180.0)),
+        resizable: true,
+        size: INITIAL_WINDOW_SIZE,
+        transparent: true,
+        ..Default::default()
+    };
+
+    #[cfg(target_os = "linux")]
+    {
+        settings.platform_specific.application_id = application_id.to_string();
+    }
+
+    let (window_id, task) = window::open(settings);
+    (window_id, task.map(|_| cosmic::action::none()))
+}
+
 /// Messages handled by the Add Printer dialog.
 #[derive(Clone, Debug)]
 pub enum Message {
     /// Closes the dialog.
     Close,
+    /// Starts moving the dialog window.
+    DragWindow,
+    /// Toggles the dialog window between maximized and restored.
+    ToggleMaximizeWindow,
     /// Updates the search query.
     Search(String),
     /// Reports discovery results.
@@ -556,6 +599,7 @@ fn setup_error(error: BackendError) -> SetupError {
 
 /// Returns the active Add Printer dialog view.
 pub fn dialog(state: &State) -> Element<'_, Message> {
+    let spacing = cosmic::theme::spacing();
     let body = match &state.view {
         DialogView::Discovery | DialogView::Adding { .. } => discovery_view(state),
         DialogView::ManualSetup => manual_setup_view(state),
@@ -563,28 +607,87 @@ pub fn dialog(state: &State) -> Element<'_, Message> {
         DialogView::Added => added_printers_view(state),
     };
 
-    let dialog = widget::dialog().control(body);
-
-    let dialog = match state.view {
-        DialogView::Added | DialogView::ManualSetup => dialog.primary_action(
-            widget::button::standard(fl!("close")).on_press(Message::Close),
-        ),
-        _ => dialog.secondary_action(
-            widget::button::standard(fl!("cancel")).on_press(Message::Close),
-        ),
+    let body_padding = match state.view {
+        DialogView::ManualSetup | DialogView::SelectApplication { .. } => Padding::ZERO
+            .top(spacing.space_l)
+            .bottom(spacing.space_xxl)
+            .horizontal(spacing.space_xxl),
+        _ => Padding::ZERO
+            .bottom(spacing.space_l)
+            .horizontal(spacing.space_xxl),
     };
-    dialog.apply(Element::from)
+    let drag_region = widget::mouse_area(
+        vertical_space()
+            .height(Length::Fixed(f32::from(spacing.space_l)))
+            .width(Length::Fill),
+    )
+    .on_press(Message::DragWindow)
+    .on_double_click(Message::ToggleMaximizeWindow);
+
+    widget::layer_container(
+        column::with_capacity(3)
+            .push(drag_region)
+            .push(
+                scrollable(body)
+                    .direction(Direction::Vertical(Scrollbar::hidden()))
+                    .apply(container)
+                    .padding(body_padding)
+                    .width(Length::Fill)
+                    .height(Length::Fill),
+            )
+            .push(dialog_footer(state))
+            .width(Length::Fill)
+            .height(Length::Fill),
+    )
+    .layer(cosmic_theme::Layer::Background)
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into()
+}
+
+fn dialog_footer(state: &State) -> Element<'static, Message> {
+    let cosmic_theme::Spacing {
+        space_xs,
+        space_xxs,
+        ..
+    } = cosmic::theme::spacing();
+    let label = match state.view {
+        DialogView::Added | DialogView::ManualSetup => fl!("close"),
+        _ => fl!("cancel"),
+    };
+
+    container(
+        widget::layer_container(
+            row::with_capacity(2)
+                .align_y(Alignment::Center)
+                .spacing(space_xxs)
+                .push(horizontal_space())
+                .push(widget::button::standard(label).on_press(Message::Close))
+                .width(Length::Fill),
+        )
+        .layer(cosmic_theme::Layer::Primary)
+        .padding([space_xxs, space_xs])
+        .width(Length::Fill),
+    )
+    .padding(space_xxs)
+    .width(Length::Fill)
+    .into()
 }
 
 fn discovery_view(state: &State) -> Element<'_, Message> {
     let spacing = cosmic::theme::active().cosmic().spacing;
-    let search_input = widget::search_input(fl!("type-to-search"), &state.search)
-        .on_input(Message::Search)
-        .on_clear(Message::Search(String::new()))
-        .width(Length::Fixed(SEARCH_WIDTH));
-    let search = container(search_input)
-        .width(Length::Fill)
-        .center_x(Length::Fill);
+    let search = container(
+        container(
+            widget::search_input(fl!("type-to-search"), &state.search)
+                .on_input(Message::Search)
+                .on_clear(Message::Search(String::new()))
+                .width(Length::Fill),
+        )
+        .max_width(SEARCH_MAX_WIDTH)
+        .width(Length::Fill),
+    )
+    .width(Length::Fill)
+    .center_x(Length::Fill);
 
     let mut settings = column::with_capacity(3)
         .spacing(spacing.space_s)
@@ -594,9 +697,7 @@ fn discovery_view(state: &State) -> Element<'_, Message> {
         settings = settings.push(manual_setup_prompt());
     }
 
-    settings
-        .width(Length::Fill)
-        .into()
+    settings.width(Length::Fill).into()
 }
 
 fn manual_setup_view(state: &State) -> Element<'_, Message> {
@@ -618,8 +719,8 @@ fn manual_setup_view(state: &State) -> Element<'_, Message> {
     let spacing = cosmic::theme::active().cosmic().spacing;
 
     column::with_capacity(2)
-        .spacing(spacing.space_xxs)
-        .push(regular_heading(fl!(
+        .spacing(spacing.space_m)
+        .push(section_heading(fl!(
             "use-a-printer-application-to-manually-set-up-a-printer"
         )))
         .push(application_list(rows))
@@ -645,8 +746,8 @@ fn select_application_view<'a>(state: &'a State, printer_id: &str) -> Element<'a
     let spacing = cosmic::theme::active().cosmic().spacing;
 
     column::with_capacity(2)
-        .spacing(spacing.space_xxs)
-        .push(regular_heading(fl!(
+        .spacing(spacing.space_m)
+        .push(section_heading(fl!(
             "choose-the-printer-application-to-set-up-your-printer"
         )))
         .push(application_list(if rows.is_empty() {
@@ -669,17 +770,17 @@ fn added_printers_view(state: &State) -> Element<'_, Message> {
     let spacing = cosmic::theme::active().cosmic().spacing;
     let description = row::with_capacity(2)
         .spacing(spacing.space_xxxs)
-        .align_y(Alignment::End)
+        .align_y(Alignment::Center)
         .push(text::body(fl!("printer-web-interface-description")).width(Length::Fill))
         .push(
             icon::from_name(crate::icons::web_page())
-                .size(16)
+                .size(crate::style::ICON_SIZE)
                 .icon()
                 .class(cosmic::theme::Svg::Custom(primary_svg())),
         );
 
     column::with_capacity(2)
-        .spacing(spacing.space_xxs)
+        .spacing(spacing.space_s)
         .push(
             column::with_capacity(2)
                 .spacing(spacing.space_xxs)
@@ -692,13 +793,13 @@ fn added_printers_view(state: &State) -> Element<'_, Message> {
 }
 
 fn printers_section(state: &State) -> Element<'_, Message> {
-    let (rows, printer_count, row_height) = if state.is_searching() {
-        (vec![plain_row(fl!("searching"))], 1, APPLICATION_ROW_HEIGHT)
+    let rows = if state.is_searching() {
+        vec![plain_row(fl!("searching"))]
     } else if let Some(error) = &state.error {
-        (vec![plain_row(error.clone())], 1, APPLICATION_ROW_HEIGHT)
+        vec![plain_row(error.clone())]
     } else {
         let printers = state.visible_printers().collect::<Vec<_>>();
-        let rows = if printers.is_empty() {
+        if printers.is_empty() {
             vec![plain_row(fl!("no-printers-found"))]
         } else {
             with_dividers(
@@ -707,28 +808,43 @@ fn printers_section(state: &State) -> Element<'_, Message> {
                     .map(|printer| discovered_printer_row(state, printer))
                     .collect(),
             )
-        };
-        (rows, printers.len().max(1), PRINTER_ROW_HEIGHT)
+        }
     };
     let spacing = cosmic::theme::active().cosmic().spacing;
 
     column::with_capacity(2)
         .spacing(spacing.space_xxs)
         .push(section_heading(fl!("printers")))
-        .push(
-            scrollable(list_view(rows))
-                .direction(Direction::Vertical(Scrollbar::hidden()))
-                .apply(container)
-                .max_height(visible_rows_height(printer_count, row_height)),
-        )
+        .push(list_view(rows))
         .into()
 }
 
 fn manual_setup_prompt() -> Element<'static, Message> {
+    let spacing = cosmic::theme::spacing();
+    let trailing_size = f32::from(spacing.space_l);
+    let chevron: Element<'static, Message> = container(
+        icon::from_name("go-next-symbolic")
+            .size(crate::style::ICON_SIZE)
+            .icon()
+            .class(cosmic::theme::Svg::Custom(primary_svg())),
+    )
+    .width(Length::Fixed(trailing_size))
+    .height(Length::Fixed(trailing_size))
+    .center(Length::Fixed(trailing_size))
+    .into();
+
     column::with_capacity(2)
-        .spacing(cosmic::theme::active().cosmic().space_xxs())
+        .spacing(spacing.space_xxs)
         .push(regular_heading(fl!("your-printer-not-discovered")))
-        .push(widget::button::standard(fl!("manual-setup")).on_press(Message::OpenManualSetup))
+        .push(row_button(
+            row::with_capacity(2)
+                .align_y(Alignment::Center)
+                .spacing(spacing.space_s)
+                .push(row_label(fl!("manual-setup")))
+                .push(chevron),
+            APPLICATION_ROW_HEIGHT,
+            Some(Message::OpenManualSetup),
+        ))
         .into()
 }
 
@@ -756,6 +872,7 @@ fn discovered_printer_row(
 }
 
 fn added_printer_row(state: &State, added: &AddedPrinter) -> Element<'static, Message> {
+    let spacing = cosmic::theme::spacing();
     let destination = added
         .destination_id
         .as_deref()
@@ -775,7 +892,7 @@ fn added_printer_row(state: &State, added: &AddedPrinter) -> Element<'static, Me
         true,
         trailing,
     ))
-    .padding([8, 24])
+    .padding([spacing.space_xxs, spacing.space_m])
     .width(Length::Fill)
     .height(Length::Fixed(PRINTER_ROW_HEIGHT))
     .into()
@@ -787,14 +904,17 @@ fn two_line_printer_content(
     checked: bool,
     trailing: Option<Element<'static, Message>>,
 ) -> Element<'static, Message> {
+    let spacing = cosmic::theme::spacing();
     let check: Element<'static, Message> = if checked {
         icon::from_name("checkbox-checked-symbolic")
-            .size(16)
+            .size(crate::style::ICON_SIZE)
             .icon()
             .class(cosmic::theme::Svg::Custom(accent_svg()))
             .into()
     } else {
-        horizontal_space().width(Length::Fixed(16.0)).into()
+        horizontal_space()
+            .width(Length::Fixed(f32::from(crate::style::ICON_SIZE)))
+            .into()
     };
     let copy = column::with_capacity(2)
         .spacing(0)
@@ -803,19 +923,18 @@ fn two_line_printer_content(
             text::caption(caption)
                 .wrapping(Wrapping::None)
                 .ellipsize(Ellipsize::End(EllipsizeHeightLimit::Lines(1)))
-                .width(Length::Fill)
-                .height(Length::Fixed(17.0)),
+                .width(Length::Fill),
         )
         .width(Length::Fill);
     let left = row::with_capacity(2)
         .align_y(Alignment::Center)
-        .spacing(8)
+        .spacing(spacing.space_xxs)
         .push(check)
         .push(copy)
         .width(Length::Fill);
     let mut content = row::with_capacity(2)
         .align_y(Alignment::Center)
-        .spacing(16)
+        .spacing(spacing.space_s)
         .push(left);
     if let Some(trailing) = trailing {
         content = content.push(trailing);
@@ -827,16 +946,18 @@ fn two_line_printer_content(
 fn manual_application_row(
     application: &ManualSetupPrinterApplication,
 ) -> Element<'static, Message> {
+    let spacing = cosmic::theme::spacing();
+
     row::with_capacity(2)
         .align_y(Alignment::Center)
-        .spacing(16)
+        .spacing(spacing.space_s)
         .push(row_label(application_display_name(application)))
         .push(
             widget::button::text(fl!("set-up-printer")).on_press(Message::OpenPrinterWebPage(
                 application.web_interface_uri.clone(),
             )),
         )
-        .padding([8, 24])
+        .padding([spacing.space_xxs, spacing.space_m])
         .width(Length::Fill)
         .height(Length::Fixed(APPLICATION_ROW_HEIGHT))
         .into()
@@ -845,21 +966,23 @@ fn manual_application_row(
 fn select_application_row(
     candidate: &PrinterApplicationCandidateSummary,
 ) -> Element<'static, Message> {
+    let spacing = cosmic::theme::spacing();
+    let trailing_size = f32::from(spacing.space_l);
     let chevron: Element<'static, Message> = container(
         icon::from_name("go-next-symbolic")
-            .size(16)
+            .size(crate::style::ICON_SIZE)
             .icon()
             .class(cosmic::theme::Svg::Custom(primary_svg())),
     )
-    .width(Length::Fixed(32.0))
-    .height(Length::Fixed(32.0))
-    .center(Length::Fixed(32.0))
+    .width(Length::Fixed(trailing_size))
+    .height(Length::Fixed(trailing_size))
+    .center(Length::Fixed(trailing_size))
     .into();
 
     row_button(
         row::with_capacity(2)
             .align_y(Alignment::Center)
-            .spacing(16)
+            .spacing(spacing.space_s)
             .push(row_label(candidate.printer_application_name.clone()))
             .push(chevron),
         APPLICATION_ROW_HEIGHT,
@@ -868,18 +991,14 @@ fn select_application_row(
 }
 
 fn application_list(rows: Vec<Element<'static, Message>>) -> Element<'static, Message> {
-    let row_count = rows.len().div_ceil(2).max(1);
-
-    scrollable(list_view(rows))
-        .direction(Direction::Vertical(Scrollbar::hidden()))
-        .apply(container)
-        .max_height(visible_rows_height(row_count, APPLICATION_ROW_HEIGHT))
-        .into()
+    list_view(rows)
 }
 
 fn plain_row(label: String) -> Element<'static, Message> {
+    let spacing = cosmic::theme::spacing();
+
     container(row_label(label))
-        .padding([0, 24])
+        .padding([0, spacing.space_m])
         .align_y(Alignment::Center)
         .width(Length::Fill)
         .height(Length::Fixed(APPLICATION_ROW_HEIGHT))
@@ -890,15 +1009,11 @@ fn section_heading(label: String) -> Element<'static, Message> {
     text::body(label)
         .font(cosmic::font::bold())
         .width(Length::Fill)
-        .height(Length::Fixed(21.0))
         .into()
 }
 
 fn regular_heading(label: String) -> Element<'static, Message> {
-    text::body(label)
-        .width(Length::Fill)
-        .height(Length::Fixed(21.0))
-        .into()
+    text::body(label).width(Length::Fill).into()
 }
 
 fn row_button(
@@ -906,8 +1021,10 @@ fn row_button(
     height: f32,
     on_press: Option<Message>,
 ) -> Element<'static, Message> {
+    let spacing = cosmic::theme::spacing();
+
     container(content)
-        .padding([8, 24])
+        .padding([spacing.space_xxs, spacing.space_m])
         .width(Length::Fill)
         .height(Length::Fixed(height))
         .class(cosmic::theme::Container::List)
@@ -924,7 +1041,6 @@ fn row_label(label: String) -> Element<'static, Message> {
         .wrapping(Wrapping::None)
         .ellipsize(Ellipsize::End(EllipsizeHeightLimit::Lines(1)))
         .width(Length::Fill)
-        .height(Length::Fixed(21.0))
         .into()
 }
 
@@ -947,12 +1063,6 @@ fn with_dividers(rows: Vec<Element<'static, Message>>) -> Vec<Element<'static, M
         divided.push(row);
     }
     divided
-}
-
-fn visible_rows_height(items: usize, row_height: f32) -> f32 {
-    let visible = items.clamp(1, MAX_VISIBLE_ROWS);
-
-    visible as f32 * row_height + visible.saturating_sub(1) as f32
 }
 
 fn printer_display_name(printer: &PrinterEntry) -> String {
