@@ -41,7 +41,7 @@ fn run_available_destinations_refresh(
     let owned = printer_app::owned_printers(&worker_context, &applications);
 
     let callback_context = worker_context.clone();
-    let destinations = available_destinations(5000, move |flags, destination| {
+    let destinations = available_destinations(10000, move |flags, destination| {
         let id = destination.full_name();
         if flags & cups_rs::DEST_FLAGS_REMOVED != 0 {
             callback_context.remove_available_destination(&id);
