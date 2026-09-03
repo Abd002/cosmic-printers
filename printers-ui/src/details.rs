@@ -6,12 +6,11 @@ use cosmic::widget::{
     self, column, container, row, settings, space::horizontal as horizontal_space, text,
 };
 use cosmic::{Apply, Element, surface};
-use cosmic_settings_printers_core::{PrinterStatus, SupplyLevel, SupplyRgb, SupplyWarning};
+use cosmic_settings_printers_core::{PrinterStatus, SupplyLevel, SupplyRgb};
 
 use crate::style::{
     INLINE_EDIT_HEIGHT, RADIUS_SUPPLY_BAR, SUPPLY_BAR_HEIGHT, SUPPLY_DOT_SIZE, SUPPLY_GRAPH_HEIGHT,
-    SUPPLY_LABEL_HEIGHT, SUPPLY_OUTLINE_TOLERANCE,
-    SUPPLY_PERCENTAGE_WIDTH, SUPPLY_TRACK_HEIGHT,
+    SUPPLY_LABEL_HEIGHT, SUPPLY_OUTLINE_TOLERANCE, SUPPLY_PERCENTAGE_WIDTH, SUPPLY_TRACK_HEIGHT,
 };
 use cosmic_settings_printers_core::PrinterEntry;
 
@@ -214,7 +213,10 @@ impl State {
             return false;
         };
 
-        let refreshed = printers.iter().find(|printer| printer.id() == shown).cloned();
+        let refreshed = printers
+            .iter()
+            .find(|printer| printer.id() == shown)
+            .cloned();
         let changed = self.printer != refreshed;
 
         match refreshed {
@@ -538,7 +540,9 @@ pub fn printer_information_view<'a>(state: &'a State, title: &'a str) -> Element
         ))
         .add(settings::item(
             fl!("device-name"),
-            value_text(display_or_unknown(Some(printer.name()).filter(|n| !n.is_empty()))),
+            value_text(display_or_unknown(
+                Some(printer.name()).filter(|n| !n.is_empty()),
+            )),
         ))
         .add(settings::item(
             fl!("driver-version"),
@@ -634,9 +638,7 @@ impl State {
     /// Returns whether the printer can be removed.
     #[must_use]
     pub fn can_remove_printer(&self) -> bool {
-        self.printer
-            .as_ref()
-            .is_some_and(PrinterEntry::can_administer)
+        self.printer.as_ref().is_some_and(PrinterEntry::can_delete)
     }
 }
 
@@ -977,7 +979,7 @@ fn percentage_label(level: Option<u8>) -> String {
     }
 }
 
-// Overlay the warning mark without splitting the rounded progress track.
+#[allow(clippy::let_and_return)]
 fn progress_track(supply: &SupplyLevel, colors: &[Color]) -> Element<'static, Message> {
     let track = container(supply_fill(supply.level_percent, colors))
         .width(Length::Fill)
@@ -985,7 +987,8 @@ fn progress_track(supply: &SupplyLevel, colors: &[Color]) -> Element<'static, Me
         .class(crate::widgets::fill_container(
             crate::style::supply_track(),
             RADIUS_SUPPLY_BAR,
-        )).into();
+        ))
+        .into();
     track
     // let Some(warning) = supply.warning else {
     //     return track.into();
@@ -1002,6 +1005,43 @@ fn progress_track(supply: &SupplyLevel, colors: &[Color]) -> Element<'static, Me
     // .height(Length::Fixed(SUPPLY_BAR_HEIGHT))
     // .into()
 }
+
+// fn warning_mark(
+//     warning: cosmic_settings_printers_core::SupplyWarning,
+//     level: Option<u8>,
+// ) -> Element<'static, Message> {
+//     let reached = level.is_some_and(|level| warning.is_reached_by(level));
+//     let before = warning.level_percent.min(100);
+//     let after = 100_u8.saturating_sub(before);
+//     let mut marks = row::with_capacity(3)
+//         .width(Length::Fill)
+//         .height(Length::Fixed(SUPPLY_BAR_HEIGHT))
+//         .align_y(Alignment::Center);
+
+//     if before > 0 {
+//         marks = marks.push(horizontal_space().width(Length::FillPortion(u16::from(before))));
+//     }
+
+//     marks = marks.push(
+//         container(horizontal_space())
+//             .width(Length::Fixed(crate::style::SUPPLY_MARK_WIDTH))
+//             .height(Length::Fixed(crate::style::SUPPLY_MARK_HEIGHT))
+//             .class(crate::widgets::fill_container(
+//                 if reached {
+//                     crate::style::status_stopped()
+//                 } else {
+//                     cosmic::theme::active().cosmic().on_bg_color().into()
+//                 },
+//                 1.0,
+//             )),
+//     );
+
+//     if after > 0 {
+//         marks = marks.push(horizontal_space().width(Length::FillPortion(u16::from(after))));
+//     }
+
+//     marks.into()
+// }
 
 fn supply_fill(level: Option<u8>, colors: &[Color]) -> Element<'static, Message> {
     let mut bar = row::with_capacity(2).height(Length::Fixed(SUPPLY_TRACK_HEIGHT));
@@ -1045,40 +1085,6 @@ fn band(color: Color) -> container::Container<'static, Message, cosmic::Theme> {
         .height(Length::Fixed(SUPPLY_TRACK_HEIGHT))
         .class(style)
 }
-
-// fn warning_mark(warning: SupplyWarning, level: Option<u8>) -> Element<'static, Message> {
-//     let reached = level.is_some_and(|level| warning.is_reached_by(level));
-//     let before = warning.level_percent.min(100);
-//     let after = 100_u8.saturating_sub(before);
-//     let mut marks = row::with_capacity(3)
-//         .width(Length::Fill)
-//         .height(Length::Fixed(SUPPLY_BAR_HEIGHT))
-//         .align_y(Alignment::Center);
-
-//     if before > 0 {
-//         marks = marks.push(horizontal_space().width(Length::FillPortion(u16::from(before))));
-//     }
-
-//     marks = marks.push(
-//         container(horizontal_space())
-//             .width(Length::Fixed(SUPPLY_MARK_WIDTH))
-//             .height(Length::Fixed(SUPPLY_MARK_HEIGHT))
-//             .class(crate::widgets::fill_container(
-//                 if reached {
-//                     crate::style::status_stopped()
-//                 } else {
-//                     cosmic::theme::active().cosmic().on_bg_color().into()
-//                 },
-//                 1.0,
-//             )),
-//     );
-
-//     if after > 0 {
-//         marks = marks.push(horizontal_space().width(Length::FillPortion(u16::from(after))));
-//     }
-
-//     marks.into()
-// }
 
 fn bar_colors(supply: &SupplyLevel) -> Vec<Color> {
     supply

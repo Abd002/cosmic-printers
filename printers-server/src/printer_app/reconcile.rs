@@ -421,6 +421,7 @@ mod tests {
             application_id: application_id.into(),
             application_endpoint: endpoint.map(|(host, port)| (host.to_string(), port)),
             printer: ConfiguredPrinter {
+                printer_id: Some(1),
                 name: name.into(),
                 device_uri: None,
                 printer_uri: printer_uri.map(ToString::to_string),

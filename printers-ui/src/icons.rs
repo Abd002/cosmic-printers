@@ -44,9 +44,7 @@ mod tests {
         "window-close-symbolic",
     ];
 
-    const FALLBACKS: &[(&str, &str)] = &[
-        ("printer-queue-symbolic", "printer-printing-symbolic"),
-    ];
+    const FALLBACKS: &[(&str, &str)] = &[("printer-queue-symbolic", "printer-printing-symbolic")];
 
     fn found(name: &str) -> bool {
         icon::from_name(name).size(16).path().is_some()

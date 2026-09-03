@@ -9,8 +9,7 @@ pub fn mark_administrable(printers: &mut [PrinterEntry]) {
     let user_may_administer = administration::user_may_administer();
 
     for printer in printers.iter_mut() {
-        let administrable =
-            administration::can_be_administered(printer, user_may_administer);
+        let administrable = administration::can_be_administered(printer, user_may_administer);
 
         printer.set_option("can-administer", administrable.to_string());
     }

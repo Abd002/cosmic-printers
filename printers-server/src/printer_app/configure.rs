@@ -660,6 +660,7 @@ mod tests {
 
     fn configured(name: &str) -> ConfiguredPrinter {
         ConfiguredPrinter {
+            printer_id: Some(1),
             name: name.to_string(),
             device_uri: None,
             printer_uri: None,

@@ -10,21 +10,19 @@ impl Server {
         let receiver = self.context.subscribe_events();
 
         futures_util::stream::unfold(receiver, |mut receiver| async move {
-            loop {
-                match receiver.recv().await {
-                    Ok(event) => return Some((event, receiver)),
-                    Err(broadcast::error::RecvError::Lagged(skipped)) => {
-                        tracing::warn!(skipped, "printer event receiver lagged");
-                        return Some((
-                            PrintersEvent {
-                                kind: PrintersEventKind::AvailableDestinationsChanged,
-                                printer_id: None,
-                            },
-                            receiver,
-                        ));
-                    }
-                    Err(broadcast::error::RecvError::Closed) => return None,
+            match receiver.recv().await {
+                Ok(event) => Some((event, receiver)),
+                Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                    tracing::warn!(skipped, "printer event receiver lagged");
+                    Some((
+                        PrintersEvent {
+                            kind: PrintersEventKind::AvailableDestinationsChanged,
+                            printer_id: None,
+                        },
+                        receiver,
+                    ))
                 }
+                Err(broadcast::error::RecvError::Closed) => None,
             }
         })
         .boxed()

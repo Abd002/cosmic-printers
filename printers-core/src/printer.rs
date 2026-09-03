@@ -9,6 +9,8 @@ use crate::supplies::{
     supply_warning,
 };
 
+const PRINTER_APPLICATION_ID: &str = "cosmic-printer-application-id";
+
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize, zlink::introspect::Type)]
 pub enum PrinterStatus {
     Ready,
@@ -62,6 +64,21 @@ impl PrinterEntry {
     /// Returns whether a queue exists and the user may administer it.
     pub fn can_administer(&self) -> bool {
         self.option("can-administer") == Some("true")
+    }
+
+    /// Returns whether this configured printer can be removed from its owner.
+    pub fn can_delete(&self) -> bool {
+        self.option("can-delete") == Some("true")
+    }
+
+    #[doc(hidden)]
+    pub fn printer_application_id(&self) -> Option<&str> {
+        self.option(PRINTER_APPLICATION_ID)
+    }
+
+    #[doc(hidden)]
+    pub fn set_printer_application_id(&mut self, application_id: impl Into<String>) {
+        self.set_option(PRINTER_APPLICATION_ID, application_id);
     }
 
     /// Returns whether this destination is the one a job goes to by default.
@@ -496,6 +513,12 @@ mod printer_entry_tests {
                 .map(|(name, value)| (name.to_string(), value.to_string()))
                 .collect(),
         )
+    }
+
+    #[test]
+    fn deletion_capability_is_explicit() {
+        assert!(printer(&[("can-delete", "true")]).can_delete());
+        assert!(!printer(&[("can-administer", "true")]).can_delete());
     }
 
     fn rgb(red: u8, green: u8, blue: u8) -> SupplyRgb {

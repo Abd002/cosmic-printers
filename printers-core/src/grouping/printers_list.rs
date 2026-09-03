@@ -240,7 +240,9 @@ fn shared_queue_value<'a>(values: impl Iterator<Item = Option<&'a str>>) -> Opti
         (!value.is_empty()).then_some(value)
     });
     let first = values.next()?;
-    values.all(|value| value.eq_ignore_ascii_case(first)).then_some(first)
+    values
+        .all(|value| value.eq_ignore_ascii_case(first))
+        .then_some(first)
 }
 
 impl GroupedDestination {
