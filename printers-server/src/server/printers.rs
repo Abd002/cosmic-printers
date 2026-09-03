@@ -27,9 +27,9 @@ impl Server {
             .available_destination_cached(printer_id)
             .await
             .ok_or(Error::PrinterNotFound)?;
+        let mut printers = [printer];
 
-        tokio::task::spawn_blocking(move || {
-            let mut printers = [printer];
+        let mut printers = tokio::task::spawn_blocking(move || {
             cups::apply_saved(&mut printers);
             cups::mark_administrable(&mut printers);
             printers.into_iter().next().expect("single printer array")
@@ -37,7 +37,11 @@ impl Server {
         .await
         .map_err(|error| Error::Internal {
             why: error.to_string(),
-        })
+        })?;
+        self.mark_deletable(std::slice::from_mut(&mut printers))
+            .await;
+
+        Ok(printers)
     }
 
     /// Starts a background libcups refresh of the available destination cache.
@@ -63,17 +67,72 @@ impl Server {
         }
     }
 
-    /// Deletes a configured printer.
+    /// Deletes a configured printer local printer or PA configured printer.
     pub async fn delete_printer(&self, printer_id: &str) -> Result<(), Error> {
         let printer = self.printer_entry(printer_id).await?;
-        let outcome = cups::delete_printer(printer).await.map_err(service_error);
+        let application_id = printer.printer_application_id().map(str::to_string);
+        let mut deleted = false;
 
-        // Drop the cache immediately because a deleted printer cannot be refreshed.
-        if outcome.is_ok() {
-            self.context.remove_available_destination(printer_id);
+        if let Some(application_id) = application_id {
+            let applications = self.context.printer_applications_cached().await;
+            let destination = printer.clone();
+            let application_id_for_delete = application_id.clone();
+            let deleted_printer = tokio::task::spawn_blocking(move || {
+                let application = applications
+                    .iter()
+                    .find(|application| application.id == application_id_for_delete)
+                    .ok_or_else(|| Error::PrinterApplicationNotFound {
+                        application_id: application_id_for_delete.clone(),
+                    })?;
+
+                crate::printer_app::delete_owned_printer(application, &destination)
+            })
+            .await
+            .map_err(|error| Error::Internal {
+                why: error.to_string(),
+            })??;
+
+            if let Some(deleted_printer) = deleted_printer {
+                self.context
+                    .remove_cached_application_printer(&application_id, &deleted_printer);
+                deleted = true;
+            }
         }
 
-        outcome
+        if matches!(cups::owner_of(&printer), cups::Owner::Scheduler) {
+            cups::delete_scheduler_printer(printer)
+                .await
+                .map_err(service_error)?;
+        } else if !deleted {
+            return Err(Error::OperationNotSupported {
+                operation: format!("remove unconfigured destination '{}'", printer.id()),
+            });
+        }
+
+        self.context.remove_available_destination(printer_id);
+        cups::refresh_available_destinations(self.context.clone());
+
+        Ok(())
+    }
+
+    async fn mark_deletable(&self, printers: &mut [PrinterEntry]) {
+        let applications = self.context.printer_applications_cached().await;
+
+        for printer in printers {
+            let deletable = printer
+                .printer_application_id()
+                .map(|application_id| {
+                    applications
+                        .iter()
+                        .find(|application| application.id == application_id)
+                        .is_some_and(|application| application.capabilities.delete_printer)
+                })
+                .unwrap_or_else(|| {
+                    printer.can_administer()
+                        && matches!(cups::owner_of(printer), cups::Owner::Scheduler)
+                });
+            printer.set_option("can-delete", deletable.to_string());
+        }
     }
 
     /// Enables or disables accepting jobs for a printer.
@@ -107,14 +166,13 @@ impl Server {
         let outcome = cups::set_default(printer_id).await.map_err(service_error);
 
         if outcome.is_ok() {
-            if let Some(previous_default) = previous_default {
-                if previous_default != printer_id {
-                    self.context
-                        .emit_available_destinations_changed(&previous_default);
-                }
+            if let Some(previous_default) = previous_default
+                && previous_default != printer_id
+            {
+                self.context
+                    .emit_available_destinations_changed(&previous_default);
             }
-            self.context
-                .emit_available_destinations_changed(printer_id);
+            self.context.emit_available_destinations_changed(printer_id);
         }
 
         outcome
@@ -130,11 +188,11 @@ impl Server {
             .map(|printer| printer.id().to_string());
         let outcome = cups::clear_default().await.map_err(service_error);
 
-        if outcome.is_ok() {
-            if let Some(previous_default) = previous_default {
-                self.context
-                    .emit_available_destinations_changed(&previous_default);
-            }
+        if outcome.is_ok()
+            && let Some(previous_default) = previous_default
+        {
+            self.context
+                .emit_available_destinations_changed(&previous_default);
         }
 
         outcome
@@ -158,8 +216,7 @@ impl Server {
             .map_err(service_error);
 
         if outcome.is_ok() {
-            self.context
-                .emit_available_destinations_changed(printer_id);
+            self.context.emit_available_destinations_changed(printer_id);
         }
 
         outcome

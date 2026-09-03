@@ -133,29 +133,16 @@ pub(crate) async fn set_accept_jobs(
     .await
 }
 
-/// Removes the printer.
-pub(crate) async fn delete_printer(printer: PrinterEntry) -> BackendResult<()> {
-    match owner_of(&printer) {
-        // The scheduler implements no `Delete-Printer`, so removing one of its queues is
-        // still its own operation.
-        Owner::Scheduler => {
-            send(
-                IppOperation::CupsDeletePrinter,
-                "CUPS-Delete-Printer",
-                SCHEDULER_ADMIN_URI.to_string(),
-                local_printer_uri(printer.id(), false),
-                |_| Ok(()),
-            )
-            .await
-        }
-        // Application deletion requires a `printer-id`; never guess for a destructive request.
-        Owner::Service { .. } => Err(BackendError::OperationNotSupported {
-            operation: "remove a printer held by a printer application".to_string(),
-        }),
-        Owner::Unowned => Err(BackendError::NoQueueToAdminister {
-            printer: printer.id().to_string(),
-        }),
-    }
+/// Removes a queue held by the local scheduler.
+pub(crate) async fn delete_scheduler_printer(printer: PrinterEntry) -> BackendResult<()> {
+    send(
+        IppOperation::CupsDeletePrinter,
+        "CUPS-Delete-Printer",
+        SCHEDULER_ADMIN_URI.to_string(),
+        local_printer_uri(printer.id(), false),
+        |_| Ok(()),
+    )
+    .await
 }
 
 /// Sets one text attribute on the printer itself.
@@ -216,10 +203,7 @@ async fn set_printer_text(
 }
 
 /// Returns whether the destination has a persistent administrable queue or application printer.
-pub(super) fn can_be_administered(
-    printer: &PrinterEntry,
-    user_may_administer: bool,
-) -> bool {
+pub(super) fn can_be_administered(printer: &PrinterEntry, user_may_administer: bool) -> bool {
     if !user_may_administer {
         return false;
     }

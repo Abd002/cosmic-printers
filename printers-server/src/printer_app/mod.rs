@@ -16,7 +16,7 @@ mod web;
 pub(crate) use configure::configure_discovered_printer;
 pub(crate) use drivers::PaDriverMatch;
 pub(crate) use identity::PaConfigurationCandidate;
-pub(crate) use printers::{ConfiguredPrinter, owned_printers};
+pub(crate) use printers::{ConfiguredPrinter, delete_owned_printer, owned_printers};
 pub(crate) use probe::record_discovery;
 pub(crate) use reconcile::{OwnedPrinter, PendingConfigurationState, PendingPaConfiguration};
 pub(crate) use round::{AddPrinterDiscovery, DiscoveryGeneration, ResolveError};

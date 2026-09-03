@@ -45,19 +45,14 @@ impl From<Error> for BackendError {
 type Answer<T> = Result<T, BackendError>;
 
 /// Backend used by printer UI requests.
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub enum Backend {
     /// Connects to the daemon.
+    #[default]
     Daemon,
     /// Runs an embedded server.
     #[cfg(feature = "embedded")]
     Embedded(std::sync::Arc<cosmic_settings_printers_server::Server>),
-}
-
-impl Default for Backend {
-    fn default() -> Self {
-        Self::Daemon
-    }
 }
 
 impl std::fmt::Debug for Backend {
