@@ -37,4 +37,11 @@ impl State {
             printer_id: None,
         });
     }
+
+    pub(super) fn emit_refresh_available_destinations(&self) {
+        let _ = self.events.send(PrintersEvent {
+            kind: PrintersEventKind::RefreshAvailableDestinations,
+            printer_id: None,
+        });
+    }
 }

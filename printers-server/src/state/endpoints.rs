@@ -39,6 +39,8 @@ impl State {
             .insert(service_name.clone(), endpoint.clone());
 
         let mut changed = Vec::new();
+        let mut found_compatible = false;
+
         for printer in model.available_destinations.values_mut() {
             if printer.endpoint_source() == Some(EndpointSource::Connected)
                 || device_service_name(printer).as_deref() != Some(service_name.as_str())
@@ -50,11 +52,16 @@ impl State {
             if *printer != before {
                 changed.push(printer.id().to_string());
             }
+            found_compatible = true;
         }
         drop(model);
 
         for printer_id in changed {
             self.emit_available_destinations_changed(&printer_id);
+        }
+
+        if !found_compatible {
+            self.emit_refresh_available_destinations();
         }
     }
 }
