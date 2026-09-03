@@ -417,6 +417,9 @@ impl State {
             PrintersEventKind::PrinterConfigurationChanged => self.add_printer_task(|| {
                 cosmic::task::message(M::from(crate::add_printer::Message::ConfigurationChanged))
             }),
+            PrintersEventKind::RefreshAvailableDestinations => {
+                cosmic::task::message(M::from(Message::Refresh))
+            }
         }
     }
 

@@ -2,7 +2,7 @@
 
 use cups_rs::{Dnssd, DnssdBrowseEvent, DnssdServiceResolver};
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::mpsc;
 use std::time::Duration;
 
@@ -11,7 +11,7 @@ use crate::state::State;
 
 const SYSTEM_SERVICE_TYPES: &[&str] = &["_ipp-system._tcp", "_ipps-system._tcp"];
 const DEVICE_SERVICE_TYPES: &[&str] = &["_ipp._tcp", "_ipps._tcp"];
-const MAX_ACTIVE_RESOLVERS: usize = 8;
+const MAX_ACTIVE_RESOLVERS: usize = 10;
 
 pub(super) fn run_system_service_browser(
     context: State,
@@ -41,13 +41,29 @@ pub(super) fn run_system_service_browser(
     let mut resolvers = HashMap::<ServiceKey, DnssdServiceResolver>::new();
     let mut services = HashSet::new();
     let mut application_ids = HashMap::<ServiceKey, String>::new();
+    let mut pending_resolutions = VecDeque::<DnssdBrowseEvent>::new();
 
     loop {
-        while let Ok(event) = browse_receiver.try_recv() {
+        loop {
+            let event = match browse_receiver.try_recv() {
+                Ok(event) => event,
+                Err(_) if resolvers.len() < MAX_ACTIVE_RESOLVERS => {
+                    match pending_resolutions.pop_front() {
+                        Some(event) => event,
+                        None => break,
+                    }
+                }
+                Err(_) => break,
+            };
+
             let key = service_key(&event);
 
             if event.added {
                 if services.insert(key.clone()) {
+                    if resolvers.contains_key(&key) {
+                        continue;
+                    }
+
                     if resolvers.len() >= MAX_ACTIVE_RESOLVERS {
                         services.remove(&key);
                         tracing::warn!(
@@ -55,6 +71,7 @@ pub(super) fn run_system_service_browser(
                             service_name = event.name,
                             "DNS-SD resolver concurrency limit reached"
                         );
+                        pending_resolutions.push_back(event);
                         continue;
                     }
 
@@ -79,12 +96,17 @@ pub(super) fn run_system_service_browser(
         }
 
         let mut failed_resolvers = Vec::new();
+        let mut completed_resolvers = Vec::new();
 
         for (key, resolver) in &mut resolvers {
             // One resolver failing says nothing about the rest, and ending the loop
             // would drop every browser and resolver with it.
             let resolved = match resolver.try_recv() {
-                Ok(resolved) => resolved,
+                Ok(None) => continue,
+                Ok(resolved) => {
+                    completed_resolvers.push(key.clone());
+                    resolved
+                }
                 Err(error) => {
                     tracing::warn!(%error, "could not read a DNS-SD resolution");
                     failed_resolvers.push(key.clone());
@@ -121,6 +143,9 @@ pub(super) fn run_system_service_browser(
             resolvers.remove(&key);
             services.remove(&key);
         }
+        for key in completed_resolvers {
+            resolvers.remove(&key);
+        }
 
         while let Ok(message) = error_receiver.try_recv() {
             tracing::warn!(message, "libcups DNS-SD error");
@@ -140,7 +165,7 @@ pub(super) type ServiceKey = (u32, String, String, String);
 
 fn service_key(service: &DnssdBrowseEvent) -> ServiceKey {
     (
-        service.interface_index,
+        0,
         normalize(&service.name),
         normalize(&service.service_type),
         normalize(&service.domain),

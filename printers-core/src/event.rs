@@ -13,6 +13,8 @@ pub enum PrintersEventKind {
     AddPrinterDiscoveryChanged,
     /// A printer configuration attempt changed state.
     PrinterConfigurationChanged,
+    /// The set of available destinations should be refreshed.
+    RefreshAvailableDestinations,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, zlink::introspect::Type)]
