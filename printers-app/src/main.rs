@@ -208,7 +208,9 @@ impl cosmic::Application for App {
         match self.screen {
             Screen::Printers => scrollable
                 .id(self.printers_scroll_id.clone())
-                .on_scroll(|viewport| Message::PrintersScrolled(viewport.absolute_offset()))
+                .on_scroll(|viewport: iced_scrollable::Viewport| {
+                    Message::PrintersScrolled(viewport.absolute_offset())
+                })
                 .into(),
             Screen::Details => scrollable.into(),
         }
@@ -251,7 +253,7 @@ impl cosmic::Application for App {
 }
 
 impl App {
-    fn details_view(&self, spacing: u16) -> widget::Column<'_, Message> {
+    fn details_view(&self, spacing: u16) -> widget::Column<'_, Message, cosmic::Theme> {
         if !self.details.has_printer() {
             return column::with_capacity(1)
                 .push(details::nothing_selected_view().map(Message::Details));
