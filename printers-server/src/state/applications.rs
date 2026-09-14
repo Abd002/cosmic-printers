@@ -97,10 +97,18 @@ impl State {
             .printer_applications
             .retain(|id, _| active_ids.contains(id));
         // Remove only the departed application's discovery and driver results.
+        let configured_printers = model
+            .available_destinations
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
         let discovery_changed = removed.iter().fold(false, |changed, id| {
             model.driver_answers.remove(id);
             model.configured_devices.remove(id);
-            model.add_printer_discovery.remove_application(id) || changed
+            model
+                .add_printer_discovery
+                .remove_application(id, &configured_printers)
+                || changed
         });
         drop(model);
 

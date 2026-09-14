@@ -37,9 +37,16 @@ impl State {
             return None;
         }
         let name = application_name(application);
-        let generation = model
-            .add_printer_discovery
-            .join(application_id.to_string(), name)?;
+        let configured_printers = model
+            .available_destinations
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        let generation = model.add_printer_discovery.join(
+            application_id.to_string(),
+            name,
+            &configured_printers,
+        )?;
         drop(model);
 
         self.emit_add_printer_discovery_changed();
@@ -89,13 +96,21 @@ impl State {
         candidates: Vec<PaConfigurationCandidate>,
         quarantined: usize,
     ) {
-        let changed = self.locked_model().add_printer_discovery.replace_snapshot(
+        let mut model = self.locked_model();
+        let configured_printers = model
+            .available_destinations
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        let changed = model.add_printer_discovery.replace_snapshot(
             generation,
             application_id,
             state,
             candidates,
             quarantined,
+            &configured_printers,
         );
+        drop(model);
 
         if changed {
             self.emit_add_printer_discovery_changed();

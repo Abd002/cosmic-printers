@@ -3,13 +3,15 @@
 use cosmic_settings_printers_core::{
     AddPrinterDiscoveryReply, AddPrinterDiscoveryState, DiscoveredPhysicalPrinter,
     IdentityConfidenceKind, PaCandidateState, PrinterApplicationCandidateSummary,
-    PrinterApplicationScanState, PrinterApplicationScanStatus,
+    PrinterApplicationScanState, PrinterApplicationScanStatus, PrinterEntry,
 };
 use std::collections::BTreeMap;
 use std::time::Instant;
 
 use super::drivers::PaDriverMatch;
-use super::identity::{PaConfigurationCandidate, PhysicalPrinter, group_candidates};
+use super::identity::{
+    PaConfigurationCandidate, PhysicalPrinter, drop_already_configured, group_candidates,
+};
 
 /// Identifies one round of discovery.
 pub(crate) type DiscoveryGeneration = u64;
@@ -169,6 +171,7 @@ impl AddPrinterDiscovery {
         &mut self,
         application_id: String,
         name: String,
+        configured_printers: &[PrinterEntry],
     ) -> Option<DiscoveryGeneration> {
         if self.state == AddPrinterDiscoveryState::Idle
             || self.snapshots.contains_key(&application_id)
@@ -180,7 +183,7 @@ impl AddPrinterDiscovery {
             application_id.clone(),
             PrinterApplicationDeviceSnapshot::pending(application_id, name),
         );
-        self.recompute();
+        self.recompute(configured_printers);
 
         Some(self.generation)
     }
@@ -213,6 +216,7 @@ impl AddPrinterDiscovery {
         state: PrinterApplicationScanState,
         candidates: Vec<PaConfigurationCandidate>,
         quarantined: usize,
+        configured_printers: &[PrinterEntry],
     ) -> bool {
         if generation != self.generation {
             return false;
@@ -255,29 +259,34 @@ impl AddPrinterDiscovery {
         snapshot.state = state;
         snapshot.candidates = candidates;
         snapshot.quarantined = quarantined;
-        self.recompute();
+        self.recompute(configured_printers);
 
         true
     }
 
     /// Drops an application that is no longer advertised.
-    pub(crate) fn remove_application(&mut self, application_id: &str) -> bool {
+    pub(crate) fn remove_application(
+        &mut self,
+        application_id: &str,
+        configured_printers: &[PrinterEntry],
+    ) -> bool {
         if self.snapshots.remove(application_id).is_none() {
             return false;
         }
-        self.recompute();
+        self.recompute(configured_printers);
 
         true
     }
 
     /// Rebuilds the physical printer rows from every application's candidates.
-    fn recompute(&mut self) {
+    fn recompute(&mut self, configured_printers: &[PrinterEntry]) {
         let candidates = self
             .snapshots
             .values()
             .flat_map(|snapshot| snapshot.candidates.iter().cloned())
             .collect::<Vec<_>>();
         let mut printers = group_candidates(candidates);
+        drop_already_configured(&mut printers, configured_printers);
         keep_established_identifiers(&self.physical_printers, &mut printers);
         self.physical_printers = printers;
 
@@ -495,7 +504,7 @@ mod tests {
         let generation = discovery.start(Vec::new());
 
         assert_eq!(
-            discovery.join("pa-a".into(), "LPrint".into()),
+            discovery.join("pa-a".into(), "LPrint".into(), &[]),
             Some(generation)
         );
 
@@ -515,10 +524,11 @@ mod tests {
             PrinterApplicationScanState::Complete,
             vec![candidate("pa-a", "ABC123", supported())],
             0,
+            &[],
         );
 
         assert_eq!(
-            discovery.join("pa-c".into(), "Gutenprint".into()),
+            discovery.join("pa-c".into(), "Gutenprint".into(), &[]),
             Some(generation)
         );
 
@@ -532,7 +542,7 @@ mod tests {
     fn an_application_already_in_the_round_does_not_join_twice() {
         let mut discovery = discovery_with_two_applications();
 
-        assert_eq!(discovery.join("pa-a".into(), "LPrint".into()), None);
+        assert_eq!(discovery.join("pa-a".into(), "LPrint".into(), &[]), None);
         assert_eq!(discovery.reply().total_printer_application_scans, 2);
     }
 
@@ -540,7 +550,7 @@ mod tests {
     fn an_application_does_not_join_before_any_round_has_run() {
         let mut discovery = AddPrinterDiscovery::default();
 
-        assert_eq!(discovery.join("pa-a".into(), "LPrint".into()), None);
+        assert_eq!(discovery.join("pa-a".into(), "LPrint".into(), &[]), None);
         assert_eq!(discovery.reply().state, AddPrinterDiscoveryState::Idle);
     }
 
@@ -555,6 +565,7 @@ mod tests {
             PrinterApplicationScanState::Complete,
             vec![candidate("pa-a", "ABC123", supported())],
             0,
+            &[],
         ));
 
         let reply = discovery.reply();
@@ -576,6 +587,7 @@ mod tests {
             PrinterApplicationScanState::Complete,
             vec![candidate("pa-a", "ABC123", supported())],
             0,
+            &[],
         );
         discovery.replace_snapshot(
             generation,
@@ -583,6 +595,7 @@ mod tests {
             PrinterApplicationScanState::Complete,
             vec![candidate("pa-b", "ABC123", supported())],
             0,
+            &[],
         );
 
         let reply = discovery.reply();
@@ -606,6 +619,7 @@ mod tests {
             PrinterApplicationScanState::Complete,
             vec![candidate("pa-a", "ABC123", supported())],
             0,
+            &[],
         );
         discovery.replace_snapshot(
             generation,
@@ -613,6 +627,7 @@ mod tests {
             PrinterApplicationScanState::Unreachable,
             Vec::new(),
             0,
+            &[],
         );
 
         let reply = discovery.reply();
@@ -633,6 +648,7 @@ mod tests {
             PrinterApplicationScanState::Complete,
             candidates.clone(),
             0,
+            &[],
         ));
         assert!(!discovery.replace_snapshot(
             generation,
@@ -640,6 +656,7 @@ mod tests {
             PrinterApplicationScanState::Complete,
             candidates,
             0,
+            &[],
         ));
     }
 
@@ -655,6 +672,7 @@ mod tests {
             PrinterApplicationScanState::Complete,
             vec![candidate("pa-a", "ABC123", supported())],
             0,
+            &[],
         ));
         assert!(!discovery.mark_searching(stale, "pa-a"));
     }
@@ -669,6 +687,7 @@ mod tests {
             PrinterApplicationScanState::Complete,
             vec![candidate("pa-a", "ABC123", supported())],
             0,
+            &[],
         );
 
         discovery.start(vec![("pa-a".into(), "LPrint".into())]);
@@ -688,6 +707,7 @@ mod tests {
             PrinterApplicationScanState::Complete,
             vec![candidate("pa-a", "ABC123", supported())],
             0,
+            &[],
         );
         let row = discovery.reply().physical_printers[0].clone();
 
@@ -711,6 +731,7 @@ mod tests {
             PrinterApplicationScanState::Complete,
             vec![candidate("pa-a", "ABC123", supported())],
             0,
+            &[],
         );
         let row = discovery.reply().physical_printers[0].clone();
         let current = discovery.start(vec![("pa-a".into(), "LPrint".into())]);
@@ -738,6 +759,7 @@ mod tests {
                 candidate("pa-b", "SECOND", supported()),
             ],
             0,
+            &[],
         );
 
         let reply = discovery.reply();
@@ -775,6 +797,7 @@ mod tests {
             PrinterApplicationScanState::Complete,
             vec![candidate("pa-a", "FIRST", supported())],
             0,
+            &[],
         );
         discovery.replace_snapshot(
             generation,
@@ -782,10 +805,11 @@ mod tests {
             PrinterApplicationScanState::Complete,
             vec![candidate("pa-b", "SECOND", supported())],
             0,
+            &[],
         );
         assert_eq!(discovery.reply().physical_printers.len(), 2);
 
-        assert!(discovery.remove_application("pa-a"));
+        assert!(discovery.remove_application("pa-a", &[]));
 
         let reply = discovery.reply();
         assert_eq!(reply.physical_printers.len(), 1);

@@ -4,6 +4,8 @@
 use std::collections::BTreeSet;
 use std::net::IpAddr;
 
+use crate::PrinterEntry;
+
 /// Which fields support a physical-printer group.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum IdentityConfidence {
@@ -89,6 +91,24 @@ impl PhysicalDeviceEvidence {
             raw_device_id: Some(device_id.raw().to_string()),
             ..Self::default()
         }
+    }
+
+    /// Builds evidence from a configured destination. A `PrinterEntry` carries no serial
+    /// number or MAC address, so only the UUID, endpoint, and device URI are filled in.
+    pub fn from_printer_entry(printer: &PrinterEntry) -> Self {
+        let mut evidence = Self::default();
+
+        if let Some(uuid) = printer.device_uuid().or_else(|| printer.printer_uuid()) {
+            evidence.set_device_uuid(uuid);
+        }
+        if let Some((host, port)) = printer.endpoint() {
+            evidence.set_network_endpoint(&host, Some(port));
+        }
+        if let Some(uri) = printer.device_uri().or_else(|| printer.printer_uri()) {
+            evidence.set_normalized_device_uri(uri);
+        }
+
+        evidence
     }
 
     /// Records a printer-reported UUID, ignoring an empty value.
@@ -364,6 +384,7 @@ pub(super) fn normalize_name(name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
 
     fn with_serial(serial: &str) -> PhysicalDeviceEvidence {
         PhysicalDeviceEvidence {
@@ -507,6 +528,31 @@ mod tests {
 
         assert_eq!(left.device_uuid, right.device_uuid);
         assert!(aggregate(&left).can_merge(&aggregate(&right)));
+    }
+
+    #[test]
+    fn evidence_from_a_printer_entry_carries_uuid_and_endpoint() {
+        let mut printer = PrinterEntry::new("test", "Test Printer", false, HashMap::new());
+        printer.set_option(
+            "device-uuid",
+            "urn:uuid:11111111-2222-3333-4444-555555555555",
+        );
+        printer.set_option("endpoint-hostname", "192.0.2.50");
+        printer.set_option("endpoint-port", "631");
+        printer.set_option("device-uri", "ipp://192.0.2.50:631/ipp/print");
+
+        let evidence = PhysicalDeviceEvidence::from_printer_entry(&printer);
+
+        assert_eq!(
+            evidence.device_uuid.as_deref(),
+            Some("11111111-2222-3333-4444-555555555555")
+        );
+        assert_eq!(evidence.network_hostname.as_deref(), Some("192.0.2.50"));
+        assert_eq!(evidence.network_port, Some(631));
+        assert_eq!(
+            evidence.normalized_device_uri.as_deref(),
+            Some("ipp://192.0.2.50:631/ipp/print")
+        );
     }
 
     #[test]
