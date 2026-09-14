@@ -1,7 +1,7 @@
 //! Converts Printer Application device reports into physically grouped Add Printer rows.
 
 use cosmic_settings_printers_core::{
-    PhysicalDeviceEvidence, PhysicalDeviceObservation, PhysicalIdentityAggregate,
+    PhysicalDeviceEvidence, PhysicalDeviceObservation, PhysicalIdentityAggregate, PrinterEntry,
     group_by_physical_device,
 };
 
@@ -186,6 +186,36 @@ pub(crate) fn group_candidates(candidates: Vec<PaConfigurationCandidate>) -> Vec
     });
 
     printers
+}
+
+/// Removes rows matching a queue CUPS already has. An application only marks its own
+/// candidates `AlreadyConfigured`, so queues from elsewhere would still be offered.
+pub(crate) fn drop_already_configured(
+    printers: &mut Vec<PhysicalPrinter>,
+    configured_printers: &[PrinterEntry],
+) {
+    let configured_identities = configured_printers
+        .iter()
+        .map(|printer| {
+            let mut evidence = PhysicalDeviceEvidence::from_printer_entry(printer);
+            // An unresolved candidate is known only by its service instance, so take that
+            // out of a `dnssd://` queue URI too. Otherwise the two never match.
+            if let Some(service) = printer
+                .device_uri()
+                .or_else(|| printer.printer_uri())
+                .and_then(super::devices::dns_sd_service)
+            {
+                evidence.set_dns_sd_service(&service);
+            }
+            PhysicalIdentityAggregate::from_evidence(&evidence)
+        })
+        .collect::<Vec<_>>();
+
+    printers.retain(|printer| {
+        !configured_identities
+            .iter()
+            .any(|configured| configured.can_merge(&printer.identity))
+    });
 }
 
 /// Uses the first available UUID, serial number, MAC address, DNS-SD service, host-and-port, or URI.
@@ -484,5 +514,94 @@ mod tests {
         assert_eq!(forward.len(), reversed.len());
         assert_eq!(forward[0].id, reversed[0].id);
         assert_eq!(forward[0].candidates.len(), reversed[0].candidates.len());
+    }
+
+    fn configured_printer(device_uuid: &str) -> PrinterEntry {
+        let mut printer = PrinterEntry::new(
+            "configured",
+            "Configured Printer",
+            false,
+            std::collections::HashMap::new(),
+        );
+        printer.set_option("device-uuid", device_uuid);
+        printer
+    }
+
+    #[test]
+    fn a_row_matching_a_configured_printer_by_uuid_is_dropped() {
+        let device_id = "MFG:Acme;MDL:Test Laser;SN:ABC123;";
+        let mut printers = group_candidates(collapse_observations(vec![observation(
+            "pa-a",
+            0,
+            "socket://192.0.2.10:9100",
+            Some(device_id),
+        )]));
+        printers[0]
+            .identity
+            .absorb(&PhysicalIdentityAggregate::from_evidence(
+                &PhysicalDeviceEvidence {
+                    device_uuid: Some("11111111-2222-3333-4444-555555555555".to_string()),
+                    ..PhysicalDeviceEvidence::default()
+                },
+            ));
+
+        let configured = vec![configured_printer(
+            "urn:uuid:11111111-2222-3333-4444-555555555555",
+        )];
+        drop_already_configured(&mut printers, &configured);
+
+        assert!(printers.is_empty());
+    }
+
+    #[test]
+    fn a_row_with_no_matching_configured_printer_is_kept() {
+        let device_id = "MFG:Acme;MDL:Test Laser;SN:ABC123;";
+        let mut printers = group_candidates(collapse_observations(vec![observation(
+            "pa-a",
+            0,
+            "socket://192.0.2.10:9100",
+            Some(device_id),
+        )]));
+        printers[0]
+            .identity
+            .absorb(&PhysicalIdentityAggregate::from_evidence(
+                &PhysicalDeviceEvidence {
+                    device_uuid: Some("11111111-2222-3333-4444-555555555555".to_string()),
+                    ..PhysicalDeviceEvidence::default()
+                },
+            ));
+
+        let configured = vec![configured_printer(
+            "urn:uuid:99999999-8888-7777-6666-555555555555",
+        )];
+        drop_already_configured(&mut printers, &configured);
+
+        assert_eq!(printers.len(), 1);
+    }
+
+    #[test]
+    fn a_row_known_only_by_dns_sd_service_matches_a_queue_configured_from_the_same_uri() {
+        let mut printers = group_candidates(collapse_observations(vec![observation(
+            "pa-a",
+            0,
+            "dnssd://Raw%20Printer._pdl-datastream._tcp.local/",
+            None,
+        )]));
+        assert_eq!(printers.len(), 1);
+
+        let mut configured_printer = PrinterEntry::new(
+            "configured",
+            "Configured Printer",
+            false,
+            std::collections::HashMap::new(),
+        );
+        configured_printer.set_option(
+            "device-uri",
+            "dnssd://Raw%20Printer._pdl-datastream._tcp.local/",
+        );
+
+        drop_already_configured(&mut printers, &[configured_printer]);
+
+        assert!(printers.is_empty());
     }
 }

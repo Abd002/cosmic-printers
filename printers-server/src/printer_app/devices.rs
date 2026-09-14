@@ -1,9 +1,13 @@
 //! `PAPPL-Find-Devices`: asking one Printer Application what it can see.
 
+use std::collections::HashMap;
+
 use cosmic_settings_printers_core::{DeviceId, PhysicalDeviceEvidence};
-use cups_rs::{IppCollection, IppOperation, IppTag, IppValueTag};
+use cups_rs::{IppOperation, IppTag, IppValueTag};
 
 use super::client::{MAX_COLLECTIONS, OperationCost, PaError, PaRequest, bounded, check_status};
+
+const PAPPL_FIND_DEVICES: IppOperation = IppOperation::Other(0x402b);
 
 /// How a device is attached, which decides how endpoints are preferred.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -164,7 +168,7 @@ fn scan_devices(
     generation: u64,
     device_types: &[&str],
 ) -> Result<FindDevicesResult, PaError> {
-    let response = PaRequest::new(IppOperation::PAPPL_FIND_DEVICES, system_uri)?
+    let response = PaRequest::new(PAPPL_FIND_DEVICES, system_uri)?
         .keywords("smi55357-device-type", device_types)?
         .send_allowing_failure(system_uri, OperationCost::DeviceScan)?;
 
@@ -227,20 +231,24 @@ pub(crate) struct FindDevicesResult {
 fn observation(
     application_id: &str,
     generation: u64,
-    collection: &IppCollection<'_>,
+    collection: &HashMap<String, String>,
     index: usize,
 ) -> Option<PaDeviceObservation> {
-    let device_uri = collection.text("smi55357-device-uri").map(bounded)?;
+    let device_uri = collection
+        .get("smi55357-device-uri")
+        .cloned()
+        .map(bounded)?;
     if device_uri.is_empty() || !device_uri.contains(':') {
         return None;
     }
 
     let device_id = collection
-        .text("smi55357-device-id")
+        .get("smi55357-device-id")
+        .cloned()
         .map(bounded)
         .map(|raw| DeviceId::parse(&raw))
         .filter(|device_id| !device_id.is_empty());
-    let device_info = collection.text("smi55357-device-info").map(bounded);
+    let device_info = collection.get("smi55357-device-info").cloned().map(bounded);
     let transport = DeviceTransport::from_uri(&device_uri);
     let identity = evidence(device_id.as_ref(), &device_uri);
     let display_name = display_name(device_id.as_ref(), device_info.as_deref(), &device_uri);
@@ -354,7 +362,7 @@ fn uri_endpoint(uri: &str) -> Option<(String, Option<u16>)> {
 
 /// Extracts a `dnssd://` service instance, decoding percent and DNS-SD decimal escapes, removing a
 /// trailing dot, trimming whitespace, and lowercasing the result.
-fn dns_sd_service(uri: &str) -> Option<String> {
+pub(super) fn dns_sd_service(uri: &str) -> Option<String> {
     let uri = uri.strip_prefix("cups:").unwrap_or(uri);
     if !uri
         .get(..DNS_SD_PREFIX.len())
