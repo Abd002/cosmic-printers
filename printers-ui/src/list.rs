@@ -869,16 +869,16 @@ fn printer_destination_actions(printer: &PrinterEntry) -> Element<'static, Messa
 }
 
 fn settings_link(printer: &PrinterEntry) -> Element<'static, Message> {
-    widget::button::custom(
-        row::with_capacity(2)
-            .align_y(Alignment::Center)
-            .spacing(cosmic::theme::active().cosmic().space_xxxs())
-            .push(text::body(fl!("settings")))
-            .push(widget::icon::from_name("go-next-symbolic").size(crate::style::ICON_SIZE)),
-    )
-    .class(cosmic::theme::Button::Link)
-    .on_press(Message::OpenPrinterSettings(printer.clone()))
-    .into()
+    // `button::text` brings its own metrics, so set the ones this row needs:
+    // uniform 5px padding and `text::body`'s 21px line height.
+    widget::button::text(fl!("settings"))
+        .trailing_icon(widget::icon::from_name("go-next-symbolic"))
+        .padding(5)
+        .height(Length::Shrink)
+        .line_height(21)
+        .class(cosmic::theme::Button::Link)
+        .on_press(Message::OpenPrinterSettings(printer.clone()))
+        .into()
 }
 
 fn icon_button(name: &'static str, message: Message) -> Element<'static, Message> {

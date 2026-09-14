@@ -660,22 +660,18 @@ pub fn queue_view(state: &State) -> Element<'_, Message> {
 }
 
 fn queue_jobs(state: &State) -> Element<'_, Message> {
-    let mut rows = column::with_capacity(state.jobs.len().saturating_mul(2));
-    for (index, job) in state.jobs.iter().enumerate() {
-        rows = rows.push(job_row(state, job));
-        if index + 1 < state.jobs.len() {
-            rows = rows.push(widget::divider::horizontal::default());
-        }
-    }
+    // Rows carry their own padding, so the list column only supplies the surface and dividers.
+    let rows = state.jobs.iter().fold(
+        widget::list_column()
+            .divider_padding(0)
+            .list_item_padding([0, 0]),
+        |rows, job| rows.add(job_row(state, job)),
+    );
 
-    scrollable(
-        container(rows)
-            .width(Length::Fill)
-            .class(cosmic::theme::Container::List),
-    )
-    .width(Length::Fill)
-    .height(Length::Shrink)
-    .into()
+    scrollable(rows.into_element())
+        .width(Length::Fill)
+        .height(Length::Shrink)
+        .into()
 }
 
 fn job_row(state: &State, job: &JobInfo) -> Element<'static, Message> {

@@ -119,7 +119,6 @@ pub const SUPPLY_MARK_WIDTH: f32 = 2.0;
 pub const SUPPLY_MARK_HEIGHT: f32 = 16.0;
 /// A supply bar is a pill, whatever its height.
 pub const RADIUS_SUPPLY_BAR: f32 = 40.0;
-
 pub const ICON_SIZE: u16 = 16;
 
 #[cfg(test)]
