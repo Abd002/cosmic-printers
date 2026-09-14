@@ -676,16 +676,16 @@ fn details_header(printer: &PrinterEntry) -> Element<'static, Message> {
 }
 
 fn back_button() -> Element<'static, Message> {
-    widget::button::custom(
-        row::with_capacity(2)
-            .align_y(Alignment::Center)
-            .spacing(cosmic::theme::active().cosmic().space_xxxs())
-            .push(widget::icon::from_name("go-previous-symbolic").size(crate::style::ICON_SIZE))
-            .push(text::body(fl!("printers"))),
-    )
-    .class(cosmic::theme::Button::Link)
-    .on_press(Message::GoBack)
-    .into()
+    // `button::text` brings its own metrics, so set the ones this row needs:
+    // uniform 5px padding and `text::body`'s 21px line height.
+    widget::button::text(fl!("printers"))
+        .leading_icon(widget::icon::from_name("go-previous-symbolic"))
+        .padding(5)
+        .height(Length::Shrink)
+        .line_height(21)
+        .class(cosmic::theme::Button::Link)
+        .on_press(Message::GoBack)
+        .into()
 }
 
 fn status_line(status: &PrinterStatus) -> Element<'static, Message> {

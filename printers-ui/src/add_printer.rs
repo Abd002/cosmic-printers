@@ -713,8 +713,6 @@ fn manual_setup_view(state: &State) -> Element<'_, Message> {
     if rows.is_empty() {
         rows.push(plain_row(fl!("no-printer-applications-found")));
     }
-    let rows = with_dividers(rows);
-
     let spacing = cosmic::theme::active().cosmic().spacing;
 
     column::with_capacity(2)
@@ -728,17 +726,15 @@ fn manual_setup_view(state: &State) -> Element<'_, Message> {
 }
 
 fn select_application_view<'a>(state: &'a State, printer_id: &str) -> Element<'a, Message> {
-    let rows = state
+    let rows: Vec<Element<'static, Message>> = state
         .physical_printer(printer_id)
         .map(|printer| {
-            with_dividers(
-                printer
-                    .candidates
-                    .iter()
-                    .filter(|candidate| is_selectable(candidate.state))
-                    .map(select_application_row)
-                    .collect(),
-            )
+            printer
+                .candidates
+                .iter()
+                .filter(|candidate| is_selectable(candidate.state))
+                .map(select_application_row)
+                .collect()
         })
         .unwrap_or_default();
 
@@ -759,13 +755,11 @@ fn select_application_view<'a>(state: &'a State, printer_id: &str) -> Element<'a
 }
 
 fn added_printers_view(state: &State) -> Element<'_, Message> {
-    let rows = with_dividers(
-        state
-            .added
-            .iter()
-            .map(|added| added_printer_row(state, added))
-            .collect(),
-    );
+    let rows = state
+        .added
+        .iter()
+        .map(|added| added_printer_row(state, added))
+        .collect();
     let spacing = cosmic::theme::active().cosmic().spacing;
     let description = row::with_capacity(2)
         .spacing(spacing.space_xxxs)
@@ -801,12 +795,10 @@ fn printers_section(state: &State) -> Element<'_, Message> {
         if printers.is_empty() {
             vec![plain_row(fl!("no-printers-found"))]
         } else {
-            with_dividers(
-                printers
-                    .iter()
-                    .map(|printer| discovered_printer_row(state, printer))
-                    .collect(),
-            )
+            printers
+                .iter()
+                .map(|printer| discovered_printer_row(state, printer))
+                .collect()
         }
     };
     let spacing = cosmic::theme::active().cosmic().spacing;
@@ -820,17 +812,7 @@ fn printers_section(state: &State) -> Element<'_, Message> {
 
 fn manual_setup_prompt() -> Element<'static, Message> {
     let spacing = cosmic::theme::spacing();
-    let trailing_size = f32::from(spacing.space_l);
-    let chevron: Element<'static, Message> = container(
-        icon::from_name("go-next-symbolic")
-            .size(crate::style::ICON_SIZE)
-            .icon()
-            .class(cosmic::theme::Svg::Custom(primary_svg())),
-    )
-    .width(Length::Fixed(trailing_size))
-    .height(Length::Fixed(trailing_size))
-    .center(Length::Fixed(trailing_size))
-    .into();
+    let chevron = chevron();
 
     column::with_capacity(2)
         .spacing(spacing.space_xxs)
@@ -966,24 +948,13 @@ fn select_application_row(
     candidate: &PrinterApplicationCandidateSummary,
 ) -> Element<'static, Message> {
     let spacing = cosmic::theme::spacing();
-    let trailing_size = f32::from(spacing.space_l);
-    let chevron: Element<'static, Message> = container(
-        icon::from_name("go-next-symbolic")
-            .size(crate::style::ICON_SIZE)
-            .icon()
-            .class(cosmic::theme::Svg::Custom(primary_svg())),
-    )
-    .width(Length::Fixed(trailing_size))
-    .height(Length::Fixed(trailing_size))
-    .center(Length::Fixed(trailing_size))
-    .into();
 
     row_button(
         row::with_capacity(2)
             .align_y(Alignment::Center)
             .spacing(spacing.space_s)
             .push(row_label(candidate.printer_application_name.clone()))
-            .push(chevron),
+            .push(chevron()),
         APPLICATION_ROW_HEIGHT,
         Some(Message::SelectPrinterApplication(candidate.id.clone())),
     )
@@ -1005,10 +976,7 @@ fn plain_row(label: String) -> Element<'static, Message> {
 }
 
 fn section_heading(label: String) -> Element<'static, Message> {
-    text::body(label)
-        .font(cosmic::font::bold())
-        .width(Length::Fill)
-        .into()
+    text::heading(label).width(Length::Fill).into()
 }
 
 fn regular_heading(label: String) -> Element<'static, Message> {
@@ -1043,25 +1011,32 @@ fn row_label(label: String) -> Element<'static, Message> {
         .into()
 }
 
-fn list_view(rows: Vec<Element<'static, Message>>) -> Element<'static, Message> {
-    column::with_children(rows)
-        .spacing(0)
-        .width(Length::Fill)
-        .apply(container)
-        .width(Length::Fill)
-        .class(cosmic::theme::Container::List)
-        .into()
+/// Draws the trailing chevron shown on rows that open another view.
+fn chevron() -> Element<'static, Message> {
+    let trailing_size = f32::from(cosmic::theme::spacing().space_l);
+
+    container(
+        icon::from_name("go-next-symbolic")
+            .size(crate::style::ICON_SIZE)
+            .icon()
+            .class(cosmic::theme::Svg::Custom(primary_svg())),
+    )
+    .width(Length::Fixed(trailing_size))
+    .height(Length::Fixed(trailing_size))
+    .center(Length::Fixed(trailing_size))
+    .into()
 }
 
-fn with_dividers(rows: Vec<Element<'static, Message>>) -> Vec<Element<'static, Message>> {
-    let mut divided = Vec::with_capacity(rows.len().saturating_mul(2).saturating_sub(1));
-    for (index, row) in rows.into_iter().enumerate() {
-        if index > 0 {
-            divided.push(widget::divider::horizontal::default().into());
-        }
-        divided.push(row);
-    }
-    divided
+// Rows carry their own padding, so the list column only supplies the surface and dividers.
+fn list_view(rows: Vec<Element<'static, Message>>) -> Element<'static, Message> {
+    rows.into_iter()
+        .fold(
+            widget::list_column()
+                .divider_padding(0)
+                .list_item_padding([0, 0]),
+            widget::ListColumn::add,
+        )
+        .into()
 }
 
 fn printer_display_name(printer: &PrinterEntry) -> String {
