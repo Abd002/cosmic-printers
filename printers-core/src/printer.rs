@@ -264,6 +264,11 @@ impl PrinterEntry {
             .or_else(|| self.option("printer-state-message"))
     }
 
+    /// Returns whether this queue faxes rather than prints.
+    pub fn is_fax(&self) -> bool {
+        self.option("queue-function") == Some("fax")
+    }
+
     /// Returns supported media values.
     pub fn paper_sizes(&self) -> Vec<String> {
         self.option_values("media-supported")

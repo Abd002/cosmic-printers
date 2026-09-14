@@ -1,4 +1,6 @@
-use super::conversion::{refresh_printer_endpoint, refresh_printer_web_page};
+use super::conversion::{
+    refresh_printer_endpoint, refresh_printer_function, refresh_printer_web_page,
+};
 use super::scheduler;
 use crate::error::{BackendError, BackendResult};
 use crate::ipp::{CupsResultExt, ensure_success, printer_attrs_request};
@@ -52,6 +54,7 @@ pub(in crate::cups) fn reload_attrs_from_printer_uri(
     let response = scheduler::send(request, printer_uri)?;
 
     merge_attrs(printer, attrs, response)?;
+    refresh_printer_function(printer);
     refresh_printer_web_page(printer);
     Ok(())
 }
@@ -105,6 +108,7 @@ pub(in crate::cups) fn reload_attrs_from_device_uri(
         .cups_err()?;
 
     merge_attrs(printer, attrs, response)?;
+    refresh_printer_function(printer);
     // After the endpoint, because that is where the address the page is offered at comes from.
     apply_connection_endpoint(printer, &connection);
     refresh_printer_web_page(printer);

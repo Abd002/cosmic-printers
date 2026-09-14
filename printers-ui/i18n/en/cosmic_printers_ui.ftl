@@ -101,6 +101,7 @@ job-time-days = { $count } d ago
 location = Location
 model = Model
 device-name = Device name
+fax = Fax
 driver-version = Driver version
 printing-preferences = Printing preferences
 paper-size = Paper size

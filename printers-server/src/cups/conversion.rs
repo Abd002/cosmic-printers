@@ -44,6 +44,7 @@ pub(in crate::cups) fn destination_to_printer_entry(mut destination: Destination
         &mut printer,
         endpoint_from_uris(printer_uri.as_deref(), device_uri.as_deref()),
     );
+    refresh_printer_function(&mut printer);
     printer
 }
 
@@ -58,6 +59,17 @@ fn endpoint_from_uris(
     printer_uri
         .and_then(parse_uri_endpoint)
         .or_else(|| device_uri.and_then(parse_uri_endpoint))
+}
+
+/// Records whether the queue faxes rather than prints. Only the fax bit is read; the rest
+/// of the CUPS printer type says nothing the UI uses.
+pub(super) fn refresh_printer_function(printer: &mut PrinterEntry) {
+    let faxes = printer
+        .option("printer-type")
+        .and_then(|printer_type| printer_type.parse::<u32>().ok())
+        .is_some_and(|printer_type| printer_type & cups_rs::PRINTER_FAX != 0);
+
+    printer.set_option("queue-function", if faxes { "fax" } else { "print" });
 }
 
 /// Recomputes the endpoint after URI attributes are merged.
@@ -340,5 +352,41 @@ mod tests {
         ]);
 
         assert_eq!(printer.web_page(), Some("http://[2001:db8::1]:8000/status"));
+    }
+
+    fn with_printer_type(printer_type: Option<&str>) -> PrinterEntry {
+        let mut printer = PrinterEntry::new(
+            "Printer",
+            "Printer",
+            false,
+            printer_type
+                .map(|printer_type| ("printer-type".to_string(), printer_type.to_string()))
+                .into_iter()
+                .collect::<HashMap<_, _>>(),
+        );
+        refresh_printer_function(&mut printer);
+        printer
+    }
+
+    #[test]
+    fn the_fax_bit_marks_a_queue_as_a_fax() {
+        // 262148 is FAX | BW, as a fax-capable queue reports it.
+        assert!(with_printer_type(Some("262148")).is_fax());
+    }
+
+    #[test]
+    fn a_queue_without_the_fax_bit_prints() {
+        // 4 is BW alone, which is what the test fixtures report.
+        assert!(!with_printer_type(Some("4")).is_fax());
+        // 83886108 is MFP | DISCOVERED | DUPLEX | COLOR | BW: multi-function, but the
+        // queue itself still prints.
+        assert!(!with_printer_type(Some("83886108")).is_fax());
+    }
+
+    #[test]
+    fn a_missing_or_unreadable_printer_type_prints() {
+        assert!(!with_printer_type(None).is_fax());
+        assert!(!with_printer_type(Some("")).is_fax());
+        assert!(!with_printer_type(Some("not a number")).is_fax());
     }
 }

@@ -848,6 +848,12 @@ fn printer_destination_actions(printer: &PrinterEntry) -> Element<'static, Messa
             Message::OpenPrinterWebPage(web_page.to_string()),
         ));
     }
+
+    // A fax is not a print queue and has no printer settings, so it offers only its page.
+    if printer.is_fax() {
+        return left.width(Length::Fill).apply(Element::from);
+    }
+
     left = left.push(icon_button(
         crate::icons::printer_queue(),
         Message::OpenPrinterQueue(printer.clone()),
@@ -931,6 +937,10 @@ fn context_menu_row(label: String, message: Option<Message>) -> Element<'static,
 }
 
 fn printer_subtitle(printer: &PrinterEntry) -> Option<String> {
+    if printer.is_fax() {
+        return Some(fl!("fax"));
+    }
+
     printer
         .model()
         .and_then(non_empty)
