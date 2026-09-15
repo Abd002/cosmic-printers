@@ -852,10 +852,8 @@ fn settings_link(printer: &PrinterEntry) -> Element<'static, Message> {
         .into()
 }
 
-fn icon_button(name: &'static str, message: Message) -> Element<'static, Message> {
-    widget::button::icon(widget::icon::from_name(name))
-        .on_press(message)
-        .into()
+fn icon_button(handle: widget::icon::Handle, message: Message) -> Element<'static, Message> {
+    widget::button::icon(handle).on_press(message).into()
 }
 
 fn printer_context_menu(state: &State, printer: &PrinterEntry) -> Element<'static, Message> {

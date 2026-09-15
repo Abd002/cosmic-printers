@@ -720,9 +720,8 @@ fn added_printers_view(state: &State) -> Element<'_, Message> {
         .align_y(Alignment::Center)
         .push(text::body(fl!("printer-web-interface-description")).width(Length::Fill))
         .push(
-            icon::from_name(crate::icons::web_page())
+            icon::icon(crate::icons::web_page())
                 .size(crate::style::ICON_SIZE)
-                .icon()
                 .class(cosmic::theme::Svg::Custom(primary_svg())),
         );
 
@@ -816,7 +815,7 @@ fn added_printer_row(state: &State, added: &AddedPrinter) -> Element<'static, Me
     let trailing = destination
         .and_then(PrinterEntry::web_page)
         .map(|web_page| {
-            widget::button::icon(icon::from_name(crate::icons::web_page()))
+            widget::button::icon(crate::icons::web_page())
                 .on_press(Message::OpenPrinterWebPage(web_page.to_string()))
                 .into()
         });

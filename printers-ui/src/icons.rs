@@ -1,36 +1,27 @@
-//! Portable icon-name selection.
+//! Icons the screens draw.
 
 use cosmic::widget::icon;
-use std::sync::LazyLock;
 
-pub(crate) fn web_page() -> &'static str {
-    "web-browser-symbolic"
+const WEB_PAGE_ICON: &[u8] = include_bytes!("../resources/icons/web-browser-symbolic.svg");
+const PRINTER_QUEUE_ICON: &[u8] = include_bytes!("../resources/icons/printer-queue-symbolic.svg");
+
+pub(crate) fn web_page() -> icon::Handle {
+    embedded(WEB_PAGE_ICON)
 }
 
-pub(crate) fn printer_queue() -> &'static str {
-    *PRINTER_QUEUE
+pub(crate) fn printer_queue() -> icon::Handle {
+    embedded(PRINTER_QUEUE_ICON)
 }
 
-static PRINTER_QUEUE: LazyLock<&'static str> =
-    LazyLock::new(|| resolve("printer-queue-symbolic", "printer-printing-symbolic"));
-
-// Resolve at the same 16-pixel size used by the UI because themes may be size-specific.
-fn resolve(preferred: &'static str, fallback: &'static str) -> &'static str {
-    if icon::from_name(preferred).size(16).path().is_some() {
-        preferred
-    } else {
-        tracing::debug!(
-            preferred,
-            fallback,
-            "icon not in this theme, using the fallback"
-        );
-        fallback
-    }
+fn embedded(bytes: &'static [u8]) -> icon::Handle {
+    let mut handle = icon::from_svg_bytes(bytes);
+    handle.symbolic = true;
+    handle
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{icon, resolve};
+    use super::{PRINTER_QUEUE_ICON, WEB_PAGE_ICON, icon, printer_queue, web_page};
 
     const PORTABLE: &[&str] = &[
         "checkbox-checked-symbolic",
@@ -40,11 +31,8 @@ mod tests {
         "media-playback-start-symbolic",
         "object-select-symbolic",
         "view-refresh-symbolic",
-        "web-browser-symbolic",
         "window-close-symbolic",
     ];
-
-    const FALLBACKS: &[(&str, &str)] = &[("printer-queue-symbolic", "printer-printing-symbolic")];
 
     fn found(name: &str) -> bool {
         icon::from_name(name).size(16).path().is_some()
@@ -71,29 +59,6 @@ mod tests {
                 "{name} is asked for directly and this theme does not carry it"
             );
         }
-
-        for (preferred, fallback) in FALLBACKS {
-            assert!(
-                found(resolve(preferred, fallback)),
-                "neither {preferred} nor {fallback} resolves"
-            );
-        }
-    }
-
-    #[test]
-    fn every_fallback_is_a_real_icon_name() {
-        let roots = icon_directories();
-        if roots.is_empty() {
-            eprintln!("no icon directories on this machine, so there is nothing to look through");
-            return;
-        }
-
-        for (preferred, fallback) in FALLBACKS {
-            assert!(
-                roots.iter().any(|root| contains_icon(root, fallback)),
-                "{preferred} falls back to {fallback}, which is not an icon in any theme installed here"
-            );
-        }
     }
 
     #[test]
@@ -115,11 +80,21 @@ mod tests {
                 "{name} is asked for directly and Adwaita does not carry it"
             );
         }
+    }
 
-        for (preferred, fallback) in FALLBACKS {
+    #[test]
+    fn the_embedded_icons_are_symbolic_so_the_theme_colours_them() {
+        for handle in [web_page(), printer_queue()] {
+            assert!(handle.symbolic);
+        }
+    }
+
+    #[test]
+    fn the_embedded_icons_are_svgs() {
+        for bytes in [WEB_PAGE_ICON, PRINTER_QUEUE_ICON] {
             assert!(
-                contains_icon(&adwaita, fallback),
-                "with no COSMIC icons a desktop needs {fallback} in place of {preferred}, and Adwaita does not carry it"
+                std::str::from_utf8(bytes).is_ok_and(|svg| svg.contains("<svg")),
+                "an embedded icon is not an SVG"
             );
         }
     }
