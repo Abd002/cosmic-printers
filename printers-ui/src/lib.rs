@@ -3,9 +3,8 @@
 #![warn(missing_docs)]
 
 pub mod backend;
-// Keep this before modules that use `fl!` or `slab!`.
 #[macro_use]
-mod localize;
+mod i18n;
 
 /// Printer discovery and setup UI.
 pub mod add_printer;
@@ -109,4 +108,4 @@ pub mod strings {
 
 pub use backend::{Backend, BackendError, EventFeed};
 pub use details::Request;
-pub use localize::{localizer, select_languages};
+pub use i18n::{init, localizer};
