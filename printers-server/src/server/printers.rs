@@ -163,7 +163,10 @@ impl Server {
             .into_iter()
             .find(PrinterEntry::is_default)
             .map(|printer| printer.id().to_string());
-        let outcome = cups::set_default(printer_id).await.map_err(service_error);
+        let known_printers = self.context.available_destinations_cached().await;
+        let outcome = cups::set_default(printer_id, &known_printers)
+            .await
+            .map_err(service_error);
 
         if outcome.is_ok() {
             if let Some(previous_default) = previous_default
@@ -186,7 +189,10 @@ impl Server {
             .into_iter()
             .find(PrinterEntry::is_default)
             .map(|printer| printer.id().to_string());
-        let outcome = cups::clear_default().await.map_err(service_error);
+        let known_printers = self.context.available_destinations_cached().await;
+        let outcome = cups::clear_default(&known_printers)
+            .await
+            .map_err(service_error);
 
         if outcome.is_ok()
             && let Some(previous_default) = previous_default
@@ -211,7 +217,8 @@ impl Server {
         values: &[String],
     ) -> Result<(), Error> {
         self.printer_entry(printer_id).await?;
-        let outcome = cups::set_option_default(printer_id, option, values)
+        let known_printers = self.context.available_destinations_cached().await;
+        let outcome = cups::set_option_default(printer_id, option, values, &known_printers)
             .await
             .map_err(service_error);
 
