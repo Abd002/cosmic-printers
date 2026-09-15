@@ -4,7 +4,7 @@ use cosmic::iced::core::text::{Ellipsize, EllipsizeHeightLimit, Wrapping};
 use cosmic::iced::{
     Alignment, Color, Length, Point,
     futures::{SinkExt, StreamExt, channel::mpsc::Sender, future},
-    stream, window,
+    stream,
 };
 use cosmic::surface;
 use cosmic::widget::{self, column, container, menu, row, settings, text};
@@ -27,7 +27,6 @@ pub struct State {
     pub(crate) default_printer_id: Option<String>,
     active_job_counts: HashMap<String, usize>,
     pub(crate) add_printer_dialog: Option<crate::add_printer::State>,
-    dialog_application_id: String,
     default_printer_labels: Vec<String>,
     printer_context: Option<String>,
     menu_position: Point,
@@ -39,19 +38,6 @@ impl State {
     #[must_use]
     pub fn add_printer_dialog(&self) -> Option<&crate::add_printer::State> {
         self.add_printer_dialog.as_ref()
-    }
-
-    /// Returns the Add Printer state displayed by `window_id`.
-    #[must_use]
-    pub fn add_printer_window(&self, window_id: window::Id) -> Option<&crate::add_printer::State> {
-        self.add_printer_dialog
-            .as_ref()
-            .filter(|dialog| dialog.window_id() == Some(window_id))
-    }
-
-    /// Sets the application ID assigned to the Add Printer window.
-    pub fn set_dialog_application_id(&mut self, application_id: impl Into<String>) {
-        self.dialog_application_id = application_id.into();
     }
 
     /// Creates the initial printer-loading task.
@@ -80,7 +66,6 @@ impl Default for State {
             default_printer_id: None,
             active_job_counts: HashMap::new(),
             add_printer_dialog: None,
-            dialog_application_id: String::new(),
             default_printer_labels: default_printer_labels(&[]),
             printer_context: None,
             menu_position: Point::ORIGIN,
@@ -94,8 +79,6 @@ impl Default for State {
 pub enum Message {
     /// Opens the Add Printer dialog.
     OpenAddPrinterDialog,
-    /// Removes Add Printer state after its window has closed.
-    AddPrinterDialogClosed(window::Id),
     /// Forwards an Add Printer dialog message.
     AddPrinter(crate::add_printer::Message),
     /// Selects a default-printer entry; index zero means no default.
@@ -174,11 +157,6 @@ impl State {
     {
         match message {
             Message::OpenAddPrinterDialog => self.open_add_printer_dialog(),
-            Message::AddPrinterDialogClosed(window_id) => {
-                self.add_printer_dialog
-                    .take_if(|dialog| dialog.window_id() == Some(window_id));
-                Task::none()
-            }
             Message::AddPrinter(message) => self.update_add_printer(message),
             Message::DefaultPrinterDropdown(index) => self.select_default_printer(index),
             Message::SetDefaultPrinter(printer_id) => {
@@ -250,16 +228,12 @@ impl State {
             return Task::none();
         }
 
-        let (window_id, window_task) = crate::add_printer::open_window(&self.dialog_application_id);
-        let mut dialog =
-            crate::add_printer::State::new(self.backend.clone(), self.printers.clone());
-        dialog.set_window_id(window_id);
-        self.add_printer_dialog = Some(dialog);
+        self.add_printer_dialog = Some(crate::add_printer::State::new(
+            self.backend.clone(),
+            self.printers.clone(),
+        ));
 
-        Task::batch([
-            window_task,
-            crate::add_printer::State::load_task(self.backend.clone()),
-        ])
+        crate::add_printer::State::load_task(self.backend.clone())
     }
 
     fn select_default_printer<M>(&mut self, index: usize) -> Task<M>
@@ -485,11 +459,8 @@ impl State {
         match dialog.update(message) {
             crate::add_printer::Action::None => {}
             crate::add_printer::Action::Close => {
-                let Some(window_id) = dialog.window_id() else {
-                    self.add_printer_dialog = None;
-                    return Task::none();
-                };
-                return window::close(window_id);
+                self.add_printer_dialog = None;
+                return Task::none();
             }
             crate::add_printer::Action::RefreshPrinters => {
                 return self.load_printers_task();

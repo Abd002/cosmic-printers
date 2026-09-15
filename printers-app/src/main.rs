@@ -4,7 +4,7 @@ use std::sync::OnceLock;
 
 use cosmic::app::{Core, Settings, Task, context_drawer};
 use cosmic::iced::widget::scrollable::{self as iced_scrollable, AbsoluteOffset};
-use cosmic::iced::{Length, Subscription, window};
+use cosmic::iced::{Length, Subscription};
 use cosmic::widget::{self, column, scrollable};
 use cosmic::{ApplicationExt, Apply, Element};
 use cosmic_printers_ui::{Backend, Request, add_printer, details, list, queue, strings};
@@ -130,7 +130,6 @@ impl cosmic::Application for App {
         };
 
         let backend = backend();
-        app.list.set_dialog_application_id(Self::APP_ID);
         app.list.set_backend(backend.clone());
         app.details.set_backend(backend.clone());
         app.queue.set_backend(backend);
@@ -216,11 +215,10 @@ impl cosmic::Application for App {
         }
     }
 
-    fn view_window(&self, id: window::Id) -> Element<'_, Message> {
+    fn dialog(&self) -> Option<Element<'_, Message>> {
         self.list
-            .add_printer_window(id)
+            .add_printer_dialog()
             .map(|dialog| add_printer::dialog(dialog).map(Message::from))
-            .unwrap_or_else(|| widget::space::horizontal().into())
     }
 
     fn context_drawer(&self) -> Option<context_drawer::ContextDrawer<'_, Message>> {
@@ -243,12 +241,7 @@ impl cosmic::Application for App {
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        Subscription::batch([
-            Subscription::run(printer_events).map(Message::List),
-            window::close_events()
-                .map(list::Message::AddPrinterDialogClosed)
-                .map(Message::List),
-        ])
+        Subscription::run(printer_events).map(Message::List)
     }
 }
 
