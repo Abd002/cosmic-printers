@@ -28,7 +28,7 @@ fn main() -> cosmic::iced::Result {
         )
         .init();
 
-    cosmic_printers_ui::select_languages();
+    cosmic_printers_ui::init();
 
     let _ = BACKEND.set(Backend::detect_blocking());
     tracing::info!(backend = ?backend(), "serving printers");

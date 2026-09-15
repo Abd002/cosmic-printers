@@ -1,5 +1,4 @@
-//! Printer UI localization.
-//! A crate-local catalogue lets `i18n_embed_fl` validate keys at compile time.
+//! Provides localization support for this crate.
 
 use i18n_embed::{
     DefaultLocalizer, LanguageLoader, Localizer,
@@ -28,31 +27,19 @@ pub(crate) static LANGUAGE_LOADER: LazyLock<FluentLanguageLoader> = LazyLock::ne
 #[allow(unused_macros)]
 macro_rules! fl {
     ($message_id:literal) => {{
-        i18n_embed_fl::fl!($crate::localize::LANGUAGE_LOADER, $message_id)
+        i18n_embed_fl::fl!($crate::i18n::LANGUAGE_LOADER, $message_id)
     }};
 
     ($message_id:literal, $($args:expr),*) => {{
-        i18n_embed_fl::fl!($crate::localize::LANGUAGE_LOADER, $message_id, $($args), *)
+        i18n_embed_fl::fl!($crate::i18n::LANGUAGE_LOADER, $message_id, $($args), *)
     }};
 }
 
-#[allow(unused_macros)]
-macro_rules! slab {
-    ( $descriptions:ident { $( $txt_id:ident = $txt_expr:expr; )+ } ) => {
-        let mut $descriptions = slab::Slab::new();
-
-        $(
-            let $txt_id = $descriptions.insert($txt_expr);
-        )+
-    }
-}
-
-/// Selects the user's preferred languages.
-pub fn select_languages() {
-    let localizer = localizer();
+/// Applies the user's preferred languages to translations from the `fl!()` macro.
+pub fn init() {
     let requested = i18n_embed::DesktopLanguageRequester::requested_languages();
 
-    if let Err(why) = localizer.select(&requested) {
+    if let Err(why) = localizer().select(&requested) {
         tracing::warn!(%why, "could not select a language for the printer screens");
     }
 }
