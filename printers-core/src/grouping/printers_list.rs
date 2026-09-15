@@ -227,11 +227,22 @@ impl GroupedDestination {
     /// Returns the shared web endpoint for a queue-only group.
     pub fn queues_web_page(&self) -> Option<String> {
         if self.queues.iter().all(PrinterEntry::endpoint_is_local) {
-            Some(format!("http://localhost:{}", self.port()?))
-        } else {
-            Some(format!("http://{}", self.hostname()?))
+            return Some(format!("http://localhost:{}", self.port()?));
         }
+
+        self.queues
+            .iter()
+            .find_map(|queue| queue.web_page().and_then(web_origin))
+            .or_else(|| Some(format!("http://{}", self.hostname()?)))
     }
+}
+
+/// Reduces a page URL to the address it is served from, dropping the path.
+fn web_origin(page: &str) -> Option<String> {
+    let (scheme, rest) = page.split_once("://")?;
+    let authority = rest.split('/').next().filter(|rest| !rest.is_empty())?;
+
+    Some(format!("{scheme}://{authority}/"))
 }
 
 fn shared_queue_value<'a>(values: impl Iterator<Item = Option<&'a str>>) -> Option<&'a str> {
@@ -966,5 +977,51 @@ mod tests {
         assert_eq!(group_printers(forward, Vec::new()).len(), 1);
         reversed.swap(0, 2);
         assert_eq!(group_printers(reversed, Vec::new()).len(), 1);
+    }
+
+    #[test]
+    fn the_device_page_keeps_the_scheme_and_port_the_device_serves_it_on() {
+        let mut print = printer("hp-print", "ipp://192.168.0.70:631/ipp/print", "", None);
+        print.set_option(
+            "web-page",
+            "http://192.168.0.70:443/airprint_mob_status.htm",
+        );
+        let groups = group_printers(vec![print], Vec::new());
+
+        assert_eq!(
+            groups[0].queues_web_page(),
+            Some("http://192.168.0.70:443/".to_owned())
+        );
+    }
+
+    #[test]
+    fn a_device_without_a_page_of_its_own_falls_back_to_the_hostname() {
+        let groups = group_printers(
+            vec![printer(
+                "hp-print",
+                "ipp://192.168.0.70:631/ipp/print",
+                "",
+                None,
+            )],
+            Vec::new(),
+        );
+
+        assert_eq!(
+            groups[0].queues_web_page(),
+            Some("http://192.168.0.70".to_owned())
+        );
+    }
+
+    #[test]
+    fn a_local_printer_application_still_answers_on_its_own_port() {
+        let groups = group_printers(
+            vec![printer_queue("SocketLabel", "10.255.255.254", 8000)],
+            Vec::new(),
+        );
+
+        assert_eq!(
+            groups[0].queues_web_page(),
+            Some("http://localhost:8000".to_owned())
+        );
     }
 }
