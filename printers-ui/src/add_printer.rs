@@ -4,7 +4,7 @@ use crate::backend::{Backend, BackendError};
 use cosmic::app::Task;
 use cosmic::iced::core::text::{Ellipsize, EllipsizeHeightLimit, Wrapping};
 use cosmic::iced::widget::scrollable::{Direction, Scrollbar};
-use cosmic::iced::{Alignment, Length, Padding, Size, window};
+use cosmic::iced::{Alignment, Length, Padding, Size};
 use cosmic::widget::{
     self, button, column, container, icon, row, scrollable,
     space::{horizontal as horizontal_space, vertical as vertical_space},
@@ -18,7 +18,7 @@ use cosmic_settings_printers_core::{
     PrinterConfigurationState, PrinterEntry,
 };
 
-const INITIAL_WINDOW_SIZE: Size = Size::new(680.0, 570.0);
+const DIALOG_SIZE: Size = Size::new(680.0, 570.0);
 const SEARCH_MAX_WIDTH: f32 = 314.0;
 const PRINTER_ROW_HEIGHT: f32 = 54.0;
 const APPLICATION_ROW_HEIGHT: f32 = 48.0;
@@ -48,7 +48,6 @@ pub enum DialogView {
 #[derive(Clone, Debug)]
 pub struct State {
     backend: Backend,
-    window_id: Option<window::Id>,
     /// Search query.
     pub search: String,
     /// Current user-visible error.
@@ -82,7 +81,6 @@ impl State {
     pub fn new(backend: Backend, configured_printers: Vec<PrinterEntry>) -> Self {
         Self {
             backend,
-            window_id: None,
             search: String::new(),
             error: None,
             configured_printers,
@@ -97,14 +95,6 @@ impl State {
     /// Sets the printer backend.
     pub fn set_backend(&mut self, backend: Backend) {
         self.backend = backend;
-    }
-
-    pub(crate) fn set_window_id(&mut self, window_id: window::Id) {
-        self.window_id = Some(window_id);
-    }
-
-    pub(crate) fn window_id(&self) -> Option<window::Id> {
-        self.window_id
     }
 
     /// Starts and loads a discovery round.
@@ -130,12 +120,6 @@ impl State {
     {
         match message {
             Message::Close => Action::Close,
-            Message::DragWindow => self.window_id.map_or(Action::None, |window_id| {
-                Action::Task(window::drag::<cosmic::Action<M>>(window_id))
-            }),
-            Message::ToggleMaximizeWindow => self.window_id.map_or(Action::None, |window_id| {
-                Action::Task(window::toggle_maximize::<cosmic::Action<M>>(window_id))
-            }),
             Message::Search(search) => {
                 self.search = search;
                 Action::None
@@ -436,37 +420,11 @@ impl State {
     }
 }
 
-pub(crate) fn open_window<M>(application_id: &str) -> (window::Id, Task<M>)
-where
-    M: 'static + Send,
-{
-    let mut settings = window::Settings {
-        decorations: false,
-        min_size: Some(Size::new(360.0, 180.0)),
-        resizable: true,
-        size: INITIAL_WINDOW_SIZE,
-        transparent: true,
-        ..Default::default()
-    };
-
-    #[cfg(target_os = "linux")]
-    {
-        settings.platform_specific.application_id = application_id.to_string();
-    }
-
-    let (window_id, task) = window::open(settings);
-    (window_id, task.map(|_| cosmic::action::none()))
-}
-
 /// Messages handled by the Add Printer dialog.
 #[derive(Clone, Debug)]
 pub enum Message {
     /// Closes the dialog.
     Close,
-    /// Starts moving the dialog window.
-    DragWindow,
-    /// Toggles the dialog window between maximized and restored.
-    ToggleMaximizeWindow,
     /// Updates the search query.
     Search(String),
     /// Reports discovery results.
@@ -615,17 +573,13 @@ pub fn dialog(state: &State) -> Element<'_, Message> {
             .bottom(spacing.space_l)
             .horizontal(spacing.space_xxl),
     };
-    let drag_region = widget::mouse_area(
-        vertical_space()
-            .height(Length::Fixed(f32::from(spacing.space_l)))
-            .width(Length::Fill),
-    )
-    .on_press(Message::DragWindow)
-    .on_double_click(Message::ToggleMaximizeWindow);
+    let top_spacing = vertical_space()
+        .height(Length::Fixed(f32::from(spacing.space_l)))
+        .width(Length::Fill);
 
     widget::layer_container(
         column::with_capacity(3)
-            .push(drag_region)
+            .push(top_spacing)
             .push(
                 scrollable(body)
                     .direction(Direction::Vertical(Scrollbar::hidden()))
@@ -639,8 +593,8 @@ pub fn dialog(state: &State) -> Element<'_, Message> {
             .height(Length::Fill),
     )
     .layer(cosmic_theme::Layer::Background)
-    .width(Length::Fill)
-    .height(Length::Fill)
+    .width(Length::Fixed(DIALOG_SIZE.width))
+    .height(Length::Fixed(DIALOG_SIZE.height))
     .into()
 }
 
