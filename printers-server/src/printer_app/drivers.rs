@@ -5,6 +5,8 @@ use cups_rs::{IppOperation, IppTag, IppValueTag};
 
 use super::client::{MAX_COLLECTIONS, OperationCost, PaError, PaRequest, bounded, check_status};
 
+const PAPPL_FIND_DRIVERS: IppOperation = IppOperation::Other(0x402c);
+
 /// A driver one Printer Application offers for a device.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct PaDriver {
@@ -123,7 +125,7 @@ fn ask_for_drivers(system_uri: &str, device_id: &str) -> PaDriverMatch {
 }
 
 fn request_drivers(system_uri: &str, device_id: &str) -> Result<Vec<PaDriver>, PaError> {
-    let response = PaRequest::new(IppOperation::PAPPL_FIND_DRIVERS, system_uri)?
+    let response = PaRequest::new(PAPPL_FIND_DRIVERS, system_uri)?
         .string(
             IppTag::Operation,
             IppValueTag::Text,
@@ -150,21 +152,22 @@ fn request_drivers(system_uri: &str, device_id: &str) -> Result<Vec<PaDriver>, P
         }
 
         for collection in attribute.collections().into_iter().take(MAX_COLLECTIONS) {
-            let Some(id) = collection.text("smi55357-driver").map(bounded) else {
+            let Some(id) = collection.get("smi55357-driver").cloned().map(bounded) else {
                 continue;
             };
             if drivers.iter().any(|driver: &PaDriver| driver.id == id) {
                 continue;
             }
             let display_name = collection
-                .text("smi55357-driver-info")
+                .get("smi55357-driver-info")
+                .cloned()
                 .map(bounded)
                 .unwrap_or_else(|| id.clone());
 
             drivers.push(PaDriver {
                 id,
                 display_name,
-                supported_device_id: collection.text("smi55357-device-id").map(bounded),
+                supported_device_id: collection.get("smi55357-device-id").cloned().map(bounded),
             });
 
             if drivers.len() >= MAX_COLLECTIONS {

@@ -121,13 +121,13 @@ fn system_endpoints(response: &cups_rs::IppResponse) -> Vec<SystemEndpoint> {
 
     for attribute in response.attributes_named("system-xri-supported") {
         for collection in attribute.collections() {
-            let Some(uri) = collection.text("xri-uri") else {
+            let Some(uri) = collection.get("xri-uri").cloned() else {
                 continue;
             };
             let endpoint = SystemEndpoint {
                 uri,
-                authentication: collection.text("xri-authentication"),
-                security: collection.text("xri-security"),
+                authentication: collection.get("xri-authentication").cloned(),
+                security: collection.get("xri-security").cloned(),
             };
             if !endpoints.contains(&endpoint) {
                 endpoints.push(endpoint);
