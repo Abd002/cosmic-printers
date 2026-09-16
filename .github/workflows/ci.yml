@@ -1,0 +1,93 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  LIBCUPS3_VERSION: v3.0.3
+
+jobs:
+  fmt:
+    name: Format
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+  test:
+    name: Build and test
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            pkg-config \
+            clang \
+            libclang-dev \
+            libglib2.0-dev \
+            libxkbcommon-dev
+
+      - name: Install CUPS 3 build dependencies
+        run: |
+          sudo apt-get install -y \
+            build-essential \
+            autoconf \
+            libavahi-client-dev \
+            libnss-mdns \
+            libpng-dev \
+            libssl-dev \
+            zlib1g-dev
+
+      - name: Build CUPS 3
+        run: |
+          git clone \
+            --depth 1 \
+            --recurse-submodules \
+            --shallow-submodules \
+            --branch "$LIBCUPS3_VERSION" \
+            https://github.com/OpenPrinting/libcups.git \
+            "$RUNNER_TEMP/libcups"
+
+          cd "$RUNNER_TEMP/libcups"
+
+          ./configure --prefix="$HOME/.local/libcups3"
+
+          make -j"$(nproc)"
+
+          sudo make install
+
+          sudo chown -R "$(id -u):$(id -g)" "$HOME/.local/libcups3"
+
+      - name: Configure CUPS 3 environment
+        run: |
+          echo "PKG_CONFIG_PATH=$HOME/.local/libcups3/lib/pkgconfig" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=$HOME/.local/libcups3/lib" >> "$GITHUB_ENV"
+          echo "BINDGEN_EXTRA_CLANG_ARGS=-I$HOME/.local/libcups3/include" >> "$GITHUB_ENV"
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Check CUPS version
+        run: pkg-config --modversion cups3
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --locked
+
+      - name: Test
+        run: cargo test --workspace --locked
