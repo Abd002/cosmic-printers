@@ -1,5 +1,4 @@
 use cosmic::app::Task;
-use cosmic::iced::border::Radius;
 use cosmic::iced::core::text::{Ellipsize, EllipsizeHeightLimit, Wrapping};
 use cosmic::iced::{Alignment, Color, Length};
 use cosmic::widget::{
@@ -18,7 +17,7 @@ use crate::backend::Backend;
 
 /// Messages handled by the printer details page.
 #[derive(Clone, Debug)]
-pub enum Message {
+pub enum Message<M> {
     /// Returns to the printer list.
     GoBack,
     /// Toggles the location editor.
@@ -71,12 +70,12 @@ pub enum Message {
     /// Refreshes destination data.
     PrintersRefreshed(Vec<PrinterEntry>),
     /// Updates a popup surface.
-    Surface(surface::Action),
+    Surface(surface::Action<M>),
 }
 
 /// Requests handled by the application shell.
 #[derive(Clone, Debug)]
-pub enum Request {
+pub enum Request<M> {
     /// Returns to the previous page.
     GoBack,
     /// Shows printer details.
@@ -84,7 +83,7 @@ pub enum Request {
     /// Shows the print queue.
     ShowQueue,
     /// Updates a popup surface.
-    Surface(surface::Action),
+    Surface(surface::Action<M>),
 }
 
 /// State for the printer details page.
@@ -102,14 +101,14 @@ pub struct State {
 
 impl State {
     /// Handles a printer details message.
-    pub fn update<M>(&mut self, message: Message) -> Task<M>
+    pub fn update<M>(&mut self, message: Message<M>) -> Task<M>
     where
         M: 'static
             + Send
-            + From<Message>
-            + From<crate::list::Message>
+            + From<Message<M>>
+            + From<crate::list::Message<M>>
             + From<crate::queue::Message>
-            + From<Request>,
+            + From<Request<M>>,
     {
         match message {
             Message::GoBack => self.go_back_task(),
@@ -182,7 +181,7 @@ impl State {
 
     fn go_back_task<M>(&self) -> Task<M>
     where
-        M: 'static + Send + From<Request>,
+        M: 'static + Send + From<Request<M>>,
     {
         cosmic::task::message(M::from(Request::GoBack))
     }
@@ -279,7 +278,7 @@ impl State {
 
     fn submit_location<M>(&mut self) -> Task<M>
     where
-        M: 'static + Send + From<Message>,
+        M: 'static + Send + From<Message<M>>,
     {
         self.editing_location = false;
 
@@ -305,7 +304,7 @@ impl State {
 
     fn set_default_printer_task<M>(backend: Backend, printer_id: String) -> Task<M>
     where
-        M: 'static + Send + From<Message>,
+        M: 'static + Send + From<Message<M>>,
     {
         cosmic::task::future(async move {
             M::from(Message::PrinterDefaultSet(
@@ -319,7 +318,7 @@ impl State {
 
     fn clear_default_printer_task<M>(backend: Backend) -> Task<M>
     where
-        M: 'static + Send + From<Message>,
+        M: 'static + Send + From<Message<M>>,
     {
         cosmic::task::future(async move {
             M::from(Message::PrinterDefaultSet(
@@ -333,7 +332,7 @@ impl State {
 
     fn delete_printer_task<M>(backend: Backend, printer_id: String) -> Task<M>
     where
-        M: 'static + Send + From<Message>,
+        M: 'static + Send + From<Message<M>>,
     {
         cosmic::task::future(async move {
             M::from(Message::PrinterDeleted(
@@ -347,7 +346,7 @@ impl State {
 
     fn finish_printer_deletion<M>(&mut self, result: Result<(), String>) -> Task<M>
     where
-        M: 'static + Send + From<crate::list::Message> + From<Request>,
+        M: 'static + Send + From<crate::list::Message<M>> + From<Request<M>>,
     {
         match result {
             Ok(()) => {
@@ -363,7 +362,7 @@ impl State {
 
     fn finish_optimistic_change<M>(result: Result<(), String>, what: &str) -> Task<M>
     where
-        M: 'static + Send + From<crate::list::Message>,
+        M: 'static + Send + From<crate::list::Message<M>>,
     {
         if let Err(why) = result {
             tracing::warn!(why, what, "a printer change was refused");
@@ -375,21 +374,21 @@ impl State {
 
     fn finish_default_printer_update<M>(result: Result<(), String>) -> Task<M>
     where
-        M: 'static + Send + From<crate::list::Message>,
+        M: 'static + Send + From<crate::list::Message<M>>,
     {
         Self::finish_optimistic_change(result, "default printer")
     }
 
     fn finish_location_update<M>(result: Result<(), String>) -> Task<M>
     where
-        M: 'static + Send + From<crate::list::Message>,
+        M: 'static + Send + From<crate::list::Message<M>>,
     {
         Self::finish_optimistic_change(result, "location")
     }
 
     fn select_paper_size<M>(&mut self, printer_id: String, index: usize) -> Task<M>
     where
-        M: 'static + Send + From<Message>,
+        M: 'static + Send + From<Message<M>>,
     {
         let value = self
             .printer
@@ -412,7 +411,7 @@ impl State {
 
     fn select_print_sides<M>(&mut self, printer_id: String, index: usize) -> Task<M>
     where
-        M: 'static + Send + From<Message>,
+        M: 'static + Send + From<Message<M>>,
     {
         let value = self
             .printer
@@ -440,7 +439,7 @@ impl State {
         value: String,
     ) -> Task<M>
     where
-        M: 'static + Send + From<Message>,
+        M: 'static + Send + From<Message<M>>,
     {
         cosmic::task::future(async move {
             M::from(Message::PrinterOptionDefaultSet(
@@ -454,14 +453,14 @@ impl State {
 
     fn finish_option_default_update<M>(result: Result<(), String>) -> Task<M>
     where
-        M: 'static + Send + From<crate::list::Message>,
+        M: 'static + Send + From<crate::list::Message<M>>,
     {
         Self::finish_optimistic_change(result, "option default")
     }
 
     fn open_printer_queue<M>(&self, printer_id: &str) -> Task<M>
     where
-        M: 'static + Send + From<crate::queue::Message> + From<Request>,
+        M: 'static + Send + From<crate::queue::Message> + From<Request<M>>,
     {
         let Some(printer) = self
             .printer
@@ -482,24 +481,27 @@ impl State {
 
     fn refresh_printers_task<M>() -> Task<M>
     where
-        M: 'static + Send + From<crate::list::Message>,
+        M: 'static + Send + From<crate::list::Message<M>>,
     {
         cosmic::task::message(M::from(crate::list::Message::Refresh))
     }
 }
 
 /// Returns the printer details header.
-pub fn header_view(state: &State) -> Option<Element<'_, Message>> {
+pub fn header_view<M: 'static + Clone>(state: &State) -> Option<Element<'_, Message<M>>> {
     state.printer.as_ref().map(details_header)
 }
 
 /// Returns the empty details view.
-pub fn nothing_selected_view() -> Element<'static, Message> {
+pub fn nothing_selected_view<M: 'static + Clone>() -> Element<'static, Message<M>> {
     text::body(fl!("no-printer-selected")).apply(Element::from)
 }
 
 /// Returns the default-printer and queue section.
-pub fn default_and_queue_view<'a>(state: &'a State, title: &'a str) -> Element<'a, Message> {
+pub fn default_and_queue_view<'a, M: 'static + Clone>(
+    state: &'a State,
+    title: &'a str,
+) -> Element<'a, Message<M>> {
     let Some(printer) = state.printer.as_ref() else {
         return Element::from(horizontal_space());
     };
@@ -522,7 +524,10 @@ pub fn default_and_queue_view<'a>(state: &'a State, title: &'a str) -> Element<'
 }
 
 /// Returns the printer information section.
-pub fn printer_information_view<'a>(state: &'a State, title: &'a str) -> Element<'a, Message> {
+pub fn printer_information_view<'a, M: 'static + Clone>(
+    state: &'a State,
+    title: &'a str,
+) -> Element<'a, Message<M>> {
     let Some(printer) = state.printer.as_ref() else {
         return Element::from(horizontal_space());
     };
@@ -555,8 +560,8 @@ pub fn printer_information_view<'a>(state: &'a State, title: &'a str) -> Element
 pub fn printer_preferences_view<'a, M: 'static + Clone>(
     state: &'a State,
     title: &'a str,
-    to_host: fn(Message) -> M,
-) -> Element<'a, Message> {
+    to_host: fn(Message<M>) -> M,
+) -> Element<'a, Message<M>> {
     let Some(printer) = state.printer.as_ref() else {
         return Element::from(horizontal_space());
     };
@@ -596,7 +601,10 @@ pub fn printer_preferences_view<'a, M: 'static + Clone>(
 }
 
 /// Returns the printer supplies section.
-pub fn supplies_view<'a>(state: &'a State, title: &'a str) -> Element<'a, Message> {
+pub fn supplies_view<'a, M: 'static + Clone>(
+    state: &'a State,
+    title: &'a str,
+) -> Element<'a, Message<M>> {
     settings::section()
         .title(title)
         .add(supply_grid(&state.supplies))
@@ -604,7 +612,7 @@ pub fn supplies_view<'a>(state: &'a State, title: &'a str) -> Element<'a, Messag
 }
 
 /// Returns the remove-printer action.
-pub fn remove_printer_view(state: &State) -> Element<'_, Message> {
+pub fn remove_printer_view<M: 'static + Clone>(state: &State) -> Element<'_, Message<M>> {
     let Some(printer) = state.printer.as_ref() else {
         return Element::from(horizontal_space());
     };
@@ -645,9 +653,9 @@ impl State {
 fn option_dropdown<M: 'static + Clone>(
     labels: Vec<String>,
     selected: usize,
-    select: impl Fn(usize) -> Message + Send + Sync + 'static,
-    to_host: fn(Message) -> M,
-) -> Element<'static, Message> {
+    select: impl Fn(usize) -> Message<M> + Send + Sync + 'static,
+    to_host: fn(Message<M>) -> M,
+) -> Element<'static, Message<M>> {
     widget::dropdown::popup_dropdown(
         labels,
         Some(selected),
@@ -659,7 +667,7 @@ fn option_dropdown<M: 'static + Clone>(
     .into()
 }
 
-fn details_header(printer: &PrinterEntry) -> Element<'static, Message> {
+fn details_header<M: 'static + Clone>(printer: &PrinterEntry) -> Element<'static, Message<M>> {
     let spacing = cosmic::theme::active().cosmic().spacing;
 
     column::with_capacity(3)
@@ -675,7 +683,7 @@ fn details_header(printer: &PrinterEntry) -> Element<'static, Message> {
         .apply(Element::from)
 }
 
-fn back_button() -> Element<'static, Message> {
+fn back_button<M: 'static + Clone>() -> Element<'static, Message<M>> {
     // `button::text` brings its own metrics, so set the ones this row needs:
     // uniform 5px padding and `text::body`'s 21px line height.
     widget::button::text(fl!("printers"))
@@ -688,7 +696,7 @@ fn back_button() -> Element<'static, Message> {
         .into()
 }
 
-fn status_line(status: &PrinterStatus) -> Element<'static, Message> {
+fn status_line<M: 'static + Clone>(status: &PrinterStatus) -> Element<'static, Message<M>> {
     let label = match status {
         PrinterStatus::Ready => fl!("printer-ready"),
         PrinterStatus::Offline => fl!("printer-offline"),
@@ -784,7 +792,7 @@ fn sides_label(value: &str) -> String {
 
 fn load_supplies_task<M>(backend: Backend, printer_id: String) -> Task<M>
 where
-    M: 'static + Send + From<Message>,
+    M: 'static + Send + From<Message<M>>,
 {
     cosmic::task::future(async move {
         let result = backend
@@ -797,7 +805,7 @@ where
 
 fn load_active_jobs_task<M>(backend: Backend, printer_id: String) -> Task<M>
 where
-    M: 'static + Send + From<Message>,
+    M: 'static + Send + From<Message<M>>,
 {
     cosmic::task::future(async move {
         let result = backend
@@ -814,7 +822,7 @@ where
 
 const SUPPLY_COLUMNS: usize = 2;
 
-fn supply_grid(supplies: &[SupplyLevel]) -> Element<'static, Message> {
+fn supply_grid<M: 'static + Clone>(supplies: &[SupplyLevel]) -> Element<'static, Message<M>> {
     let spacing = cosmic::theme::active().cosmic().spacing;
     let mut grid = column::with_capacity(supply_rows(supplies.len()))
         .width(Length::Fill)
@@ -845,7 +853,10 @@ fn supply_rows(supplies: usize) -> usize {
 }
 
 // Location changes require a managed queue and scheduler administration access.
-fn location_control<'a>(state: &'a State, printer: &'a PrinterEntry) -> Element<'a, Message> {
+fn location_control<'a, M: 'static + Clone>(
+    state: &'a State,
+    printer: &'a PrinterEntry,
+) -> Element<'a, Message<M>> {
     if !printer.can_administer() {
         return value_text(display_or_unknown(printer.location()));
     }
@@ -873,7 +884,11 @@ fn display_or_unknown(value: Option<&str>) -> String {
     value.map(str::to_string).unwrap_or_else(|| fl!("unknown"))
 }
 
-fn queue_item(label: String, value: String, message: Message) -> Element<'static, Message> {
+fn queue_item<M: 'static + Clone>(
+    label: String,
+    value: String,
+    message: Message<M>,
+) -> Element<'static, Message<M>> {
     settings::item(
         label,
         row::with_capacity(2)
@@ -887,7 +902,7 @@ fn queue_item(label: String, value: String, message: Message) -> Element<'static
     .apply(Element::from)
 }
 
-fn value_text(value: String) -> Element<'static, Message> {
+fn value_text<M: 'static + Clone>(value: String) -> Element<'static, Message<M>> {
     text::body(value)
         .class(cosmic::theme::Text::Default)
         .align_x(Alignment::End)
@@ -896,7 +911,7 @@ fn value_text(value: String) -> Element<'static, Message> {
         .into()
 }
 
-fn supply_graph(supply: &SupplyLevel) -> Element<'static, Message> {
+fn supply_graph<M: 'static + Clone>(supply: &SupplyLevel) -> Element<'static, Message<M>> {
     let colors = bar_colors(supply);
 
     column::with_capacity(2)
@@ -958,7 +973,7 @@ fn known_supply_color_name(color: SupplyRgb) -> Option<String> {
     }
 }
 
-fn supply_percentage(level: Option<u8>) -> Element<'static, Message> {
+fn supply_percentage<M: 'static + Clone>(level: Option<u8>) -> Element<'static, Message<M>> {
     container(
         text::body(percentage_label(level))
             .wrapping(Wrapping::None)
@@ -979,17 +994,25 @@ fn percentage_label(level: Option<u8>) -> String {
     }
 }
 
-#[allow(clippy::let_and_return)]
-fn progress_track(supply: &SupplyLevel, colors: &[Color]) -> Element<'static, Message> {
-    let track = container(supply_fill(supply.level_percent, colors))
+fn progress_track<M: 'static + Clone>(
+    supply: &SupplyLevel,
+    colors: &[Color],
+) -> Element<'static, Message<M>> {
+    let bar_color = supply_fill_color(colors);
+    let progress = f32::from(supply.level_percent.unwrap_or(0)) / 100.0;
+
+    let mut bar = widget::determinate_linear(progress)
         .width(Length::Fill)
-        .height(Length::Fixed(SUPPLY_TRACK_HEIGHT))
-        .class(crate::widgets::fill_container(
-            crate::style::supply_track(),
-            RADIUS_SUPPLY_BAR,
-        ))
-        .into();
-    track
+        .girth(Length::Fixed(SUPPLY_TRACK_HEIGHT))
+        .track_color(crate::style::supply_track())
+        .bar_color(bar_color)
+        .border_radius(RADIUS_SUPPLY_BAR);
+
+    if needs_outline(bar_color) {
+        bar = bar.border_color(crate::style::hairline());
+    }
+
+    bar.into()
     // let Some(warning) = supply.warning else {
     //     return track.into();
     // };
@@ -1043,47 +1066,12 @@ fn progress_track(supply: &SupplyLevel, colors: &[Color]) -> Element<'static, Me
 //     marks.into()
 // }
 
-fn supply_fill(level: Option<u8>, colors: &[Color]) -> Element<'static, Message> {
-    let mut bar = row::with_capacity(2).height(Length::Fixed(SUPPLY_TRACK_HEIGHT));
-    let filled = level.unwrap_or(0).min(100);
-    let empty = 100_u8.saturating_sub(filled);
-
-    if filled > 0 {
-        bar = bar.push(
-            container(band(supply_fill_color(colors)))
-                .width(Length::FillPortion(u16::from(filled)))
-                .height(Length::Fixed(SUPPLY_TRACK_HEIGHT)),
-        );
-    }
-
-    // A zero `FillPortion` expands to full width, so omit it.
-    if empty > 0 {
-        bar = bar.push(horizontal_space().width(Length::FillPortion(u16::from(empty))));
-    }
-
-    bar.into()
-}
-
 fn supply_fill_color(colors: &[Color]) -> Color {
     match colors {
         [] => crate::style::supply_neutral(),
         [only] => *only,
         _ => crate::style::status_printing(),
     }
-}
-
-fn band(color: Color) -> container::Container<'static, Message, cosmic::Theme> {
-    let radius = Radius::from(RADIUS_SUPPLY_BAR);
-    let style = if needs_outline(color) {
-        crate::widgets::bordered_fill_container(color, crate::style::hairline(), radius)
-    } else {
-        crate::widgets::fill_container(color, radius)
-    };
-
-    container(horizontal_space())
-        .width(Length::Fill)
-        .height(Length::Fixed(SUPPLY_TRACK_HEIGHT))
-        .class(style)
 }
 
 fn bar_colors(supply: &SupplyLevel) -> Vec<Color> {
@@ -1106,7 +1094,7 @@ fn needs_outline(color: Color) -> bool {
     (peak - track_peak).abs() < SUPPLY_OUTLINE_TOLERANCE
 }
 
-fn color_dots(colors: &[Color]) -> Element<'static, Message> {
+fn color_dots<M: 'static + Clone>(colors: &[Color]) -> Element<'static, Message<M>> {
     let mut dots = row::with_capacity(colors.len())
         .height(Length::Fixed(SUPPLY_DOT_SIZE))
         .spacing(cosmic::theme::active().cosmic().space_xxxs());
@@ -1118,7 +1106,7 @@ fn color_dots(colors: &[Color]) -> Element<'static, Message> {
     dots.into()
 }
 
-fn color_dot(color: Color) -> Element<'static, Message> {
+fn color_dot<M: 'static + Clone>(color: Color) -> Element<'static, Message<M>> {
     container(horizontal_space())
         .width(Length::Fixed(SUPPLY_DOT_SIZE))
         .height(Length::Fixed(SUPPLY_DOT_SIZE))
