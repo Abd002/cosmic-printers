@@ -13,6 +13,9 @@ use crate::printer_app::{self, OwnedPrinter};
 use crate::state::State;
 
 pub fn refresh_available_destinations(context: State) {
+    // do nothing when they are already running.
+    crate::notify::start(context.clone());
+
     if let Some(lease) = context.try_start_available_destinations_refresh() {
         let worker_context = context.clone();
         tokio::spawn(async move {

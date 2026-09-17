@@ -44,6 +44,15 @@ impl State {
             })
     }
 
+    pub(crate) fn try_start_notifications(&self) -> Option<DiscoveryLease> {
+        self.notifications_running
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+            .then(|| DiscoveryLease {
+                running: Arc::clone(&self.notifications_running),
+            })
+    }
+
     /// Acquires a slot to run a device scan in.
     pub(crate) async fn acquire_scan_permit(&self) -> tokio::sync::OwnedSemaphorePermit {
         Arc::clone(&self.pa_scan_semaphore)
@@ -92,6 +101,17 @@ mod tests {
         drop(lease);
 
         assert!(context.try_start_printer_application_discovery().is_some());
+    }
+
+    #[test]
+    fn notification_lease_keeps_a_second_watcher_from_starting() {
+        let context = State::new();
+        let lease = context.try_start_notifications().unwrap();
+        assert!(context.try_start_notifications().is_none());
+
+        drop(lease);
+
+        assert!(context.try_start_notifications().is_some());
     }
 
     #[test]

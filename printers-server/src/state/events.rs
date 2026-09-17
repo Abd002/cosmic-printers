@@ -38,6 +38,13 @@ impl State {
         });
     }
 
+    pub(crate) fn emit_jobs_changed(&self, printer_id: &str) {
+        let _ = self.events.send(PrintersEvent {
+            kind: PrintersEventKind::JobsChanged,
+            printer_id: Some(printer_id.to_string()),
+        });
+    }
+
     pub(super) fn emit_refresh_available_destinations(&self) {
         let _ = self.events.send(PrintersEvent {
             kind: PrintersEventKind::RefreshAvailableDestinations,

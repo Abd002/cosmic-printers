@@ -8,6 +8,7 @@ mod cups;
 mod dnssd;
 mod error;
 mod ipp;
+mod notify;
 mod printer_app;
 mod server;
 mod state;
