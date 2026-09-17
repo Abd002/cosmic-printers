@@ -116,7 +116,7 @@ pub(super) fn run_system_service_browser(
                 pending_resolutions.retain(|pending| service_key(pending) != key);
 
                 if let Some(service_name) = endpoint_names.remove(&key) {
-                    context.remove_dnssd_device_endpoint(&service_name);
+                    endpoints::forget_device_resolution(&context, &service_name);
                 }
 
                 if application_ids.remove(&key).is_some() {

@@ -24,3 +24,7 @@ pub(super) fn record_device_resolution(
         },
     );
 }
+
+pub(super) fn forget_device_resolution(context: &State, service_name: &str) {
+    context.remove_dnssd_device_endpoint(service_name);
+}
