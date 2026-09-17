@@ -112,6 +112,8 @@ pub enum Message {
         /// Loaded jobs or an error.
         result: Result<Vec<JobInfo>, String>,
     },
+    /// Reports that the named printer's jobs changed.
+    JobsChanged(String),
     /// Selects a job using the active modifiers.
     SelectJob(JobId),
     /// Clears the job selection.
@@ -196,6 +198,13 @@ impl State {
             } => self.load_printer(*printer, available_printers),
             Message::JobsLoaded { printer_id, result } => {
                 self.apply_jobs_loaded(printer_id, result)
+            }
+            Message::JobsChanged(printer_id) => {
+                if self.is_current_printer(&printer_id) {
+                    self.load_jobs_task()
+                } else {
+                    Task::none()
+                }
             }
             Message::SelectJob(job_id) => {
                 self.select_job(job_id);
@@ -1210,5 +1219,55 @@ fn job_state_color(state: &JobState, selected: bool) -> Color {
         JobState::Processing => style::status_ready(),
         JobState::Aborted | JobState::Failed => style::error(),
         _ => queue_row_foreground(selected),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Stands in for the host application's message type.
+    struct TestMessage;
+
+    impl From<Message> for TestMessage {
+        fn from(_: Message) -> Self {
+            Self
+        }
+    }
+
+    impl From<crate::list::Message<TestMessage>> for TestMessage {
+        fn from(_: crate::list::Message<TestMessage>) -> Self {
+            Self
+        }
+    }
+
+    fn showing(printer_id: &str) -> State {
+        State {
+            printer: Some(PrinterEntry::new(
+                printer_id,
+                printer_id,
+                false,
+                std::collections::HashMap::new(),
+            )),
+            ..State::default()
+        }
+    }
+
+    #[test]
+    fn a_job_change_reloads_the_printer_on_screen() {
+        let mut state = showing("Acme_Laser");
+
+        let _: Task<TestMessage> = state.update(Message::JobsChanged("Acme_Laser".to_string()));
+
+        assert!(state.loading);
+    }
+
+    #[test]
+    fn a_job_change_elsewhere_leaves_the_queue_alone() {
+        let mut state = showing("Acme_Laser");
+
+        let _: Task<TestMessage> = state.update(Message::JobsChanged("Other_Printer".to_string()));
+
+        assert!(!state.loading);
     }
 }

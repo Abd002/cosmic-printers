@@ -15,6 +15,8 @@ pub enum PrintersEventKind {
     PrinterConfigurationChanged,
     /// The set of available destinations should be refreshed.
     RefreshAvailableDestinations,
+    /// The jobs of one printer changed.
+    JobsChanged,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, zlink::introspect::Type)]
