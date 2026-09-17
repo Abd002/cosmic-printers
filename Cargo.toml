@@ -18,3 +18,8 @@ resolver = "3"
 version = "0.5"
 default-features = false
 features = ["tokio"]
+
+# Local testing of the shared DNS-SD context before it is pushed. Remove once the
+# cups3-pr6-signatures branch carries it.
+[patch."https://github.com/Abd002/cups-rs.git"]
+cups_rs = { path = "../cups-rs" }
