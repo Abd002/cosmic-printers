@@ -379,7 +379,11 @@ impl State {
 
     fn handle_printers_event<M>(&self, event: PrintersEvent) -> Task<M>
     where
-        M: 'static + Send + From<Message<M>> + From<crate::add_printer::Message>,
+        M: 'static
+            + Send
+            + From<Message<M>>
+            + From<crate::add_printer::Message>
+            + From<crate::queue::Message>,
     {
         match event.kind {
             PrintersEventKind::AvailableDestinationsChanged
@@ -394,6 +398,14 @@ impl State {
             PrintersEventKind::RefreshAvailableDestinations => {
                 cosmic::task::message(M::from(Message::Refresh))
             }
+            // The count beside the printer and the queue page both show these jobs.
+            PrintersEventKind::JobsChanged => match event.printer_id {
+                Some(printer_id) => Task::batch([
+                    self.load_active_job_task(printer_id.clone()),
+                    cosmic::task::message(M::from(crate::queue::Message::JobsChanged(printer_id))),
+                ]),
+                None => Task::none(),
+            },
         }
     }
 
