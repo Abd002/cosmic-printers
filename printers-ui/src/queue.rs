@@ -187,7 +187,7 @@ impl State {
     /// Handles a print queue message.
     pub fn update<M>(&mut self, message: Message) -> Task<M>
     where
-        M: 'static + Send + From<Message> + From<crate::list::Message>,
+        M: 'static + Send + From<Message> + From<crate::list::Message<M>>,
     {
         match message {
             Message::LoadPrinter {
@@ -263,7 +263,7 @@ impl State {
         available_printers: Vec<PrinterEntry>,
     ) -> Task<M>
     where
-        M: 'static + Send + From<Message> + From<crate::list::Message>,
+        M: 'static + Send + From<Message> + From<crate::list::Message<M>>,
     {
         self.printer = Some(printer);
         self.available_printers = available_printers;
@@ -281,7 +281,7 @@ impl State {
         result: Result<Vec<JobInfo>, String>,
     ) -> Task<M>
     where
-        M: 'static + Send + From<Message> + From<crate::list::Message>,
+        M: 'static + Send + From<Message> + From<crate::list::Message<M>>,
     {
         if !self.is_current_printer(&printer_id) {
             return Task::none();
@@ -369,7 +369,7 @@ impl State {
 
     fn start_job_action<M>(&mut self, operation: JobOperation) -> Task<M>
     where
-        M: 'static + Send + From<Message> + From<crate::list::Message>,
+        M: 'static + Send + From<Message> + From<crate::list::Message<M>>,
     {
         self.menu = None;
 
@@ -396,7 +396,7 @@ impl State {
 
     fn start_move_jobs<M>(&mut self, destination_id: String, job_ids: Vec<JobId>) -> Task<M>
     where
-        M: 'static + Send + From<Message> + From<crate::list::Message>,
+        M: 'static + Send + From<Message> + From<crate::list::Message<M>>,
     {
         self.menu = None;
 
@@ -437,7 +437,7 @@ impl State {
 
     fn finish_job_action<M>(&mut self, printer_id: String, result: Result<(), String>) -> Task<M>
     where
-        M: 'static + Send + From<Message> + From<crate::list::Message>,
+        M: 'static + Send + From<Message> + From<crate::list::Message<M>>,
     {
         if !self.is_current_printer(&printer_id) {
             return Task::none();
@@ -457,7 +457,7 @@ impl State {
 
     fn start_test_page<M>(&mut self) -> Task<M>
     where
-        M: 'static + Send + From<Message> + From<crate::list::Message>,
+        M: 'static + Send + From<Message> + From<crate::list::Message<M>>,
     {
         self.menu = None;
 
@@ -485,7 +485,7 @@ impl State {
 
     fn finish_test_page<M>(&mut self, printer_id: String, result: Result<i32, String>) -> Task<M>
     where
-        M: 'static + Send + From<Message> + From<crate::list::Message>,
+        M: 'static + Send + From<Message> + From<crate::list::Message<M>>,
     {
         if !self.is_current_printer(&printer_id) {
             return Task::none();
@@ -509,7 +509,7 @@ impl State {
 
     fn open_printer_web_page<M>(&mut self, web_page: String) -> Task<M>
     where
-        M: 'static + Send + From<Message> + From<crate::list::Message>,
+        M: 'static + Send + From<Message> + From<crate::list::Message<M>>,
     {
         self.menu = None;
 
@@ -573,7 +573,7 @@ impl State {
 
     fn load_jobs_task<M>(&mut self) -> Task<M>
     where
-        M: 'static + Send + From<Message> + From<crate::list::Message>,
+        M: 'static + Send + From<Message> + From<crate::list::Message<M>>,
     {
         let Some(printer) = &self.printer else {
             return Task::none();

@@ -17,22 +17,22 @@ enum Screen {
 
 #[derive(Clone, Debug)]
 pub enum Message {
-    List(list::Message),
-    Details(details::Message),
+    List(list::Message<Message>),
+    Details(details::Message<Message>),
     Queue(queue::Message),
-    Request(Request),
+    Request(Request<Message>),
     PrintersScrolled(AbsoluteOffset),
     CloseQueue,
 }
 
-impl From<list::Message> for Message {
-    fn from(message: list::Message) -> Self {
+impl From<list::Message<Message>> for Message {
+    fn from(message: list::Message<Message>) -> Self {
         Self::List(message)
     }
 }
 
-impl From<details::Message> for Message {
-    fn from(message: details::Message) -> Self {
+impl From<details::Message<Message>> for Message {
+    fn from(message: details::Message<Message>) -> Self {
         Self::Details(message)
     }
 }
@@ -49,8 +49,8 @@ impl From<add_printer::Message> for Message {
     }
 }
 
-impl From<Request> for Message {
-    fn from(request: Request) -> Self {
+impl From<Request<Message>> for Message {
+    fn from(request: Request<Message>) -> Self {
         Self::Request(request)
     }
 }
@@ -175,7 +175,7 @@ impl cosmic::Application for App {
                 Task::none()
             }
             Message::Request(Request::Surface(action)) => {
-                cosmic::task::message(cosmic::Action::Cosmic(cosmic::app::Action::Surface(action)))
+                cosmic::task::message(cosmic::Action::Surface(action))
             }
         }
     }

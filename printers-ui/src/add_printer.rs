@@ -457,7 +457,7 @@ pub enum SetupError {
     Failed(String),
 }
 
-impl From<Message> for crate::list::Message {
+impl<M> From<Message> for crate::list::Message<M> {
     fn from(message: Message) -> Self {
         crate::list::Message::AddPrinter(message)
     }
