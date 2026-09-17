@@ -613,7 +613,7 @@ dependencies = [
 [[package]]
 name = "build_helpers"
 version = "0.14.0"
-source = "git+https://github.com/pop-os/libcosmic#2a73fbc0edfe1525381bf999e241d73def79b222"
+source = "git+https://github.com/pop-os/libcosmic#87ab8179e1bd9880239c340855ae8862034bd0e8"
 dependencies = [
  "cfg_aliases",
 ]
@@ -933,7 +933,7 @@ dependencies = [
 [[package]]
 name = "cosmic-config"
 version = "1.0.0"
-source = "git+https://github.com/pop-os/libcosmic#2a73fbc0edfe1525381bf999e241d73def79b222"
+source = "git+https://github.com/pop-os/libcosmic#87ab8179e1bd9880239c340855ae8862034bd0e8"
 dependencies = [
  "atomicwrites",
  "cosmic-config-derive",
@@ -954,7 +954,7 @@ dependencies = [
 [[package]]
 name = "cosmic-config-derive"
 version = "1.0.0"
-source = "git+https://github.com/pop-os/libcosmic#2a73fbc0edfe1525381bf999e241d73def79b222"
+source = "git+https://github.com/pop-os/libcosmic#87ab8179e1bd9880239c340855ae8862034bd0e8"
 dependencies = [
  "quote",
  "syn 2.0.117",
@@ -1066,7 +1066,7 @@ dependencies = [
 [[package]]
 name = "cosmic-theme"
 version = "1.0.0"
-source = "git+https://github.com/pop-os/libcosmic#2a73fbc0edfe1525381bf999e241d73def79b222"
+source = "git+https://github.com/pop-os/libcosmic#87ab8179e1bd9880239c340855ae8862034bd0e8"
 dependencies = [
  "almost",
  "configparser",
@@ -1162,7 +1162,6 @@ dependencies = [
 [[package]]
 name = "cups_rs"
 version = "0.3.0"
-source = "git+https://github.com/Abd002/cups-rs.git?branch=cups3-pr6-signatures#96a17d5337455e8dd91fd25e7241b3d7499fa874"
 dependencies = [
  "bindgen",
  "chrono",
@@ -2141,7 +2140,7 @@ dependencies = [
  "js-sys",
  "log",
  "wasm-bindgen",
- "windows-core 0.62.2",
+ "windows-core 0.61.2",
 ]
 
 [[package]]
@@ -2156,7 +2155,7 @@ dependencies = [
 [[package]]
 name = "iced"
 version = "0.14.0"
-source = "git+https://github.com/pop-os/libcosmic#2a73fbc0edfe1525381bf999e241d73def79b222"
+source = "git+https://github.com/pop-os/libcosmic#87ab8179e1bd9880239c340855ae8862034bd0e8"
 dependencies = [
  "build_helpers",
  "dnd",
@@ -2178,7 +2177,7 @@ dependencies = [
 [[package]]
 name = "iced_accessibility"
 version = "0.1.0"
-source = "git+https://github.com/pop-os/libcosmic#2a73fbc0edfe1525381bf999e241d73def79b222"
+source = "git+https://github.com/pop-os/libcosmic#87ab8179e1bd9880239c340855ae8862034bd0e8"
 dependencies = [
  "accesskit",
  "accesskit_winit",
@@ -2187,7 +2186,7 @@ dependencies = [
 [[package]]
 name = "iced_core"
 version = "0.14.0"
-source = "git+https://github.com/pop-os/libcosmic#2a73fbc0edfe1525381bf999e241d73def79b222"
+source = "git+https://github.com/pop-os/libcosmic#87ab8179e1bd9880239c340855ae8862034bd0e8"
 dependencies = [
  "bitflags 2.13.0",
  "build_helpers",
@@ -2212,7 +2211,7 @@ dependencies = [
 [[package]]
 name = "iced_debug"
 version = "0.14.0"
-source = "git+https://github.com/pop-os/libcosmic#2a73fbc0edfe1525381bf999e241d73def79b222"
+source = "git+https://github.com/pop-os/libcosmic#87ab8179e1bd9880239c340855ae8862034bd0e8"
 dependencies = [
  "iced_core",
  "iced_futures",
@@ -2222,7 +2221,7 @@ dependencies = [
 [[package]]
 name = "iced_futures"
 version = "0.14.0"
-source = "git+https://github.com/pop-os/libcosmic#2a73fbc0edfe1525381bf999e241d73def79b222"
+source = "git+https://github.com/pop-os/libcosmic#87ab8179e1bd9880239c340855ae8862034bd0e8"
 dependencies = [
  "futures",
  "iced_core",
@@ -2236,7 +2235,7 @@ dependencies = [
 [[package]]
 name = "iced_graphics"
 version = "0.14.0"
-source = "git+https://github.com/pop-os/libcosmic#2a73fbc0edfe1525381bf999e241d73def79b222"
+source = "git+https://github.com/pop-os/libcosmic#87ab8179e1bd9880239c340855ae8862034bd0e8"
 dependencies = [
  "bitflags 2.13.0",
  "bytemuck",
@@ -2257,7 +2256,7 @@ dependencies = [
 [[package]]
 name = "iced_program"
 version = "0.14.0"
-source = "git+https://github.com/pop-os/libcosmic#2a73fbc0edfe1525381bf999e241d73def79b222"
+source = "git+https://github.com/pop-os/libcosmic#87ab8179e1bd9880239c340855ae8862034bd0e8"
 dependencies = [
  "iced_graphics",
  "iced_runtime",
@@ -2266,7 +2265,7 @@ dependencies = [
 [[package]]
 name = "iced_renderer"
 version = "0.14.0"
-source = "git+https://github.com/pop-os/libcosmic#2a73fbc0edfe1525381bf999e241d73def79b222"
+source = "git+https://github.com/pop-os/libcosmic#87ab8179e1bd9880239c340855ae8862034bd0e8"
 dependencies = [
  "iced_graphics",
  "iced_tiny_skia",
@@ -2278,7 +2277,7 @@ dependencies = [
 [[package]]
 name = "iced_runtime"
 version = "0.14.0"
-source = "git+https://github.com/pop-os/libcosmic#2a73fbc0edfe1525381bf999e241d73def79b222"
+source = "git+https://github.com/pop-os/libcosmic#87ab8179e1bd9880239c340855ae8862034bd0e8"
 dependencies = [
  "build_helpers",
  "bytes",
@@ -2293,7 +2292,7 @@ dependencies = [
 [[package]]
 name = "iced_tiny_skia"
 version = "0.14.0"
-source = "git+https://github.com/pop-os/libcosmic#2a73fbc0edfe1525381bf999e241d73def79b222"
+source = "git+https://github.com/pop-os/libcosmic#87ab8179e1bd9880239c340855ae8862034bd0e8"
 dependencies = [
  "bytemuck",
  "cosmic-text",
@@ -2310,7 +2309,7 @@ dependencies = [
 [[package]]
 name = "iced_wgpu"
 version = "0.14.0"
-source = "git+https://github.com/pop-os/libcosmic#2a73fbc0edfe1525381bf999e241d73def79b222"
+source = "git+https://github.com/pop-os/libcosmic#87ab8179e1bd9880239c340855ae8862034bd0e8"
 dependencies = [
  "as-raw-xcb-connection",
  "bitflags 2.13.0",
@@ -2341,7 +2340,7 @@ dependencies = [
 [[package]]
 name = "iced_widget"
 version = "0.14.2"
-source = "git+https://github.com/pop-os/libcosmic#2a73fbc0edfe1525381bf999e241d73def79b222"
+source = "git+https://github.com/pop-os/libcosmic#87ab8179e1bd9880239c340855ae8862034bd0e8"
 dependencies = [
  "build_helpers",
  "dnd",
@@ -2359,7 +2358,7 @@ dependencies = [
 [[package]]
 name = "iced_winit"
 version = "0.14.0"
-source = "git+https://github.com/pop-os/libcosmic#2a73fbc0edfe1525381bf999e241d73def79b222"
+source = "git+https://github.com/pop-os/libcosmic#87ab8179e1bd9880239c340855ae8862034bd0e8"
 dependencies = [
  "build_helpers",
  "cursor-icon",
@@ -2819,7 +2818,7 @@ checksum = "68ab91017fe16c622486840e4c83c9a37afeff978bd239b5293d61ece587de66"
 [[package]]
 name = "libcosmic"
 version = "1.0.0"
-source = "git+https://github.com/pop-os/libcosmic#2a73fbc0edfe1525381bf999e241d73def79b222"
+source = "git+https://github.com/pop-os/libcosmic#87ab8179e1bd9880239c340855ae8862034bd0e8"
 dependencies = [
  "apply",
  "ashpd 0.12.3",
@@ -2851,6 +2850,7 @@ dependencies = [
  "palette",
  "phf",
  "rfd",
+ "roxmltree",
  "rust-embed",
  "serde",
  "slotmap",
@@ -4736,7 +4736,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix 1.1.4",
  "windows-sys 0.61.2",

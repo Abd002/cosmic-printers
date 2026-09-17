@@ -64,6 +64,17 @@ impl State {
             self.emit_refresh_available_destinations();
         }
     }
+
+    /// Forgets where a service answered once it stops advertising itself.
+    /// Printers keep what was already applied: a queue outlives the advertisement, and the
+    /// next resolution replaces the entry anyway.
+    pub(crate) fn remove_dnssd_device_endpoint(&self, service_name: &str) {
+        self.model
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .dnssd_device_endpoints
+            .remove(service_name);
+    }
 }
 
 pub(super) fn apply_resolved_device_endpoint(
