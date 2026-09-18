@@ -1162,6 +1162,7 @@ dependencies = [
 [[package]]
 name = "cups_rs"
 version = "0.3.0"
+source = "git+https://github.com/OpenPrinting/cups-rs.git?branch=main#83ce53406e41bfac8e2977c6a4d6e5507d8e7bfb"
 dependencies = [
  "bindgen",
  "chrono",
