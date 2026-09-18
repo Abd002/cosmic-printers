@@ -17,6 +17,7 @@ printer-queue = Printer queue
 printer-queue-description = View active and completed print jobs
 add-printer = Add printer
 searching = Searching...
+printer-no-longer-available = That printer is no longer available
 your-printer-not-discovered = Your printer not discovered?
 manual-setup = Manual setup
 use-a-printer-application-to-manually-set-up-a-printer = Use a printer application to manually set up a printer
