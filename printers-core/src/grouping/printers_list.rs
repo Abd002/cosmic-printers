@@ -1014,10 +1014,10 @@ mod tests {
 
     #[test]
     fn a_local_printer_application_still_answers_on_its_own_port() {
-        let groups = group_printers(
-            vec![printer_queue("SocketLabel", "10.255.255.254", 8000)],
-            Vec::new(),
-        );
+        let mut queue = printer_queue("SocketLabel", "10.255.255.254", 8000);
+        queue.set_option("endpoint-is-local", "true");
+
+        let groups = group_printers(vec![queue], Vec::new());
 
         assert_eq!(
             groups[0].queues_web_page(),
