@@ -173,7 +173,7 @@ impl State {
     where
         M: 'static + Send + From<Message>,
     {
-        if self.is_searching() || self.is_adding() {
+        if self.is_adding() {
             return Action::None;
         }
 
@@ -227,7 +227,7 @@ impl State {
             return Action::None;
         }
 
-        // Do not configure candidates from a stale discovery generation.
+        // Nothing has been loaded yet, so there is no generation to configure against.
         let Some(discovery_generation) = self.selectable_generation() else {
             self.view = DialogView::Discovery;
             return Action::Task(Self::load_task(self.backend.clone()));
@@ -383,7 +383,6 @@ impl State {
     fn selectable_generation(&self) -> Option<DiscoveryGeneration> {
         self.discovery
             .as_ref()
-            .filter(|discovery| !discovery.cached)
             .map(|discovery| discovery.generation)
     }
 
@@ -550,6 +549,12 @@ fn setup_error(error: BackendError) -> SetupError {
             web_interface_uri,
             ..
         }) => SetupError::ManualSetup { web_interface_uri },
+        // Choosing a printer the last round found and this one no longer sees.
+        BackendError::Service(
+            PrinterError::DiscoveredPhysicalPrinterNotFound { .. }
+            | PrinterError::PrinterApplicationCandidateNotFound { .. }
+            | PrinterError::AddPrinterDiscoveryExpired { .. },
+        ) => SetupError::Failed(fl!("printer-no-longer-available")),
         error => SetupError::Failed(error.to_string()),
     }
 }
@@ -739,20 +744,25 @@ fn added_printers_view(state: &State) -> Element<'_, Message> {
 }
 
 fn printers_section(state: &State) -> Element<'_, Message> {
-    let rows = if state.is_searching() {
-        vec![plain_row(fl!("searching"))]
-    } else if let Some(error) = &state.error {
+    let printers = state.visible_printers().collect::<Vec<_>>();
+    // What the last round found.
+    let rows = if let Some(error) = &state.error {
         vec![plain_row(error.clone())]
-    } else {
-        let printers = state.visible_printers().collect::<Vec<_>>();
-        if printers.is_empty() {
-            vec![plain_row(fl!("no-printers-found"))]
+    } else if printers.is_empty() {
+        vec![plain_row(if state.is_searching() {
+            fl!("searching")
         } else {
-            printers
-                .iter()
-                .map(|printer| discovered_printer_row(state, printer))
-                .collect()
+            fl!("no-printers-found")
+        })]
+    } else {
+        let mut rows = printers
+            .iter()
+            .map(|printer| discovered_printer_row(state, printer))
+            .collect::<Vec<_>>();
+        if state.is_searching() {
+            rows.push(plain_row(fl!("searching")));
         }
+        rows
     };
     let spacing = cosmic::theme::active().cosmic().spacing;
 

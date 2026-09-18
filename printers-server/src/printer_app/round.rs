@@ -287,7 +287,14 @@ impl AddPrinterDiscovery {
             .collect::<Vec<_>>();
         let mut printers = group_candidates(candidates);
         drop_already_configured(&mut printers, configured_printers);
-        keep_established_identifiers(&self.physical_printers, &mut printers);
+        // A round starts with no rows of its own, so the first pass matches against the
+        // previous ones instead.
+        let established = if self.physical_printers.is_empty() {
+            &self.previous_physical_printers
+        } else {
+            &self.physical_printers
+        };
+        keep_established_identifiers(established, &mut printers);
         self.physical_printers = printers;
 
         let finished = self
@@ -307,10 +314,11 @@ impl AddPrinterDiscovery {
         self.completed_at = finished.then(Instant::now);
     }
 
-    /// Builds a reply that may display, but never configure, cached rows.
+    /// Builds a reply, falling back to the previous round's rows until this one has any.
     pub(crate) fn reply(&self) -> AddPrinterDiscoveryReply {
-        let cached =
-            self.physical_printers.is_empty() && !self.previous_physical_printers.is_empty();
+        let cached = self.state == AddPrinterDiscoveryState::Searching
+            && self.physical_printers.is_empty()
+            && !self.previous_physical_printers.is_empty();
         let printers = if cached {
             &self.previous_physical_printers
         } else {
@@ -363,7 +371,7 @@ impl AddPrinterDiscovery {
         }
     }
 
-    /// Finds a candidate only in its named row and current generation.
+    /// Finds a candidate in its named row, in the rows this round is showing.
     pub(crate) fn resolve<'a>(
         &'a self,
         generation: DiscoveryGeneration,
@@ -379,8 +387,13 @@ impl AddPrinterDiscovery {
             });
         }
 
-        let printer = self
-            .physical_printers
+        // Until an application answers, the rows on screen are the previous round's.
+        let showing = if self.physical_printers.is_empty() {
+            &self.previous_physical_printers
+        } else {
+            &self.physical_printers
+        };
+        let printer = showing
             .iter()
             .find(|printer| printer.id == physical_printer_id)
             .ok_or(ResolveError::PrinterNotFound)?;
@@ -698,7 +711,7 @@ mod tests {
     }
 
     #[test]
-    fn a_cached_row_cannot_be_selected() {
+    fn a_cached_row_can_be_selected() {
         let mut discovery = discovery_with_two_applications();
         let first = discovery.generation();
         discovery.replace_snapshot(
@@ -713,12 +726,69 @@ mod tests {
 
         let second = discovery.start(vec![("pa-a".into(), "LPrint".into())]);
 
-        assert_eq!(
+        assert!(
             discovery
                 .resolve(second, &row.id, &row.candidates[0].id)
-                .err(),
-            Some(ResolveError::PrinterNotFound)
+                .is_ok()
         );
+    }
+
+    #[test]
+    fn a_cached_row_keeps_its_identifier_once_the_round_answers() {
+        let mut discovery = discovery_with_two_applications();
+        let first = discovery.generation();
+        discovery.replace_snapshot(
+            first,
+            "pa-a",
+            PrinterApplicationScanState::Complete,
+            vec![candidate("pa-a", "ABC123", supported())],
+            0,
+            &[],
+        );
+        let row = discovery.reply().physical_printers[0].clone();
+
+        let second = discovery.start(vec![("pa-a".into(), "LPrint".into())]);
+        discovery.replace_snapshot(
+            second,
+            "pa-a",
+            PrinterApplicationScanState::Complete,
+            vec![candidate("pa-a", "ABC123", supported())],
+            0,
+            &[],
+        );
+
+        let refreshed = discovery.reply();
+        assert!(!refreshed.cached);
+        assert_eq!(refreshed.physical_printers[0].id, row.id);
+    }
+
+    #[test]
+    fn a_round_that_finds_nothing_stops_showing_the_last_one() {
+        let mut discovery = discovery_with_two_applications();
+        let first = discovery.generation();
+        discovery.replace_snapshot(
+            first,
+            "pa-a",
+            PrinterApplicationScanState::Complete,
+            vec![candidate("pa-a", "ABC123", supported())],
+            0,
+            &[],
+        );
+        assert_eq!(discovery.reply().physical_printers.len(), 1);
+
+        let second = discovery.start(vec![("pa-a".into(), "LPrint".into())]);
+        discovery.replace_snapshot(
+            second,
+            "pa-a",
+            PrinterApplicationScanState::Complete,
+            Vec::new(),
+            0,
+            &[],
+        );
+
+        let empty = discovery.reply();
+        assert!(!empty.cached);
+        assert!(empty.physical_printers.is_empty());
     }
 
     #[test]
