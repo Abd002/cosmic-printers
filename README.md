@@ -16,6 +16,49 @@ The UI normally connects to the printers daemon. The standalone application can 
 
 Set `COSMIC_PRINTERS_BACKEND=daemon` or `COSMIC_PRINTERS_BACKEND=embedded` to force a backend.
 
+## Runtime requirements
+
+On Debian/Ubuntu:
+
+```sh
+sudo apt-get install -y cups avahi-daemon
+```
+
+## Build dependencies
+
+On Debian/Ubuntu:
+
+```sh
+sudo apt-get install -y \
+  pkg-config \
+  clang \
+  libclang-dev \
+  libglib2.0-dev \
+  libxkbcommon-dev \
+  build-essential \
+  autoconf \
+  libavahi-client-dev \
+  libnss-mdns \
+  libpng-dev \
+  libssl-dev \
+  zlib1g-dev
+```
+
+Requires `libcups3` from OpenPrinting/libcups:
+
+```sh
+git clone --recurse-submodules https://github.com/OpenPrinting/libcups.git
+cd libcups
+
+./configure \
+  --prefix=/usr/local \
+  --with-domainsocket=/run/cups/cups.sock
+
+make -j"$(nproc)"
+sudo make install
+sudo ldconfig
+```
+
 ## Building
 
 Check the core workspace members:
