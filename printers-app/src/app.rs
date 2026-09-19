@@ -17,22 +17,22 @@ enum Screen {
 
 #[derive(Clone, Debug)]
 pub enum Message {
-    List(list::Message<Message>),
-    Details(details::Message<Message>),
+    List(list::Message),
+    Details(details::Message),
     Queue(queue::Message),
-    Request(Request<Message>),
+    Request(Request),
     PrintersScrolled(AbsoluteOffset),
     CloseQueue,
 }
 
-impl From<list::Message<Message>> for Message {
-    fn from(message: list::Message<Message>) -> Self {
+impl From<list::Message> for Message {
+    fn from(message: list::Message) -> Self {
         Self::List(message)
     }
 }
 
-impl From<details::Message<Message>> for Message {
-    fn from(message: details::Message<Message>) -> Self {
+impl From<details::Message> for Message {
+    fn from(message: details::Message) -> Self {
         Self::Details(message)
     }
 }
@@ -49,8 +49,8 @@ impl From<add_printer::Message> for Message {
     }
 }
 
-impl From<Request<Message>> for Message {
-    fn from(request: Request<Message>) -> Self {
+impl From<Request> for Message {
+    fn from(request: Request) -> Self {
         Self::Request(request)
     }
 }
@@ -174,9 +174,6 @@ impl cosmic::Application for App {
                 self.core.window.show_context = true;
                 Task::none()
             }
-            Message::Request(Request::Surface(action)) => {
-                cosmic::task::message(cosmic::Action::Surface(action))
-            }
         }
     }
 
@@ -187,7 +184,7 @@ impl cosmic::Application for App {
             Screen::Printers => column::with_capacity(3)
                 .spacing(spacing.space_l)
                 .push(list::page_header().map(Message::List))
-                .push(list::default_printer_view(&self.list, Message::from).map(Message::List))
+                .push(list::default_printer_view(&self.list).map(Message::List))
                 .push(list::printers_view(&self.list).map(Message::List)),
             Screen::Details => self.details_view(spacing.space_l),
         };
@@ -261,12 +258,8 @@ impl App {
                     .map(Message::Details),
             )
             .push(
-                details::printer_preferences_view(
-                    &self.details,
-                    &self.titles.printing_preferences,
-                    Message::from,
-                )
-                .map(Message::Details),
+                details::printer_preferences_view(&self.details, &self.titles.printing_preferences)
+                    .map(Message::Details),
             );
 
         if self.details.has_supplies() {

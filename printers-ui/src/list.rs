@@ -6,7 +6,6 @@ use cosmic::iced::{
     futures::{SinkExt, StreamExt, channel::mpsc::Sender, future},
     stream,
 };
-use cosmic::surface;
 use cosmic::widget::{self, column, container, menu, row, settings, text};
 use cosmic::{Apply, Element};
 use cosmic_settings_printers_core::{GroupedDestination, group_printers};
@@ -43,7 +42,7 @@ impl State {
     /// Creates the initial printer-loading task.
     pub fn load_task<M>(&self) -> Task<M>
     where
-        M: 'static + Send + From<Message<M>>,
+        M: 'static + Send + From<Message>,
     {
         self.load_printers_task()
     }
@@ -76,7 +75,7 @@ impl Default for State {
 
 /// A printer-list message.
 #[derive(Clone, Debug)]
-pub enum Message<M> {
+pub enum Message {
     /// Opens the Add Printer dialog.
     OpenAddPrinterDialog,
     /// Forwards an Add Printer dialog message.
@@ -123,8 +122,6 @@ pub enum Message<M> {
     OpenPrinterMenu(String),
     /// Closes the context menu.
     CloseMenu,
-    /// Forwards a popup-surface action.
-    Surface(surface::Action<M>),
 }
 
 impl State {
@@ -145,15 +142,15 @@ impl State {
 
 impl State {
     /// Handles a printer-list message.
-    pub fn update<M>(&mut self, message: Message<M>) -> Task<M>
+    pub fn update<M>(&mut self, message: Message) -> Task<M>
     where
         M: 'static
             + Send
-            + From<Message<M>>
+            + From<Message>
             + From<crate::add_printer::Message>
-            + From<crate::details::Message<M>>
+            + From<crate::details::Message>
             + From<crate::queue::Message>
-            + From<crate::details::Request<M>>,
+            + From<crate::details::Request>,
     {
         match message {
             Message::OpenAddPrinterDialog => self.open_add_printer_dialog(),
@@ -181,9 +178,6 @@ impl State {
             Message::DefaultPrinterSet(Err(why)) => {
                 tracing::warn!(why, "failed to set default printer");
                 self.load_printers_task()
-            }
-            Message::Surface(action) => {
-                cosmic::task::message(M::from(crate::details::Request::Surface(action)))
             }
             Message::Refresh => self.load_printers_task(),
             Message::PrintersLoaded(Ok(load)) => self.apply_printers_load(load),
@@ -238,7 +232,7 @@ impl State {
 
     fn select_default_printer<M>(&mut self, index: usize) -> Task<M>
     where
-        M: 'static + Send + From<Message<M>>,
+        M: 'static + Send + From<Message>,
     {
         let printer_id = index
             .checked_sub(1)
@@ -255,7 +249,7 @@ impl State {
 
     fn apply_printers_load<M>(&mut self, load: PrintersLoad) -> Task<M>
     where
-        M: 'static + Send + From<Message<M>> + From<crate::details::Message<M>>,
+        M: 'static + Send + From<Message> + From<crate::details::Message>,
     {
         self.default_printer_id = load
             .printers
@@ -290,7 +284,7 @@ impl State {
         result: Result<Option<PrinterEntry>, String>,
     ) -> Task<M>
     where
-        M: 'static + Send + From<Message<M>> + From<crate::details::Message<M>>,
+        M: 'static + Send + From<Message> + From<crate::details::Message>,
     {
         let printer = match result {
             Ok(printer) => printer,
@@ -381,7 +375,7 @@ impl State {
     where
         M: 'static
             + Send
-            + From<Message<M>>
+            + From<Message>
             + From<crate::add_printer::Message>
             + From<crate::queue::Message>,
     {
@@ -419,7 +413,7 @@ impl State {
 
     fn open_printer_settings<M>(&mut self, printer: PrinterEntry) -> Task<M>
     where
-        M: 'static + Send + From<crate::details::Message<M>> + From<crate::details::Request<M>>,
+        M: 'static + Send + From<crate::details::Message> + From<crate::details::Request>,
     {
         self.printer_context = None;
         let is_default = self.default_printer_id.as_deref() == Some(printer.id());
@@ -436,7 +430,7 @@ impl State {
 
     fn open_printer_queue<M>(&mut self, printer: PrinterEntry) -> Task<M>
     where
-        M: 'static + Send + From<crate::queue::Message> + From<crate::details::Request<M>>,
+        M: 'static + Send + From<crate::queue::Message> + From<crate::details::Request>,
     {
         self.printer_context = None;
 
@@ -451,7 +445,7 @@ impl State {
 
     fn open_printer_web_page<M>(web_page: String) -> Task<M>
     where
-        M: 'static + Send + From<Message<M>>,
+        M: 'static + Send + From<Message>,
     {
         cosmic::task::future(async move {
             M::from(Message::PrinterWebPageOpened(
@@ -462,7 +456,7 @@ impl State {
 
     fn update_add_printer<M>(&mut self, message: crate::add_printer::Message) -> Task<M>
     where
-        M: 'static + Send + From<Message<M>> + From<crate::add_printer::Message>,
+        M: 'static + Send + From<Message> + From<crate::add_printer::Message>,
     {
         let Some(dialog) = &mut self.add_printer_dialog else {
             return Task::none();
@@ -494,7 +488,7 @@ impl State {
 
     fn load_printers_task<M>(&self) -> Task<M>
     where
-        M: 'static + Send + From<Message<M>>,
+        M: 'static + Send + From<Message>,
     {
         let backend = self.backend.clone();
 
@@ -505,7 +499,7 @@ impl State {
 
     fn load_active_job_task<M>(&self, printer_id: String) -> Task<M>
     where
-        M: 'static + Send + From<Message<M>>,
+        M: 'static + Send + From<Message>,
     {
         let backend = self.backend.clone();
 
@@ -517,7 +511,7 @@ impl State {
 
     fn load_active_jobs_task<M>(&self) -> Task<M>
     where
-        M: 'static + Send + From<Message<M>>,
+        M: 'static + Send + From<Message>,
     {
         Task::batch(
             self.printers
@@ -556,10 +550,8 @@ async fn load_printers(backend: Backend) -> Result<PrintersLoad, String> {
 }
 
 /// Subscribes to printer events for the lifetime of the returned stream.
-pub fn printer_events_subscription<M: 'static + Send>(
-    backend: Backend,
-) -> impl futures::Stream<Item = Message<M>> {
-    stream::channel(8, |tx: Sender<Message<M>>| async move {
+pub fn printer_events_subscription(backend: Backend) -> impl futures::Stream<Item = Message> {
+    stream::channel(8, |tx: Sender<Message>| async move {
         std::thread::spawn(move || {
             let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
@@ -575,7 +567,7 @@ pub fn printer_events_subscription<M: 'static + Send>(
     })
 }
 
-async fn forward_printer_events<M: 'static + Send>(backend: Backend, mut tx: Sender<Message<M>>) {
+async fn forward_printer_events(backend: Backend, mut tx: Sender<Message>) {
     let (feed_tx, mut feed_rx) = futures::channel::mpsc::channel(8);
     let reading = backend.clone();
     let feeding = crate::backend::feed(backend, feed_tx);
@@ -635,20 +627,17 @@ fn default_printer_labels(printers: &[PrinterEntry]) -> Vec<String> {
 }
 
 /// Renders the default-printer selector.
-pub fn default_printer_view<M: 'static + Clone>(
-    state: &State,
-    to_host: fn(Message<M>) -> M,
-) -> Element<'_, Message<M>> {
+pub fn default_printer_view(state: &State) -> Element<'_, Message> {
     settings::section()
         .add(settings::item(
             fl!("default-printer"),
-            default_printer_dropdown(state, to_host),
+            default_printer_dropdown(state),
         ))
         .apply(Element::from)
 }
 
 /// Renders one row per grouped printer.
-pub fn printers_view<M: 'static + Clone>(state: &State) -> Element<'_, Message<M>> {
+pub fn printers_view(state: &State) -> Element<'_, Message> {
     let groups = group_printers(state.printers.clone(), state.printer_applications.clone());
 
     if groups.is_empty() {
@@ -668,23 +657,17 @@ pub fn printers_view<M: 'static + Clone>(state: &State) -> Element<'_, Message<M
     groups_column.apply(Element::from)
 }
 
-fn default_printer_dropdown<M: 'static + Clone>(
-    state: &State,
-    to_host: fn(Message<M>) -> M,
-) -> Element<'static, Message<M>> {
-    widget::dropdown::popup_dropdown(
+fn default_printer_dropdown(state: &State) -> Element<'static, Message> {
+    widget::dropdown::dropdown(
         state.default_printer_labels.clone(),
         state.default_printer_selection(),
         Message::DefaultPrinterDropdown,
-        cosmic::iced::window::Id::RESERVED,
-        Message::Surface,
-        to_host,
     )
     .into()
 }
 
 /// Renders the printer-page header.
-pub fn page_header<'a, M: 'static + Clone>() -> Element<'a, Message<M>> {
+pub fn page_header<'a>() -> Element<'a, Message> {
     row::with_capacity(2)
         .align_y(Alignment::Center)
         .spacing(cosmic::theme::active().cosmic().space_s())
@@ -693,10 +676,7 @@ pub fn page_header<'a, M: 'static + Clone>() -> Element<'a, Message<M>> {
         .apply(Element::from)
 }
 
-fn printer_group<M: 'static + Clone>(
-    state: &State,
-    group: GroupedDestination,
-) -> Element<'static, Message<M>> {
+fn printer_group(state: &State, group: GroupedDestination) -> Element<'static, Message> {
     let mut card = widget::list_column()
         .divider_padding(0)
         .list_item_padding([0, 0]);
@@ -714,9 +694,7 @@ fn printer_group<M: 'static + Clone>(
     card.apply(Element::from)
 }
 
-fn printer_application_header<M: 'static + Clone>(
-    application: &PrinterApplication,
-) -> Element<'static, Message<M>> {
+fn printer_application_header(application: &PrinterApplication) -> Element<'static, Message> {
     let spacing = cosmic::theme::active().cosmic().spacing;
     let title = text::heading(
         non_empty(&application.service_name)
@@ -745,9 +723,7 @@ fn printer_application_header<M: 'static + Clone>(
         .apply(Element::from)
 }
 
-fn grouped_queue_header<M: 'static + Clone>(
-    group: &GroupedDestination,
-) -> Element<'static, Message<M>> {
+fn grouped_queue_header(group: &GroupedDestination) -> Element<'static, Message> {
     let spacing = cosmic::theme::active().cosmic().spacing;
     let title = text::heading(group.queues_title())
         .width(Length::Fill)
@@ -772,10 +748,7 @@ fn grouped_queue_header<M: 'static + Clone>(
         .apply(Element::from)
 }
 
-fn printer_destination<M: 'static + Clone>(
-    list: &State,
-    printer: &PrinterEntry,
-) -> Element<'static, Message<M>> {
+fn printer_destination(list: &State, printer: &PrinterEntry) -> Element<'static, Message> {
     let spacing = cosmic::theme::active().cosmic().spacing;
     let mut name_col = column::with_capacity(2).push(
         text::title4(printer.name().to_string())
@@ -831,9 +804,7 @@ fn printer_destination<M: 'static + Clone>(
         .into()
 }
 
-fn printer_destination_actions<M: 'static + Clone>(
-    printer: &PrinterEntry,
-) -> Element<'static, Message<M>> {
+fn printer_destination_actions(printer: &PrinterEntry) -> Element<'static, Message> {
     let spacing = cosmic::theme::active().cosmic().spacing;
     let mut left = row::with_capacity(2)
         .spacing(spacing.space_xxxs)
@@ -865,7 +836,7 @@ fn printer_destination_actions<M: 'static + Clone>(
         .apply(Element::from)
 }
 
-fn settings_link<M: 'static + Clone>(printer: &PrinterEntry) -> Element<'static, Message<M>> {
+fn settings_link(printer: &PrinterEntry) -> Element<'static, Message> {
     // `button::text` brings its own metrics, so set the ones this row needs:
     // uniform 5px padding and `text::body`'s 21px line height.
     widget::button::text(fl!("settings"))
@@ -878,17 +849,11 @@ fn settings_link<M: 'static + Clone>(printer: &PrinterEntry) -> Element<'static,
         .into()
 }
 
-fn icon_button<M: 'static + Clone>(
-    handle: widget::icon::Handle,
-    message: Message<M>,
-) -> Element<'static, Message<M>> {
+fn icon_button(handle: widget::icon::Handle, message: Message) -> Element<'static, Message> {
     widget::button::icon(handle).on_press(message).into()
 }
 
-fn printer_context_menu<M: 'static + Clone>(
-    state: &State,
-    printer: &PrinterEntry,
-) -> Element<'static, Message<M>> {
+fn printer_context_menu(state: &State, printer: &PrinterEntry) -> Element<'static, Message> {
     let is_default = state.default_printer_id.as_deref() == Some(printer.id());
     let rows = [
         (
@@ -930,10 +895,7 @@ fn printer_context_menu<M: 'static + Clone>(
         .into()
 }
 
-fn context_menu_row<M: 'static + Clone>(
-    label: String,
-    message: Option<Message<M>>,
-) -> Element<'static, Message<M>> {
+fn context_menu_row(label: String, message: Option<Message>) -> Element<'static, Message> {
     menu::menu_button(vec![text::body(label).width(Length::Fill).into()])
         .height(Length::Fixed(CONTEXT_MENU_ROW_HEIGHT))
         .on_press_maybe(message)
@@ -1031,7 +993,7 @@ fn printer_application_web_page(application: &PrinterApplication) -> Option<Stri
 
 fn set_default_printer_task<M>(backend: Backend, printer_id: String) -> Task<M>
 where
-    M: 'static + Send + From<Message<M>>,
+    M: 'static + Send + From<Message>,
 {
     cosmic::task::future(async move {
         M::from(Message::DefaultPrinterSet(
@@ -1045,7 +1007,7 @@ where
 
 fn clear_default_printer_task<M>(backend: Backend) -> Task<M>
 where
-    M: 'static + Send + From<Message<M>>,
+    M: 'static + Send + From<Message>,
 {
     cosmic::task::future(async move {
         M::from(Message::DefaultPrinterSet(

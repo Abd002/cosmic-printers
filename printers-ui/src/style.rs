@@ -26,20 +26,6 @@ pub fn error() -> Color {
     cosmic::theme::active().cosmic().palette.bright_red.into()
 }
 
-/// The unfilled part of a supply bar.
-pub fn supply_track() -> Color {
-    cosmic::theme::active().cosmic().palette.neutral_5.into()
-}
-
-/// What a supply is drawn in when it reported no colour of its own.
-pub fn supply_neutral() -> Color {
-    grey(if cosmic::theme::active().cosmic().is_dark {
-        MIN_CHANNEL_ON_DARK
-    } else {
-        MAX_CHANNEL_ON_LIGHT
-    })
-}
-
 /// Returns a translucent selection color that preserves job-state colors.
 pub fn selection() -> Color {
     let mut color: Color = cosmic::theme::active().cosmic().palette.neutral_5.into();
@@ -102,9 +88,6 @@ const MIN_CHANNEL_ON_DARK: f32 = 0x9A as f32 / 255.0;
 /// How dark a supply's weakest channel has to be to be seen on a light card.
 const MAX_CHANNEL_ON_LIGHT: f32 = 0xD0 as f32 / 255.0;
 
-/// How close to the track a colour may be before it needs an edge to be told apart.
-pub const SUPPLY_OUTLINE_TOLERANCE: f32 = 0.15;
-
 // The graph stacks a 21-pixel label over a 20-pixel bar row.
 pub const SUPPLY_GRAPH_HEIGHT: f32 = 41.0;
 pub const SUPPLY_LABEL_HEIGHT: f32 = 21.0;
@@ -117,8 +100,6 @@ pub const INLINE_EDIT_HEIGHT: f32 = 32.0;
 pub const SUPPLY_MARK_WIDTH: f32 = 2.0;
 #[allow(dead_code)]
 pub const SUPPLY_MARK_HEIGHT: f32 = 16.0;
-/// A supply bar is a pill, whatever its height.
-pub const RADIUS_SUPPLY_BAR: f32 = 40.0;
 pub const ICON_SIZE: u16 = 16;
 
 #[cfg(test)]

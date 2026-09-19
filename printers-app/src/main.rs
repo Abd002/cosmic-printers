@@ -16,7 +16,7 @@ fn backend() -> Backend {
     BACKEND.get().cloned().unwrap_or_default()
 }
 
-fn printer_events() -> impl cosmic::iced::futures::Stream<Item = list::Message<app::Message>> {
+fn printer_events() -> impl cosmic::iced::futures::Stream<Item = list::Message> {
     list::printer_events_subscription(backend())
 }
 
