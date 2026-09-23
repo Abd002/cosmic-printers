@@ -19,3 +19,6 @@ nix = { version = "0.30", features = ["user"] }
 workspace = true
 default-features = false
 features = ["server", "service", "tokio", "tracing"]
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }

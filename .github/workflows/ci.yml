@@ -6,7 +6,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  LIBCUPS3_VERSION: v3.0.3
+  LIBCUPS3_REF: master
 
 jobs:
   fmt:
@@ -25,69 +25,77 @@ jobs:
         run: cargo fmt --all -- --check
 
   test:
-    name: Build and test
-    runs-on: ubuntu-24.04
+    name: Build and test (${{ matrix.arch }})
+    runs-on: ${{ matrix.runs-on }}
+    timeout-minutes: 90
+
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x86_64, aarch64]
+        include:
+          - arch: x86_64
+            runs-on: ubuntu-24.04
+          - arch: aarch64
+            runs-on: ubuntu-24.04-arm
 
     steps:
       - uses: actions/checkout@v4
 
       - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            pkg-config \
-            clang \
-            libclang-dev \
-            libglib2.0-dev \
-            libxkbcommon-dev
-
-      - name: Install CUPS 3 build dependencies
-        run: |
-          sudo apt-get install -y \
-            build-essential \
-            autoconf \
-            libavahi-client-dev \
-            libnss-mdns \
-            libpng-dev \
-            libssl-dev \
-            zlib1g-dev
+        run: ci/ci-setup.sh deps
 
       - name: Build CUPS 3
-        run: |
-          git clone \
-            --depth 1 \
-            --recurse-submodules \
-            --shallow-submodules \
-            --branch "$LIBCUPS3_VERSION" \
-            https://github.com/OpenPrinting/libcups.git \
-            "$RUNNER_TEMP/libcups"
+        run: ci/ci-setup.sh libcups "$LIBCUPS3_REF"
 
-          cd "$RUNNER_TEMP/libcups"
-
-          ./configure --prefix="$HOME/.local/libcups3"
-
-          make -j"$(nproc)"
-
-          sudo make install
-
-          sudo chown -R "$(id -u):$(id -g)" "$HOME/.local/libcups3"
-
-      - name: Configure CUPS 3 environment
-        run: |
-          echo "PKG_CONFIG_PATH=$HOME/.local/libcups3/lib/pkgconfig" >> "$GITHUB_ENV"
-          echo "LD_LIBRARY_PATH=$HOME/.local/libcups3/lib" >> "$GITHUB_ENV"
-          echo "BINDGEN_EXTRA_CLANG_ARGS=-I$HOME/.local/libcups3/include" >> "$GITHUB_ENV"
+      - name: Start CUPS and Avahi
+        run: ci/ci-setup.sh services
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
 
-      - name: Check CUPS version
-        run: pkg-config --modversion cups3
+      - name: Check and test
+        run: ci/ci-setup.sh test
 
-      - name: Clippy
-        run: cargo clippy --workspace --all-targets --locked
+      - name: Stop the fixtures
+        if: always()
+        run: ci/fixtures.sh stop
 
-      - name: Test
-        run: cargo test --workspace --locked
+      - name: Collect logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cosmic-printers-logs-${{ matrix.arch }}
+          path: |
+            ~/.local/state/cosmic-printers-ci/*.log
+            /var/log/cups/error_log
+          if-no-files-found: ignore
+
+  # The runner image already carries most of the dependencies.
+  clean-machine:
+    name: Build on a clean machine
+    runs-on: ubuntu-24.04
+    container: ubuntu:24.04
+    timeout-minutes: 90
+
+    steps:
+      - name: Bootstrap the container
+        run: |
+          apt-get update
+          apt-get install -y ca-certificates curl git sudo
+
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: ci/ci-setup.sh deps
+
+      - name: Build CUPS 3
+        run: ci/ci-setup.sh libcups "$LIBCUPS3_REF"
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build the workspace
+        run: cargo build --workspace --locked
