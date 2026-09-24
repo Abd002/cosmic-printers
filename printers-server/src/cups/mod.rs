@@ -16,7 +16,9 @@ pub(crate) use administration::{
     delete_scheduler_printer, set_accept_jobs, set_enabled, set_info, set_location,
 };
 pub(crate) use authorization::{mark_administrable, may_administer_printers};
-pub(crate) use jobs::{cancel_job, get_jobs, move_job, pause_job, print_test_page, resume_job};
+pub(crate) use jobs::{
+    cancel_job, get_jobs, job_state, move_job, pause_job, print_test_page, resume_job,
+};
 pub(crate) use refresh::{refresh_available_destinations, reload_printer};
 pub(crate) use routing::{Owner, owner_of};
 pub(crate) use user_defaults::{apply_saved, clear_default, set_default, set_option_default};

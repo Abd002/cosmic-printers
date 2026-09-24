@@ -24,6 +24,7 @@ const EVENTS: &[&str] = &[
     "job-completed",
     "job-progress",
     "job-state-changed",
+    "job-stopped",
     "printer-added",
     "printer-created",
     "printer-deleted",

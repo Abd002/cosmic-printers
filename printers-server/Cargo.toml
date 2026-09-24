@@ -8,6 +8,7 @@ tokio = { version = "1", features = ["sync", "rt", "macros", "net", "time"] }
 cosmic-settings-printers-core = { path = "../printers-core" }
 cups_rs = { git = "https://github.com/OpenPrinting/cups-rs.git", branch = "main" }
 futures-util = "0.3"
+notify-rust = "4.11.7"
 percent-encoding = "2"
 serde = { version = "1.0", features = ["derive"] }
 thiserror = "2"

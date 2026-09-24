@@ -3,8 +3,8 @@
 use cups_rs::{IppAttribute, IppOperation, IppRequest, IppResponse, IppTag, IppValueTag};
 use std::time::{Duration, Instant};
 
-use super::apply;
 use super::subscription::{LEASE_SECONDS, Subscription};
+use super::{apply, toast};
 use crate::error::{BackendError, BackendResult};
 use crate::ipp::{CupsResultExt, add_requesting_user, ensure_success, send_on_default_connection};
 use crate::state::State;
@@ -29,17 +29,24 @@ pub(super) async fn watch(context: &State) -> BackendResult<()> {
     let mut next_sequence = 1;
     let mut renewed = Instant::now();
     let renew_after = Duration::from_secs(LEASE_SECONDS as u64 / 2);
+    let mut jobs = toast::Jobs::default();
 
     loop {
         let fetching = subscription.clone();
-        let (events, highest) = blocking(move || fetch(&fetching, next_sequence)).await?;
+        let (notifications, highest) = blocking(move || fetch(&fetching, next_sequence)).await?;
 
-        if !events.is_empty() {
-            tracing::debug!(count = events.len(), "IPP notification events arrived");
+        if !notifications.is_empty() {
+            tracing::debug!(
+                count = notifications.len(),
+                "IPP notification events arrived"
+            );
         }
 
-        for event in events {
-            apply::apply(context, event).await;
+        for notification in notifications {
+            jobs.announce_end(&notification);
+            if let Some(event) = notification.into_event() {
+                apply::apply(context, event).await;
+            }
         }
 
         if highest >= next_sequence {
@@ -66,7 +73,7 @@ where
         .map_err(BackendError::Join)?
 }
 
-fn fetch(subscription: &Subscription, since: i32) -> BackendResult<(Vec<Event>, i32)> {
+fn fetch(subscription: &Subscription, since: i32) -> BackendResult<(Vec<Notification>, i32)> {
     let mut request = IppRequest::new(IppOperation::Other(GET_NOTIFICATIONS)).cups_err()?;
 
     request
@@ -107,13 +114,7 @@ fn fetch(subscription: &Subscription, since: i32) -> BackendResult<(Vec<Event>, 
         .max()
         .unwrap_or(0);
 
-    Ok((
-        notifications
-            .into_iter()
-            .filter_map(Notification::into_event)
-            .collect(),
-        highest,
-    ))
+    Ok((notifications, highest))
 }
 
 /// Events arrive one group each, separated by an attribute with no name.
@@ -141,10 +142,15 @@ fn read_notifications(response: &IppResponse) -> Vec<Notification> {
 }
 
 #[derive(Default)]
-struct Notification {
-    event: String,
-    printer: String,
-    sequence: i32,
+pub(super) struct Notification {
+    pub(super) event: String,
+    pub(super) printer: String,
+    pub(super) sequence: i32,
+    pub(super) job_id: i32,
+    pub(super) job_name: String,
+    pub(super) job_state: i32,
+    /// The job or the printer reasons, whichever this event carried.
+    pub(super) reasons: String,
 }
 
 impl Notification {
@@ -153,6 +159,12 @@ impl Notification {
             "notify-subscribed-event" => self.event = attribute.get_string(0).unwrap_or_default(),
             "printer-name" => self.printer = attribute.get_string(0).unwrap_or_default(),
             "notify-sequence-number" => self.sequence = attribute.get_integer(0),
+            "job-id" => self.job_id = attribute.get_integer(0),
+            "job-name" => self.job_name = attribute.get_string(0).unwrap_or_default(),
+            "job-state" => self.job_state = attribute.get_integer(0),
+            "job-state-reasons" | "printer-state-reasons" => {
+                self.reasons = attribute.get_string(0).unwrap_or_default();
+            }
             _ => {}
         }
     }
@@ -183,6 +195,7 @@ mod tests {
             event: event.to_string(),
             printer: printer.to_string(),
             sequence: 1,
+            ..Default::default()
         }
     }
 

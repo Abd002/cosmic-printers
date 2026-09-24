@@ -55,6 +55,8 @@ fn run_available_destinations_refresh(
     })?;
     // Prune only after a complete enumeration.
     worker_context.retain_available_destinations(&destinations.keys().cloned().collect());
+    // From here on, a destination found is one that turned up.
+    worker_context.mark_destinations_enumerated();
 
     let mut printers = destinations
         .into_values()

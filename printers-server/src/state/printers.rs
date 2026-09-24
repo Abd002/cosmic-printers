@@ -2,11 +2,21 @@
 
 use cosmic_settings_printers_core::PrinterEntry;
 use std::collections::HashSet;
+use std::sync::atomic::Ordering;
 
 use super::State;
 use super::endpoints::apply_resolved_device_endpoint;
+use crate::notify::toast;
 
 impl State {
+    pub(crate) fn mark_destinations_enumerated(&self) {
+        self.destinations_enumerated.store(true, Ordering::Relaxed);
+    }
+
+    fn announces_destinations(&self) -> bool {
+        self.destinations_enumerated.load(Ordering::Relaxed)
+    }
+
     pub(crate) async fn available_destination_cached(&self, id: &str) -> Option<PrinterEntry> {
         self.model
             .lock()
@@ -36,12 +46,18 @@ impl State {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         apply_resolved_device_endpoint(&model.dnssd_device_endpoints, &mut incoming);
-        let changed = model.available_destinations.get(&id) != Some(&incoming);
+        let known = model.available_destinations.get(&id);
+        let arrived = known.is_none() && self.announces_destinations();
+        let changed = known != Some(&incoming);
+        let announcing = arrived.then(|| incoming.clone());
         if changed {
             model.available_destinations.insert(id.clone(), incoming);
         }
         drop(model);
 
+        if let Some(printer) = announcing {
+            toast::printer_available(&printer);
+        }
         if changed {
             self.emit_available_destinations_changed(&id);
             self.reconcile_after_destination_change();
@@ -57,16 +73,23 @@ impl State {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         apply_resolved_device_endpoint(&model.dnssd_device_endpoints, &mut incoming);
+        let mut announcing = None;
         let changed = if let Some(existing) = model.available_destinations.get_mut(&id) {
             let before = existing.clone();
             existing.merge_enumeration_record(incoming);
             *existing != before
         } else {
+            if self.announces_destinations() {
+                announcing = Some(incoming.clone());
+            }
             model.available_destinations.insert(id.clone(), incoming);
             true
         };
         drop(model);
 
+        if let Some(printer) = announcing {
+            toast::printer_available(&printer);
+        }
         if changed {
             self.emit_available_destinations_changed(&id);
             self.reconcile_after_destination_change();
@@ -78,11 +101,14 @@ impl State {
             .model
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let changed = model.available_destinations.remove(id).is_some();
+        let removed = model.available_destinations.remove(id);
         model.enumeration_misses.remove(id);
         drop(model);
 
-        if changed {
+        if let Some(printer) = removed {
+            if self.announces_destinations() {
+                toast::printer_removed(printer.name());
+            }
             self.emit_available_destinations_changed(id);
         }
     }
@@ -117,15 +143,18 @@ impl State {
 
             if *misses >= MISSES_BEFORE_DROPPING {
                 model.enumeration_misses.remove(&id);
-                if model.available_destinations.remove(&id).is_some() {
-                    removed.push(id);
+                if let Some(printer) = model.available_destinations.remove(&id) {
+                    removed.push(printer);
                 }
             }
         }
         drop(model);
 
-        for id in removed {
-            self.emit_available_destinations_changed(&id);
+        for printer in removed {
+            if self.announces_destinations() {
+                toast::printer_removed(printer.name());
+            }
+            self.emit_available_destinations_changed(printer.id());
         }
     }
 }
@@ -175,6 +204,18 @@ mod tests {
             PrintersEventKind::AvailableDestinationsChanged
         );
         assert!(context.available_destinations_cached().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn the_first_enumeration_arms_the_ones_after_it() {
+        let context = State::new();
+        assert!(!context.announces_destinations());
+
+        context.retain_available_destinations(&HashSet::new());
+        assert!(!context.announces_destinations());
+
+        context.mark_destinations_enumerated();
+        assert!(context.announces_destinations());
     }
 
     #[tokio::test]

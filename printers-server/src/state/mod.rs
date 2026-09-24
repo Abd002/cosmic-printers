@@ -47,6 +47,7 @@ pub(crate) struct State {
     discovery_running: Arc<AtomicBool>,
     available_destinations_refresh_running: Arc<AtomicBool>,
     notifications_running: Arc<AtomicBool>,
+    destinations_enumerated: Arc<AtomicBool>,
     /// Bounds how many device scans run at once.
     pa_scan_semaphore: Arc<tokio::sync::Semaphore>,
     /// One lock per Printer Application, so two rounds cannot ask the same
@@ -71,6 +72,7 @@ impl State {
             discovery_running: Arc::new(AtomicBool::new(false)),
             available_destinations_refresh_running: Arc::new(AtomicBool::new(false)),
             notifications_running: Arc::new(AtomicBool::new(false)),
+            destinations_enumerated: Arc::new(AtomicBool::new(false)),
             pa_scan_semaphore: Arc::new(tokio::sync::Semaphore::new(scan_concurrency.max(1))),
             pa_scan_locks: Arc::new(Mutex::new(HashMap::new())),
             pa_configuration_locks: Arc::new(Mutex::new(HashMap::new())),

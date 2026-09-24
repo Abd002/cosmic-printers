@@ -311,7 +311,7 @@ fn parse_jobs(attributes: Vec<IppAttribute>, fallback_printer_id: &str) -> Vec<J
 }
 
 /// Maps IPP job-state enum values to the shared API job state.
-fn job_state(state: i32) -> JobState {
+pub(crate) fn job_state(state: i32) -> JobState {
     match state {
         3 => JobState::Pending,
         4 => JobState::Held,
