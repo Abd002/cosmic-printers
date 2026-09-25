@@ -68,11 +68,24 @@ impl State {
     /// Printers keep what was already applied: a queue outlives the advertisement, and the
     /// next resolution replaces the entry anyway.
     pub(crate) fn remove_dnssd_device_endpoint(&self, service_name: &str) {
-        self.model
+        let mut model = self
+            .model
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .dnssd_device_endpoints
-            .remove(service_name);
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        model.dnssd_device_endpoints.remove(service_name);
+
+        // The advertisement going away is one miss, so the next enumeration that
+        // misses the printer too drops it. A queue is still enumerated and keeps it.
+        let gone = model
+            .available_destinations
+            .values()
+            .filter(|printer| device_service_name(printer).as_deref() == Some(service_name))
+            .map(|printer| printer.id().to_string())
+            .collect::<Vec<_>>();
+        for id in gone {
+            let misses = model.enumeration_misses.entry(id).or_default();
+            *misses = misses.saturating_add(1);
+        }
     }
 }
 
@@ -98,6 +111,7 @@ fn device_service_name(printer: &PrinterEntry) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashSet;
 
     fn destination(id: &str, location: &str) -> PrinterEntry {
         PrinterEntry::new(
@@ -190,5 +204,28 @@ mod tests {
             context.available_destinations_cached().await[0].port(),
             Some(8000)
         );
+    }
+
+    #[tokio::test]
+    async fn a_printer_whose_advertisement_went_away_is_dropped_on_the_next_miss() {
+        let context = State::new();
+        context.merge_available_destination(dnssd_destination("SocketLabel"));
+
+        context.remove_dnssd_device_endpoint("socketlabel._ipps._tcp.local");
+        context.retain_available_destinations(&HashSet::new());
+
+        assert!(context.available_destinations_cached().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_printer_still_enumerated_outlives_its_advertisement() {
+        let context = State::new();
+        context.merge_available_destination(dnssd_destination("SocketLabel"));
+
+        context.remove_dnssd_device_endpoint("socketlabel._ipps._tcp.local");
+        context.retain_available_destinations(&HashSet::from(["SocketLabel".to_string()]));
+        context.retain_available_destinations(&HashSet::new());
+
+        assert_eq!(context.available_destinations_cached().await.len(), 1);
     }
 }
