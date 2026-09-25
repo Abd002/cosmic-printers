@@ -157,6 +157,22 @@ impl State {
             self.emit_available_destinations_changed(printer.id());
         }
     }
+
+    /// Only an enumeration tells what the user saved for a printer without a queue,
+    /// so a change is kept here until the next one does.
+    pub(crate) fn record_saved_default(&self, id: Option<&str>) {
+        let mut model = self.locked_model();
+        for printer in model.available_destinations.values_mut() {
+            let is_default = Some(printer.id()) == id;
+            printer.set_is_default(is_default);
+        }
+    }
+
+    pub(crate) fn record_saved_option(&self, id: &str, option: &str, value: &str) {
+        if let Some(printer) = self.locked_model().available_destinations.get_mut(id) {
+            printer.set_option(option, value);
+        }
+    }
 }
 
 #[cfg(test)]

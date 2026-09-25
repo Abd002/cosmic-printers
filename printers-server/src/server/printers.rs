@@ -175,6 +175,7 @@ impl Server {
             .map_err(service_error);
 
         if outcome.is_ok() {
+            self.context.record_saved_default(Some(printer_id));
             if let Some(previous_default) = previous_default
                 && previous_default != printer_id
             {
@@ -200,11 +201,12 @@ impl Server {
             .await
             .map_err(service_error);
 
-        if outcome.is_ok()
-            && let Some(previous_default) = previous_default
-        {
-            self.context
-                .emit_available_destinations_changed(&previous_default);
+        if outcome.is_ok() {
+            self.context.record_saved_default(None);
+            if let Some(previous_default) = previous_default {
+                self.context
+                    .emit_available_destinations_changed(&previous_default);
+            }
         }
 
         outcome
@@ -229,6 +231,8 @@ impl Server {
             .map_err(service_error);
 
         if outcome.is_ok() {
+            self.context
+                .record_saved_option(printer_id, option, &values.join(","));
             self.context.emit_available_destinations_changed(printer_id);
         }
 

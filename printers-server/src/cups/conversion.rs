@@ -72,6 +72,14 @@ pub(super) fn refresh_printer_function(printer: &mut PrinterEntry) {
     printer.set_option("queue-function", if faxes { "fax" } else { "print" });
 }
 
+/// Returns whether libcups found the printer on the network rather than as a queue.
+pub(super) fn is_discovered(printer: &PrinterEntry) -> bool {
+    printer
+        .option("printer-type")
+        .and_then(|printer_type| printer_type.parse::<u32>().ok())
+        .is_some_and(|printer_type| printer_type & cups_rs::PRINTER_DISCOVERED != 0)
+}
+
 /// Recomputes the endpoint after URI attributes are merged.
 pub(super) fn refresh_printer_endpoint(printer: &mut PrinterEntry) {
     let device_uri = printer.device_uri().map(str::to_owned);

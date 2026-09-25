@@ -4,32 +4,46 @@
 use cosmic_settings_printers_core::PrinterEntry;
 use cups_rs::Destinations;
 
+use super::conversion::is_discovered;
 use super::scheduler::split_queue_instance;
 use crate::error::{BackendError, BackendResult};
 use crate::ipp::CupsResultExt;
 
 /// Overlays user options because libcups applies them after destination defaults.
 pub(crate) fn apply_saved(printers: &mut [PrinterEntry]) {
-    // A user default overrides every server-reported default. Without one, libcups resolves the
-    // system-wide or scheduler default, so leave that result intact.
-    let chosen_default = printers
+    // A printer without a queue is looked up by enumerating the network, and libcups can
+    let saved = printers
         .iter()
-        .find_map(|printer| {
+        .map(|printer| {
+            if is_discovered(printer) {
+                return None;
+            }
             let (queue, instance) = split_queue_instance(printer.id());
             Destinations::named_destination(queue, instance)
-                .filter(|dest| dest.is_default)
-                .map(|dest| dest.full_name())
         })
-        .or_else(Destinations::default_destination_name);
+        .collect::<Vec<_>>();
 
-    for printer in printers {
+        let chosen_default = saved
+        .iter()
+        .flatten()
+        .find(|dest| dest.is_default)
+        .map(|dest| dest.full_name())
+        .or_else(Destinations::default_destination_name)
+        // libcups finds no default that names a printer without a queue.
+        .or_else(|| {
+            printers
+                .iter()
+                .find(|printer| is_discovered(printer) && printer.is_default())
+                .map(|printer| printer.id().to_string())
+        });
+
+    for (printer, saved) in printers.iter_mut().zip(saved) {
         match &chosen_default {
             Some(chosen) => printer.set_is_default(printer.id() == chosen),
             None => printer.set_is_default(false),
         }
 
-        let (queue, instance) = split_queue_instance(printer.id());
-        let Some(saved) = Destinations::named_destination(queue, instance) else {
+        let Some(saved) = saved else {
             continue;
         };
 
