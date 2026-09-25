@@ -22,6 +22,7 @@ const CONTEXT_MENU_ROW_HEIGHT: f32 = 40.0;
 pub struct State {
     backend: Backend,
     pub(crate) printers: Vec<PrinterEntry>,
+    load_failed: bool,
     printer_applications: Vec<PrinterApplication>,
     pub(crate) default_printer_id: Option<String>,
     active_job_counts: HashMap<String, usize>,
@@ -61,6 +62,7 @@ impl Default for State {
         Self {
             backend: Backend::default(),
             printers: Vec::new(),
+            load_failed: false,
             printer_applications: Vec::new(),
             default_printer_id: None,
             active_job_counts: HashMap::new(),
@@ -251,6 +253,7 @@ impl State {
     where
         M: 'static + Send + From<Message> + From<crate::details::Message>,
     {
+        self.load_failed = false;
         self.default_printer_id = load
             .printers
             .iter()
@@ -352,6 +355,7 @@ impl State {
 
     fn clear_printers_after_load_error(&mut self, why: String) {
         tracing::error!(why, "failed to load printers");
+        self.load_failed = true;
         self.printers.clear();
         self.printer_applications.clear();
         self.default_printer_id = None;
@@ -638,8 +642,13 @@ pub fn printers_view(state: &State) -> Element<'_, Message> {
     let groups = group_printers(state.printers.clone(), state.printer_applications.clone());
 
     if groups.is_empty() {
+        let message = if state.load_failed {
+            fl!("failed-to-load-printers")
+        } else {
+            fl!("no-printers-found")
+        };
         return widget::list_column()
-            .add(text::body(fl!("no-printers-found")))
+            .add(text::body(message))
             .apply(Element::from);
     }
 
