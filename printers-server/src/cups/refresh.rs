@@ -22,13 +22,18 @@ pub fn refresh_available_destinations(context: State) {
             let applications = worker_context.printer_applications_cached().await;
 
             tokio::task::spawn_blocking(move || {
-                let _lease = lease;
-                if let Err(error) = run_available_destinations_refresh(worker_context, applications)
+                if let Err(error) =
+                    run_available_destinations_refresh(worker_context.clone(), applications)
                 {
                     tracing::warn!(
                         error = ?error,
                         "failed to refresh available printer destinations"
                     );
+                }
+
+                drop(lease);
+                if worker_context.take_available_destinations_refresh_ask() {
+                    refresh_available_destinations(worker_context);
                 }
             });
         });

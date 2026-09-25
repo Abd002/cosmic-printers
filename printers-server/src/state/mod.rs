@@ -46,6 +46,7 @@ pub(crate) struct State {
     model: Arc<Mutex<Model>>,
     discovery_running: Arc<AtomicBool>,
     available_destinations_refresh_running: Arc<AtomicBool>,
+    available_destinations_refresh_asked: Arc<AtomicBool>,
     notifications_running: Arc<AtomicBool>,
     destinations_enumerated: Arc<AtomicBool>,
     /// Bounds how many device scans run at once.
@@ -71,6 +72,7 @@ impl State {
             model: Arc::new(Mutex::new(Model::default())),
             discovery_running: Arc::new(AtomicBool::new(false)),
             available_destinations_refresh_running: Arc::new(AtomicBool::new(false)),
+            available_destinations_refresh_asked: Arc::new(AtomicBool::new(false)),
             notifications_running: Arc::new(AtomicBool::new(false)),
             destinations_enumerated: Arc::new(AtomicBool::new(false)),
             pa_scan_semaphore: Arc::new(tokio::sync::Semaphore::new(scan_concurrency.max(1))),

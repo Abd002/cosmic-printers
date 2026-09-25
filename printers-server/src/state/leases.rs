@@ -36,12 +36,23 @@ impl State {
     }
 
     pub(crate) fn try_start_available_destinations_refresh(&self) -> Option<DiscoveryLease> {
-        self.available_destinations_refresh_running
+        let lease = self
+            .available_destinations_refresh_running
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
             .is_ok()
             .then(|| DiscoveryLease {
                 running: Arc::clone(&self.available_destinations_refresh_running),
-            })
+            });
+        if lease.is_none() {
+            self.available_destinations_refresh_asked
+                .store(true, Ordering::Release);
+        }
+        lease
+    }
+
+    pub(crate) fn take_available_destinations_refresh_ask(&self) -> bool {
+        self.available_destinations_refresh_asked
+            .swap(false, Ordering::AcqRel)
     }
 
     pub(crate) fn try_start_notifications(&self) -> Option<DiscoveryLease> {
@@ -123,5 +134,17 @@ mod tests {
         drop(lease);
 
         assert!(context.try_start_available_destinations_refresh().is_some());
+    }
+
+    #[test]
+    fn a_refresh_asked_for_while_one_runs_is_remembered_once() {
+        let context = State::new();
+        assert!(!context.take_available_destinations_refresh_ask());
+
+        let _lease = context.try_start_available_destinations_refresh().unwrap();
+        assert!(context.try_start_available_destinations_refresh().is_none());
+
+        assert!(context.take_available_destinations_refresh_ask());
+        assert!(!context.take_available_destinations_refresh_ask());
     }
 }
