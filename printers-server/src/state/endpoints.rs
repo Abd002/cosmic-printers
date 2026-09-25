@@ -1,6 +1,6 @@
 //! Where a printer that advertises itself actually answers.
 
-use cosmic_settings_printers_core::{EndpointSource, PrinterEntry};
+use cosmic_settings_printers_core::PrinterEntry;
 use std::collections::HashMap;
 
 use super::State;
@@ -43,9 +43,7 @@ impl State {
         let mut found_compatible = false;
 
         for printer in model.available_destinations.values_mut() {
-            if printer.endpoint_source() == Some(EndpointSource::Connected)
-                || device_service_name(printer).as_deref() != Some(service_name.as_str())
-            {
+            if device_service_name(printer).as_deref() != Some(service_name.as_str()) {
                 continue;
             }
             let before = printer.clone();
@@ -93,9 +91,6 @@ pub(super) fn apply_resolved_device_endpoint(
     endpoints: &HashMap<String, DnssdDeviceEndpoint>,
     printer: &mut PrinterEntry,
 ) {
-    if printer.endpoint_source() == Some(EndpointSource::Connected) {
-        return;
-    }
     if let Some(endpoint) = device_service_name(printer).and_then(|name| endpoints.get(&name)) {
         endpoint.apply_to(printer);
     }
@@ -111,6 +106,7 @@ fn device_service_name(printer: &PrinterEntry) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cosmic_settings_printers_core::EndpointSource;
     use std::collections::HashSet;
 
     fn destination(id: &str, location: &str) -> PrinterEntry {
@@ -185,6 +181,53 @@ mod tests {
         let cached = context.available_destinations_cached().await;
         assert_eq!(cached[0].hostname(), Some("desktop.local"));
         assert_eq!(cached[0].port(), Some(8000));
+    }
+
+    fn through_a_local_queue(id: &str) -> PrinterEntry {
+        let mut printer = dnssd_destination(id);
+        printer.set_option("endpoint-hostname", "localhost");
+        printer.set_option("endpoint-port", "631");
+        printer.set_option("endpoint-address", "127.0.0.1");
+        printer.set_option("endpoint-is-local", "true");
+        printer.set_endpoint_source(EndpointSource::Connected);
+        printer
+    }
+
+    #[tokio::test]
+    async fn the_advertisement_replaces_what_a_temporary_queue_reported_first() {
+        let context = State::new();
+        context.update_available_destination(through_a_local_queue("SocketLabel"));
+
+        context.record_dnssd_device_endpoint(
+            "socketlabel._ipps._tcp.local".into(),
+            DnssdDeviceEndpoint {
+                is_local: false,
+                ..resolved_endpoint()
+            },
+        );
+
+        let cached = context.available_destinations_cached().await;
+        assert_eq!(cached[0].hostname(), Some("desktop.local"));
+        assert_eq!(cached[0].port(), Some(8000));
+        assert_eq!(cached[0].endpoint_address(), Some("192.0.2.1"));
+        assert_eq!(cached[0].option("endpoint-is-local"), Some("false"));
+    }
+
+    #[tokio::test]
+    async fn a_temporary_queue_read_later_does_not_take_the_endpoint_back() {
+        let context = State::new();
+        context.record_dnssd_device_endpoint(
+            "socketlabel._ipps._tcp.local".into(),
+            resolved_endpoint(),
+        );
+        context.merge_available_destination(dnssd_destination("SocketLabel"));
+
+        context.update_available_destination(through_a_local_queue("SocketLabel"));
+
+        let cached = context.available_destinations_cached().await;
+        assert_eq!(cached[0].hostname(), Some("desktop.local"));
+        assert_eq!(cached[0].port(), Some(8000));
+        assert_eq!(cached[0].endpoint_address(), Some("192.0.2.1"));
     }
 
     #[tokio::test]
