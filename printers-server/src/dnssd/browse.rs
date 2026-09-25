@@ -178,7 +178,13 @@ pub(super) fn run_system_service_browser(
                         application,
                     ));
                 } else {
-                    let service_name = normalize(&resolved.service.full_name);
+                    // Built from the parts, since the full name escapes a space as `\032`
+                    // where a device URI percent-encodes it.
+                    let service = &resolved.service;
+                    let service_name = normalize(&format!(
+                        "{}.{}.{}",
+                        service.name, service.service_type, service.domain
+                    ));
                     endpoint_names.insert(key.clone(), service_name.clone());
                     let known = endpoints::record_device_resolution(
                         &context,

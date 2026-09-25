@@ -90,12 +90,9 @@ pub(super) fn apply_resolved_device_endpoint(
 
 fn device_service_name(printer: &PrinterEntry) -> Option<String> {
     let uri = url::Url::parse(printer.device_uri()?).ok()?;
-    Some(
-        uri.host_str()?
-            .trim()
-            .trim_end_matches('.')
-            .to_ascii_lowercase(),
-    )
+    // A space in the instance name arrives as %20.
+    let host = percent_encoding::percent_decode_str(uri.host_str()?).decode_utf8_lossy();
+    Some(host.trim().trim_end_matches('.').to_ascii_lowercase())
 }
 
 #[cfg(test)]
@@ -174,5 +171,24 @@ mod tests {
         let cached = context.available_destinations_cached().await;
         assert_eq!(cached[0].hostname(), Some("desktop.local"));
         assert_eq!(cached[0].port(), Some(8000));
+    }
+
+    #[tokio::test]
+    async fn a_name_with_spaces_matches_its_percent_encoded_device_uri() {
+        let context = State::new();
+        let mut printer = destination("Office_Laser", "");
+        printer.set_option("device-uri", "dnssd://Office%20Laser._ipp._tcp.local/");
+        context.merge_available_destination(printer);
+
+        let known = context.record_dnssd_device_endpoint(
+            "office laser._ipp._tcp.local".into(),
+            resolved_endpoint(),
+        );
+
+        assert!(known);
+        assert_eq!(
+            context.available_destinations_cached().await[0].port(),
+            Some(8000)
+        );
     }
 }
