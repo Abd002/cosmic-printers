@@ -47,6 +47,19 @@ impl State {
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         apply_resolved_device_endpoint(&model.dnssd_device_endpoints, &mut incoming);
         let known = model.available_destinations.get(&id);
+        let incoming = match known {
+            Some(known) => {
+                let mut merged = known.clone();
+                merged.set_is_default(incoming.is_default());
+                merged.merge_options(
+                    incoming
+                        .options()
+                        .map(|(name, value)| (name.to_string(), value.to_string())),
+                );
+                merged
+            }
+            None => incoming,
+        };
         let arrived = known.is_none() && self.announces_destinations();
         let changed = known != Some(&incoming);
         let announcing = arrived.then(|| incoming.clone());
@@ -282,6 +295,23 @@ mod tests {
         let cached = context.available_destinations_cached().await;
         assert_eq!(cached.len(), 1);
         assert_eq!(cached[0].id(), "studio");
+    }
+
+    #[tokio::test]
+    async fn an_update_that_read_less_keeps_what_was_read_before() {
+        let context = State::new();
+        let mut read = destination("office", "first floor");
+        read.set_option("media-supported", "iso_a4_210x297mm");
+        context.update_available_destination(read);
+
+        context.update_available_destination(destination("office", "second floor"));
+
+        let cached = context.available_destinations_cached().await;
+        assert_eq!(cached[0].location(), Some("second floor"));
+        assert_eq!(
+            cached[0].option("media-supported"),
+            Some("iso_a4_210x297mm")
+        );
     }
 
     #[tokio::test]
