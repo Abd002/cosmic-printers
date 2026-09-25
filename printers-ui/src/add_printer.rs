@@ -755,14 +755,10 @@ fn printers_section(state: &State) -> Element<'_, Message> {
             fl!("no-printers-found")
         })]
     } else {
-        let mut rows = printers
+        printers
             .iter()
             .map(|printer| discovered_printer_row(state, printer))
-            .collect::<Vec<_>>();
-        if state.is_searching() {
-            rows.push(plain_row(fl!("searching")));
-        }
-        rows
+            .collect::<Vec<_>>()
     };
     let spacing = cosmic::theme::active().cosmic().spacing;
 
