@@ -50,6 +50,12 @@ impl Server {
         Ok(())
     }
 
+    /// Starts discovery and the first enumeration without waiting for a client to ask.
+    pub async fn start_watching(&self) {
+        crate::dnssd::start_printer_application_discovery(self.context.clone()).await;
+        cups::refresh_available_destinations(self.context.clone());
+    }
+
     /// Re-reads one changed printer so subsequent reads do not return stale state.
     /// A full refresh is slow and drops overlapping requests.
     async fn reload_into_cache(&self, printer_id: &str) {

@@ -389,9 +389,6 @@ impl State {
             PrintersEventKind::PrinterConfigurationChanged => self.add_printer_task(|| {
                 cosmic::task::message(M::from(crate::add_printer::Message::ConfigurationChanged))
             }),
-            PrintersEventKind::RefreshAvailableDestinations => {
-                cosmic::task::message(M::from(Message::Refresh))
-            }
             // The count beside the printer and the queue page both show these jobs.
             PrintersEventKind::JobsChanged => match event.printer_id {
                 Some(printer_id) => Task::batch([

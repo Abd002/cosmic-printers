@@ -25,11 +25,12 @@ impl DnssdDeviceEndpoint {
 }
 
 impl State {
+    /// Returns whether a cached printer answers for the service.
     pub(crate) fn record_dnssd_device_endpoint(
         &self,
         service_name: String,
         endpoint: DnssdDeviceEndpoint,
-    ) {
+    ) -> bool {
         let mut model = self
             .model
             .lock()
@@ -60,9 +61,7 @@ impl State {
             self.emit_available_destinations_changed(&printer_id);
         }
 
-        if !found_compatible {
-            self.emit_refresh_available_destinations();
-        }
+        found_compatible
     }
 
     /// Forgets where a service answered once it stops advertising itself.

@@ -4,15 +4,15 @@
 use cosmic_settings_printers_core::is_local_address;
 use cups_rs::DnssdResolveEvent;
 
-use super::normalize;
 use crate::state::{DnssdDeviceEndpoint, State};
 
+/// Returns whether a cached printer answers for the service.
 pub(super) fn record_device_resolution(
     context: &State,
+    service_name: String,
     service: DnssdResolveEvent,
     addresses: &[std::net::IpAddr],
-) {
-    let service_name = normalize(&service.full_name);
+) -> bool {
     let is_local = addresses.iter().copied().any(is_local_address);
     context.record_dnssd_device_endpoint(
         service_name,
@@ -22,7 +22,7 @@ pub(super) fn record_device_resolution(
             address: addresses.first().map(ToString::to_string),
             is_local,
         },
-    );
+    )
 }
 
 pub(super) fn forget_device_resolution(context: &State, service_name: &str) {

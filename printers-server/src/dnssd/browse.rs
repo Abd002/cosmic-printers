@@ -117,6 +117,8 @@ pub(super) fn run_system_service_browser(
 
                 if let Some(service_name) = endpoint_names.remove(&key) {
                     endpoints::forget_device_resolution(&context, &service_name);
+                    let _runtime = runtime.enter();
+                    crate::cups::refresh_available_destinations(context.clone());
                 }
 
                 if application_ids.remove(&key).is_some() {
@@ -176,12 +178,19 @@ pub(super) fn run_system_service_browser(
                         application,
                     ));
                 } else {
-                    endpoint_names.insert(key.clone(), normalize(&resolved.service.full_name));
-                    endpoints::record_device_resolution(
+                    let service_name = normalize(&resolved.service.full_name);
+                    endpoint_names.insert(key.clone(), service_name.clone());
+                    let known = endpoints::record_device_resolution(
                         &context,
+                        service_name,
                         resolved.service,
                         &resolved.addresses,
                     );
+                    // No cached printer answers for it yet, so enumerate to pick it up.
+                    if !known {
+                        let _runtime = runtime.enter();
+                        crate::cups::refresh_available_destinations(context.clone());
+                    }
                 }
             }
         }
