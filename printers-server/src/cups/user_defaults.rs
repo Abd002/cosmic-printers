@@ -23,7 +23,7 @@ pub(crate) fn apply_saved(printers: &mut [PrinterEntry]) {
         })
         .collect::<Vec<_>>();
 
-        let chosen_default = saved
+    let chosen_default = saved
         .iter()
         .flatten()
         .find(|dest| dest.is_default)
