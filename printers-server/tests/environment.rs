@@ -1,7 +1,7 @@
 //! Whether a printer on the network is found at all, and where it answers.
 //! Needs the fixtures: `ci/fixtures.sh start && ci/fixtures.sh wait`.
 
-use cosmic_settings_printers_core::PrinterEntry;
+use cosmic_settings_printers_core::{PrinterEntry, local_addresses};
 use cosmic_settings_printers_server::Server;
 use std::time::{Duration, Instant};
 
@@ -87,5 +87,11 @@ async fn a_detected_printer_resolves_to_where_it_answers() {
 
     let printer = find(&printers, PRINTER_A).expect(SETUP);
     assert!(printer.hostname().is_some());
-    assert_eq!(printer.option("endpoint-is-local"), Some("true"));
+    assert_eq!(
+        printer.option("endpoint-is-local"),
+        Some("true"),
+        "resolved to {:?}; this machine's addresses: {:?}",
+        printer.endpoint_address(),
+        local_addresses(),
+    );
 }

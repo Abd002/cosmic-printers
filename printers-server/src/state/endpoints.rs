@@ -1,7 +1,8 @@
 //! Where a printer that advertises itself actually answers.
 
-use cosmic_settings_printers_core::PrinterEntry;
+use cosmic_settings_printers_core::{PrinterEntry, is_local_address};
 use std::collections::HashMap;
+use std::net::IpAddr;
 
 use super::State;
 
@@ -9,17 +10,17 @@ use super::State;
 pub(crate) struct DnssdDeviceEndpoint {
     pub(crate) hostname: String,
     pub(crate) port: u16,
-    pub(crate) address: Option<String>,
-    pub(crate) is_local: bool,
+    pub(crate) addresses: Vec<IpAddr>,
 }
 
 impl DnssdDeviceEndpoint {
     fn apply_to(&self, printer: &mut PrinterEntry) {
         printer.set_option("dnssd-hostname", &self.hostname);
         printer.set_option("dnssd-port", self.port.to_string());
-        printer.set_option("endpoint-is-local", self.is_local.to_string());
-        if let Some(address) = &self.address {
-            printer.set_option("endpoint-address", address);
+        let is_local = self.addresses.iter().copied().any(is_local_address);
+        printer.set_option("endpoint-is-local", is_local.to_string());
+        if let Some(address) = self.addresses.first() {
+            printer.set_option("endpoint-address", address.to_string());
         }
     }
 }
@@ -128,8 +129,7 @@ mod tests {
         DnssdDeviceEndpoint {
             hostname: "desktop.local".into(),
             port: 8000,
-            address: Some("192.0.2.1".into()),
-            is_local: true,
+            addresses: vec!["127.0.0.1".parse().unwrap()],
         }
     }
 
@@ -146,7 +146,7 @@ mod tests {
         let cached = context.available_destinations_cached().await;
         assert_eq!(cached[0].hostname(), Some("desktop.local"));
         assert_eq!(cached[0].port(), Some(8000));
-        assert_eq!(cached[0].endpoint_address(), Some("192.0.2.1"));
+        assert_eq!(cached[0].endpoint_address(), Some("127.0.0.1"));
         assert_eq!(cached[0].option("endpoint-is-local"), Some("true"));
     }
 
@@ -163,7 +163,7 @@ mod tests {
         let cached = context.available_destinations_cached().await;
         assert_eq!(cached[0].hostname(), Some("desktop.local"));
         assert_eq!(cached[0].port(), Some(8000));
-        assert_eq!(cached[0].endpoint_address(), Some("192.0.2.1"));
+        assert_eq!(cached[0].endpoint_address(), Some("127.0.0.1"));
         assert_eq!(cached[0].option("endpoint-is-local"), Some("true"));
     }
 
@@ -201,7 +201,7 @@ mod tests {
         context.record_dnssd_device_endpoint(
             "socketlabel._ipps._tcp.local".into(),
             DnssdDeviceEndpoint {
-                is_local: false,
+                addresses: vec!["192.0.2.1".parse().unwrap()],
                 ..resolved_endpoint()
             },
         );
@@ -227,7 +227,7 @@ mod tests {
         let cached = context.available_destinations_cached().await;
         assert_eq!(cached[0].hostname(), Some("desktop.local"));
         assert_eq!(cached[0].port(), Some(8000));
-        assert_eq!(cached[0].endpoint_address(), Some("192.0.2.1"));
+        assert_eq!(cached[0].endpoint_address(), Some("127.0.0.1"));
     }
 
     #[tokio::test]

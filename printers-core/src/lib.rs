@@ -31,7 +31,7 @@ pub use grouping::{
     PhysicalDeviceEvidence, PhysicalDeviceObservation, PhysicalIdentityAggregate,
     group_by_physical_device, group_printers, printers_match,
 };
-pub use host::{host_is_local, is_local_address};
+pub use host::{host_is_local, is_local_address, local_addresses};
 pub use jobs::{JobFilter, JobInfo, JobState};
 pub use printer::{EndpointSource, PrinterEntry, PrinterStatus};
 pub use supplies::{

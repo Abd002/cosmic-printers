@@ -56,18 +56,19 @@ pub(crate) fn parse_ip(host: &str) -> Option<IpAddr> {
 
 #[doc(hidden)]
 pub fn is_local_address(target: IpAddr) -> bool {
-    if target.is_loopback() {
-        return true;
-    }
+    target.is_loopback() || local_addresses().contains(&target)
+}
 
+#[doc(hidden)]
+pub fn local_addresses() -> Vec<IpAddr> {
     let Ok(addrs) = getifaddrs() else {
-        return false;
+        return Vec::new();
     };
 
     addrs
         .filter_map(|ifaddr| ifaddr.address)
         .filter_map(|address| sockaddr_to_ip(&address))
-        .any(|address| address == target)
+        .collect()
 }
 
 fn sockaddr_to_ip(addr: &SockaddrStorage) -> Option<IpAddr> {
