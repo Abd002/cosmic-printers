@@ -67,7 +67,7 @@ impl State {
 
     /// Creates a context with an explicit scan concurrency limit.
     pub(crate) fn with_scan_concurrency(scan_concurrency: usize) -> Self {
-        let (events, _) = broadcast::channel(32);
+        let (events, _) = broadcast::channel(256);
         Self {
             model: Arc::new(Mutex::new(Model::default())),
             discovery_running: Arc::new(AtomicBool::new(false)),
