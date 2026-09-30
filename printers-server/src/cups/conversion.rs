@@ -102,6 +102,19 @@ pub(super) fn refresh_printer_web_page(printer: &mut PrinterEntry) {
     let Some(web_page) = printer.option("printer-more-info") else {
         return;
     };
+    // cupsd over socket has no port.
+    if let Some((host, port)) = printer
+        .printer_uri()
+        .filter(|uri| is_local_scheduler_uri(uri))
+        .and_then(parse_uri_endpoint)
+        && let Ok(mut page) = url::Url::parse(web_page)
+        && page.port().is_none()
+        && page.host_str() == Some(host.as_str())
+        && page.set_port(Some(port)).is_ok()
+    {
+        printer.set_option("printer-more-info", page.as_str());
+        return;
+    }
     let Some(address) = printer.endpoint_address() else {
         return;
     };
@@ -381,6 +394,19 @@ mod tests {
         ]);
 
         assert_eq!(printer.web_page(), Some("http://print-server.local/queue"));
+    }
+
+    #[test]
+    fn cupsds_page_gains_the_port_its_queue_answers_on() {
+        let printer = with_web_page(&[
+            ("printer-uri-supported", "ipp://localhost/printers/PDF"),
+            ("printer-more-info", "http://localhost/printers/PDF"),
+        ]);
+
+        assert_eq!(
+            printer.web_page(),
+            Some("http://localhost:631/printers/PDF")
+        );
     }
 
     #[test]
