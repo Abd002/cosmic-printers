@@ -16,6 +16,7 @@ pub enum PrinterStatus {
     Ready,
     Offline,
     LowToner,
+    Checking,
 }
 
 /// A configured or discovered CUPS destination.
@@ -253,8 +254,8 @@ impl PrinterEntry {
 
         match self.option("printer-state") {
             Some("5") => PrinterStatus::Offline,
-            Some("3" | "4") => PrinterStatus::Ready,
-            _ => PrinterStatus::Ready,
+            Some(_) => PrinterStatus::Ready,
+            None => PrinterStatus::Checking,
         }
     }
 
@@ -999,6 +1000,23 @@ mod printer_entry_tests {
         )]);
 
         assert_eq!(printer.printer_uri(), Some("ipps://host:8889/ipp/print"));
+    }
+
+    #[test]
+    fn a_printer_that_has_not_answered_is_being_checked() {
+        assert_eq!(printer(&[]).status(), PrinterStatus::Checking);
+        assert_eq!(
+            printer(&[("printer-state", "3")]).status(),
+            PrinterStatus::Ready
+        );
+        assert_eq!(
+            printer(&[("printer-state", "4")]).status(),
+            PrinterStatus::Ready
+        );
+        assert_eq!(
+            printer(&[("printer-state", "5")]).status(),
+            PrinterStatus::Offline
+        );
     }
 
     #[test]

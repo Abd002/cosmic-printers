@@ -17,14 +17,16 @@ pub(in crate::cups) fn destination_to_printer_entry(mut destination: Destination
     destination
         .options
         .insert("queue-status".to_string(), queue_status);
-    destination.options.insert(
-        "printer-state".to_string(),
-        match printer_status(&destination) {
-            PrinterStatus::Offline => "5",
-            PrinterStatus::Ready | PrinterStatus::LowToner => "3",
-        }
-        .to_string(),
-    );
+    let printer_state = match printer_status(&destination) {
+        PrinterStatus::Offline => Some("5"),
+        PrinterStatus::Ready | PrinterStatus::LowToner => Some("3"),
+        PrinterStatus::Checking => None,
+    };
+    if let Some(printer_state) = printer_state {
+        destination
+            .options
+            .insert("printer-state".to_string(), printer_state.to_string());
+    }
     if !destination.options.contains_key("printer-location")
         && let Some(location) = destination.location()
     {
@@ -154,7 +156,8 @@ fn printer_status(destination: &Destination) -> PrinterStatus {
 
     match destination.state() {
         CupsPrinterState::Idle | CupsPrinterState::Processing => PrinterStatus::Ready,
-        CupsPrinterState::Stopped | CupsPrinterState::Unknown => PrinterStatus::Offline,
+        CupsPrinterState::Stopped => PrinterStatus::Offline,
+        CupsPrinterState::Unknown => PrinterStatus::Checking,
     }
 }
 
@@ -206,6 +209,20 @@ mod tests {
             printer.option("vendor-example-option"),
             Some("opaque-value")
         );
+    }
+
+    #[test]
+    fn leaves_an_unreported_state_absent() {
+        let printer = destination_to_printer_entry(destination(&[]));
+
+        assert_eq!(printer.option("printer-state"), None);
+    }
+
+    #[test]
+    fn preserves_a_stopped_state() {
+        let printer = destination_to_printer_entry(destination(&[("printer-state", "5")]));
+
+        assert_eq!(printer.option("printer-state"), Some("5"));
     }
 
     #[test]

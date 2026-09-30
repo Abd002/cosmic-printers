@@ -21,6 +21,11 @@ pub fn status_stopped() -> Color {
         .into()
 }
 
+/// A printer that has not answered yet.
+pub fn status_checking() -> Color {
+    cosmic::theme::active().cosmic().palette.neutral_6.into()
+}
+
 /// Something that has gone wrong, such as a job that failed.
 pub fn error() -> Color {
     cosmic::theme::active().cosmic().palette.bright_red.into()

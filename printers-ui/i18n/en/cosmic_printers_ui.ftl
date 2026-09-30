@@ -47,6 +47,7 @@ printer-ready = Ready
 printer-printing = Printing
 printer-stopped = Stopped
 printer-offline = Offline
+printer-checking = Checking…
 printer-low-toner = Low toner
 no-printers = No printers found
 no-printers-description = Add a printer to start managing printer settings

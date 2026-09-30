@@ -672,6 +672,7 @@ fn status_line(status: &PrinterStatus) -> Element<'static, Message> {
         PrinterStatus::Ready => fl!("printer-ready"),
         PrinterStatus::Offline => fl!("printer-offline"),
         PrinterStatus::LowToner => fl!("printer-low-toner"),
+        PrinterStatus::Checking => fl!("printer-checking"),
     };
 
     row::with_capacity(2)
@@ -686,6 +687,7 @@ fn status_color(status: &PrinterStatus) -> Color {
     match status {
         PrinterStatus::Ready => crate::style::status_ready(),
         PrinterStatus::Offline | PrinterStatus::LowToner => crate::style::status_stopped(),
+        PrinterStatus::Checking => crate::style::status_checking(),
     }
 }
 

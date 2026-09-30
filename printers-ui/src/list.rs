@@ -940,6 +940,7 @@ fn presentation(state: &State, printer: &PrinterEntry) -> Presentation {
         PrinterStatus::Ready => (fl!("printer-ready"), crate::style::status_ready()),
         PrinterStatus::Offline => (fl!("printer-stopped"), crate::style::status_stopped()),
         PrinterStatus::LowToner => (fl!("printer-low-toner"), crate::style::status_stopped()),
+        PrinterStatus::Checking => (fl!("printer-checking"), crate::style::status_checking()),
     };
     let reason = crate::state_reason::worst(printer);
 

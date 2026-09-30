@@ -111,6 +111,15 @@ fn finish_printer_enrichment(
                 error = ?error,
                 "failed to load optional printer attributes"
             );
+            // only the state, so the endpoint the last read found is kept.
+            if printer.option("printer-state").is_none() {
+                context.update_available_destination(PrinterEntry::new(
+                    printer.id(),
+                    printer.name(),
+                    printer.is_default(),
+                    HashMap::from([("printer-state".to_string(), "5".to_string())]),
+                ));
+            }
         }
     }
 }
@@ -210,5 +219,36 @@ mod tests {
         assert_eq!(cached[0].port(), Some(8000));
         assert_eq!(cached[0].endpoint_address(), None);
         assert_eq!(cached[0].endpoint_source(), Some(EndpointSource::Connected));
+    }
+
+    #[tokio::test]
+    async fn a_printer_that_never_answered_ends_as_stopped() {
+        let context = State::new();
+        context.update_available_destination(printer(&[("printer-location", "Office")]));
+
+        finish_printer_enrichment(
+            &context,
+            &mut printer(&[]),
+            Err(BackendError::Internal("offline".into())),
+        );
+
+        let cached = context.available_destinations_cached().await;
+        assert_eq!(cached[0].option("printer-state"), Some("5"));
+        assert_eq!(cached[0].location(), Some("Office"));
+    }
+
+    #[tokio::test]
+    async fn failed_enrichment_keeps_a_state_the_queue_reported() {
+        let context = State::new();
+        context.update_available_destination(printer(&[("printer-state", "3")]));
+
+        finish_printer_enrichment(
+            &context,
+            &mut printer(&[("printer-state", "3")]),
+            Err(BackendError::Internal("offline".into())),
+        );
+
+        let cached = context.available_destinations_cached().await;
+        assert_eq!(cached[0].option("printer-state"), Some("3"));
     }
 }
