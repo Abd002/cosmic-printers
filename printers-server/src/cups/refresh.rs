@@ -140,16 +140,19 @@ fn resolve_printer_endpoint_locality(printer: &mut PrinterEntry) {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .get(&key)
         .copied();
-    let is_local = cached.unwrap_or_else(|| {
+    let Some(is_local) = cached.or_else(|| {
         let is_local = (hostname, 0)
             .to_socket_addrs()
-            .is_ok_and(|mut addresses| addresses.any(|address| is_local_address(address.ip())));
+            .ok()?
+            .any(|address| is_local_address(address.ip()));
         LOCALITY
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .insert(key, is_local);
-        is_local
-    });
+        Some(is_local)
+    }) else {
+        return;
+    };
     printer.set_option("endpoint-is-local", is_local.to_string());
 }
 
