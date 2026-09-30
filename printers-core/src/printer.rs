@@ -282,6 +282,11 @@ impl PrinterEntry {
         self.option("queue-function") == Some("fax")
     }
 
+    /// Returns whether the scheduler made this queue for a discovered printer.
+    pub fn is_temporary(&self) -> bool {
+        self.option("printer-is-temporary") == Some("true")
+    }
+
     /// Returns supported media values.
     pub fn paper_sizes(&self) -> Vec<String> {
         self.option_values("media-supported")

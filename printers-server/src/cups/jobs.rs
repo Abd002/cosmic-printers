@@ -351,9 +351,10 @@ pub async fn print_test_page(printer: PrinterEntry) -> BackendResult<i32> {
 /// Converts a printer to the raw CUPS destination used by `cupsCreateDestJob`.
 /// Remote printer URIs are omitted because CUPS otherwise treats them as paths on the local scheduler.
 fn destination_for_print_job(printer: PrinterEntry) -> cups_rs::Destination {
-    let scheduler_holds_the_queue = printer
-        .printer_uri()
-        .is_some_and(crate::ipp::is_local_scheduler_uri);
+    let scheduler_holds_the_queue = !printer.is_temporary()
+        && printer
+            .printer_uri()
+            .is_some_and(crate::ipp::is_local_scheduler_uri);
     let mut destination = raw_destination(&printer);
 
     if !scheduler_holds_the_queue {
@@ -413,6 +414,19 @@ mod tests {
             resolve_job_printer_uri(&printer),
             "ipp://localhost/printers/Acme_Laser"
         );
+    }
+
+    #[test]
+    fn a_temporary_queue_is_left_for_the_scheduler_to_find() {
+        let destination = destination_for_print_job(printer(&[
+            (
+                "printer-uri-supported",
+                "ipp://localhost/printers/Acme_Laser",
+            ),
+            ("printer-is-temporary", "true"),
+        ]));
+
+        assert_eq!(destination.options.get("printer-uri-supported"), None);
     }
 
     #[test]

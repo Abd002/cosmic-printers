@@ -7,6 +7,12 @@ use crate::state::State;
 pub(super) async fn apply(context: &State, event: Event) {
     match event {
         Event::JobsChanged(printer_id) => context.emit_jobs_changed(&printer_id),
+        // other clients add and delete these all the time, and the printer stays found anyway.
+        Event::PrinterRemoved(printer_id) | Event::PrinterChanged(printer_id)
+            if context
+                .available_destination_cached(&printer_id)
+                .await
+                .is_some_and(|printer| printer.is_temporary()) => {}
         Event::PrinterRemoved(printer_id) => context.remove_available_destination(&printer_id),
         Event::PrinterChanged(printer_id) => reload(context, &printer_id).await,
     }
