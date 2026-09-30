@@ -24,6 +24,12 @@ On Debian/Ubuntu:
 sudo apt-get install -y cups avahi-daemon
 ```
 
+Disable `cups-browsed`. It creates its own queues for printers found on the network, which show up next to the printers the app already finds:
+
+```sh
+sudo systemctl disable --now cups-browsed
+```
+
 ## Build dependencies
 
 On Debian/Ubuntu:
