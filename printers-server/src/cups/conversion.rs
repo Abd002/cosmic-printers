@@ -9,6 +9,12 @@ pub(in crate::cups) fn destination_to_printer_entry(mut destination: Destination
     let printer_uri = destination.uri().cloned();
     let device_uri = destination.device_uri().cloned();
     let id = destination.full_name();
+    // those are read over IPP instead.
+    if printer_uri.as_deref().is_some_and(is_local_scheduler_uri) {
+        destination
+            .options
+            .retain(|name, _| !name.starts_with("marker-"));
+    }
     let name = destination
         .info()
         .filter(|info| !info.is_empty())
@@ -223,6 +229,28 @@ mod tests {
         let printer = destination_to_printer_entry(destination(&[("printer-state", "5")]));
 
         assert_eq!(printer.option("printer-state"), Some("5"));
+    }
+
+    #[test]
+    fn leaves_a_local_queues_supplies_to_be_read() {
+        let printer = destination_to_printer_entry(destination(&[
+            ("printer-uri-supported", "ipp://localhost/printers/Test"),
+            ("marker-levels", "70"),
+            ("marker-names", "Black\\ Toner"),
+        ]));
+
+        assert_eq!(printer.option("marker-levels"), None);
+        assert_eq!(printer.option("marker-names"), None);
+    }
+
+    #[test]
+    fn preserves_a_network_printers_supplies() {
+        let printer = destination_to_printer_entry(destination(&[
+            ("printer-uri-supported", "ipps://printer.local/ipp/print"),
+            ("marker-levels", "70"),
+        ]));
+
+        assert_eq!(printer.option("marker-levels"), Some("70"));
     }
 
     #[test]

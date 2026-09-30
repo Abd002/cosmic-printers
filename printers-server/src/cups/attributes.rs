@@ -6,6 +6,7 @@ use crate::error::{BackendError, BackendResult};
 use crate::ipp::{CupsResultExt, ensure_success, printer_attrs_request};
 use cosmic_settings_printers_core::{
     EndpointSource, PrinterEntry, SupplyLevel, is_local_address, parse_printer_supplies,
+    supply_name,
 };
 use cups_rs::{ConnectionFlags, Destination, HttpConnection, IppResponse};
 
@@ -254,7 +255,13 @@ fn attr_values(name: &str, attr: cups_rs::IppAttribute) -> Vec<String> {
         // An empty value carries nothing to show, and callers treat a present-but-empty option
         // differently from an absent one.
         .filter(|value| !value.trim().is_empty())
-        .map(|value| value.trim().to_string())
+        .map(|value| {
+            if name == "marker-names" {
+                supply_name(&value)
+            } else {
+                value.trim().to_string()
+            }
+        })
         .collect()
 }
 

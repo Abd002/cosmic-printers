@@ -93,7 +93,7 @@ pub(crate) fn join_supply_values(values: impl IntoIterator<Item = String>) -> St
 }
 
 /// Writes a supply's name so it survives being joined with the others.
-pub(crate) fn supply_name(name: &str) -> String {
+pub fn supply_name(name: &str) -> String {
     name.replace(',', " ")
         .split_whitespace()
         .collect::<Vec<_>>()

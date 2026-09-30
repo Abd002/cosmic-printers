@@ -135,7 +135,7 @@ pub(crate) fn system_service_uri(printer_uri: &str) -> Option<String> {
     Some(system.to_string())
 }
 
-pub(super) fn is_ipp_uri(uri: &str) -> bool {
+pub(crate) fn is_ipp_uri(uri: &str) -> bool {
     ParsedUri::parse(uri).is_some_and(|uri| uri.scheme.is_ipp())
 }
 

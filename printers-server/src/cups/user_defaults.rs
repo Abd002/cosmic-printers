@@ -48,7 +48,9 @@ pub(crate) fn apply_saved(printers: &mut [PrinterEntry]) {
         };
 
         for (option, value) in &saved.options {
-            printer.set_option(option, value);
+            if !option.starts_with("marker-") {
+                printer.set_option(option, value);
+            }
         }
     }
 }

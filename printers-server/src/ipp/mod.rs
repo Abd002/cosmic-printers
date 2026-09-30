@@ -11,5 +11,5 @@ pub(crate) use request::{
     CupsResultExt, add_requesting_user, ensure_success, printer_attrs_request,
 };
 pub(crate) use uri::{
-    is_local_scheduler_uri, loopback_uri, parse_uri_endpoint, system_service_uri,
+    is_ipp_uri, is_local_scheduler_uri, loopback_uri, parse_uri_endpoint, system_service_uri,
 };

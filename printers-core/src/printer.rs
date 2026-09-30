@@ -139,11 +139,23 @@ impl PrinterEntry {
     where
         I: IntoIterator<Item = (String, String)>,
     {
-        for (name, value) in options {
-            if !value.is_empty() {
-                self.set_option(name, value);
-            }
+        let options = options
+            .into_iter()
+            .filter(|(_, value)| !value.is_empty())
+            .collect::<Vec<_>>();
+        // The marker values are parallel arrays, so a new set replaces the old one whole.
+        if options.iter().any(|(name, _)| name == "marker-levels") {
+            self.clear_supplies();
         }
+
+        for (name, value) in options {
+            self.set_option(name, value);
+        }
+    }
+
+    /// Drops every marker value.
+    fn clear_supplies(&mut self) {
+        self.options.retain(|name, _| !name.starts_with("marker-"));
     }
 
     /// Merges a partial CUPS enumeration update while retaining an endpoint
@@ -402,6 +414,7 @@ impl PrinterEntry {
         let (highs, lows): (Vec<_>, Vec<_>) = bounds
             .map(|(high, low)| (format_bound(high), format_bound(low)))
             .unzip();
+        self.clear_supplies();
 
         self.set_option(
             "marker-levels",
@@ -701,6 +714,35 @@ mod printer_entry_tests {
         assert_eq!(read.len(), 2);
         assert_eq!(read[0].name, "Black high yield");
         assert_eq!(read[1].name, "Cyan");
+    }
+
+    #[test]
+    fn a_new_set_of_supplies_replaces_the_old_one_whole() {
+        let mut printer = printer(&[
+            ("marker-levels", "70,50"),
+            ("marker-names", "Black,Cyan"),
+            ("marker-colors", "#000000,#00FFFF"),
+            ("marker-types", "toner,toner"),
+        ]);
+        printer.merge_options([
+            ("marker-levels".to_string(), "40".to_string()),
+            ("marker-names".to_string(), "Black".to_string()),
+        ]);
+
+        assert_eq!(printer.option("marker-colors"), None);
+        assert_eq!(printer.option("marker-types"), None);
+        let supplies = printer.supplies();
+        assert_eq!(supplies.len(), 1);
+        assert_eq!(supplies[0].name, "Black");
+        assert_eq!(supplies[0].level_percent, Some(40));
+    }
+
+    #[test]
+    fn options_without_levels_leave_the_supplies_alone() {
+        let mut printer = printer(&[("marker-levels", "70"), ("marker-names", "Black")]);
+        printer.merge_options([("printer-location".to_string(), "Office".to_string())]);
+
+        assert_eq!(printer.option("marker-names"), Some("Black"));
     }
 
     #[test]

@@ -6,7 +6,7 @@ use super::attributes::{
     PRINTER_ATTRIBUTES, reload_attrs_from_device_uri, reload_attrs_from_printer_uri,
 };
 use crate::error::BackendResult;
-use crate::ipp::{is_local_scheduler_uri, loopback_uri, system_service_uri};
+use crate::ipp::{is_ipp_uri, is_local_scheduler_uri, loopback_uri, system_service_uri};
 use crate::printer_app::{OwnedPrinter, reconcile};
 
 /// The attribute CUPS reads to decide where to submit a job.
@@ -24,7 +24,29 @@ pub(super) fn read_printer_attrs(
     }
 
     if printer.printer_uri().is_some_and(is_local_scheduler_uri) {
-        return reload_attrs_from_printer_uri(printer, PRINTER_ATTRIBUTES);
+        reload_attrs_from_printer_uri(printer, PRINTER_ATTRIBUTES)?;
+
+        let device_attributes = PRINTER_ATTRIBUTES
+            .iter()
+            .copied()
+            .filter(|name| {
+                name.starts_with("marker-")
+                    || name.starts_with("printer-supply")
+                    || *name == "printer-more-info"
+            })
+            .collect::<Vec<_>>();
+        // keep what the queue reported when the device can't be read.
+        if printer.device_uri().is_some_and(is_ipp_uri)
+            && let Err(error) =
+                reload_attrs_from_device_uri(destination, printer, &device_attributes)
+        {
+            tracing::debug!(
+                printer_id = printer.id(),
+                error = ?error,
+                "could not read a queue's supplies from its device"
+            );
+        }
+        return Ok(());
     }
 
     if let Some(owner) = owner {

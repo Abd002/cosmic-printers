@@ -36,5 +36,5 @@ pub use jobs::{JobFilter, JobInfo, JobState};
 pub use printer::{EndpointSource, PrinterEntry, PrinterStatus};
 pub use supplies::{
     SupplyLevel, SupplyRgb, SupplyWarning, SupplyWarningDirection, parse_printer_supplies,
-    parse_supply_colors, supply_level_percent, supply_warning,
+    parse_supply_colors, supply_level_percent, supply_name, supply_warning,
 };
