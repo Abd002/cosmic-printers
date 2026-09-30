@@ -1,7 +1,7 @@
 //! Re-reading what CUPS offers, all of it or one printer.
 
 use cosmic_settings_printers_core::{PrinterEntry, is_local_address};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::ToSocketAddrs;
 use std::sync::{LazyLock, Mutex};
 
@@ -9,7 +9,7 @@ use super::conversion::destination_to_printer_entry;
 use super::destinations::{available_destinations, raw_destination};
 use super::routing::read_printer_attrs;
 use crate::error::{BackendError, BackendResult};
-use crate::printer_app::{self, OwnedPrinter};
+use crate::printer_app;
 use crate::state::State;
 
 pub fn refresh_available_destinations(context: State) {
@@ -48,60 +48,44 @@ fn run_available_destinations_refresh(
     // so each destination can be routed to whoever owns it rather than probed to find out.
     let owned = printer_app::owned_printers(&worker_context, &applications);
 
-    let callback_context = worker_context.clone();
-    let destinations = available_destinations(5000, move |flags, destination| {
-        let id = destination.full_name();
-        if flags & cups_rs::DEST_FLAGS_REMOVED != 0 {
-            callback_context.remove_available_destination(&id);
-        } else {
-            callback_context
-                .merge_available_destination(destination_to_printer_entry(destination.clone()));
-        }
-    })?;
-    // Prune only after a complete enumeration.
-    worker_context.retain_available_destinations(&destinations.keys().cloned().collect());
-    // From here on, a destination found is one that turned up.
-    worker_context.mark_destinations_enumerated();
+    let removed = Mutex::new(HashSet::new());
 
-    let mut printers = destinations
-        .into_values()
-        .map(|destination| {
-            let printer = destination_to_printer_entry(destination.clone());
-            (destination, printer)
-        })
-        .collect::<Vec<_>>();
-
-    fill_printer_attrs(&mut printers, &worker_context, &owned);
-    Ok(())
-}
-
-fn fill_printer_attrs(
-    printers: &mut [(cups_rs::Destination, PrinterEntry)],
-    context: &State,
-    owned: &[OwnedPrinter],
-) {
-    const MAX_CONCURRENT_ENRICHMENTS: usize = 4;
-
-    let printers = Mutex::new(printers.iter_mut());
     std::thread::scope(|scope| {
-        for _ in 0..MAX_CONCURRENT_ENRICHMENTS {
-            let context = context.clone();
-            let printers = &printers;
-            scope.spawn(move || {
-                loop {
-                    let next = printers
-                        .lock()
-                        .unwrap_or_else(|poisoned| poisoned.into_inner())
-                        .next();
-                    let Some((destination, printer)) = next else {
-                        break;
-                    };
-                    let result = read_printer_attrs(destination, printer, owned);
-                    finish_printer_enrichment(&context, printer, result);
+        let callback_context = worker_context.clone();
+        let (removed, owned) = (&removed, &owned);
+        let mut read = HashSet::new();
+        let destinations = available_destinations(5000, move |flags, destination| {
+            let id = destination.full_name();
+            if flags & cups_rs::DEST_FLAGS_REMOVED != 0 {
+                removed
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .insert(id.clone());
+                callback_context.remove_available_destination(&id);
+            } else {
+                let mut printer = destination_to_printer_entry(destination.clone());
+                callback_context.merge_available_destination(printer.clone());
+                if read.insert(id) {
+                    let (destination, context) = (destination.clone(), callback_context.clone());
+                    scope.spawn(move || {
+                        let result = read_printer_attrs(&destination, &mut printer, owned);
+                        if !removed
+                            .lock()
+                            .unwrap_or_else(|poisoned| poisoned.into_inner())
+                            .contains(printer.id())
+                        {
+                            finish_printer_enrichment(&context, &mut printer, result);
+                        }
+                    });
                 }
-            });
-        }
-    });
+            }
+        })?;
+        // Prune only after a complete enumeration.
+        worker_context.retain_available_destinations(&destinations.keys().cloned().collect());
+        // From here on, a destination found is one that turned up.
+        worker_context.mark_destinations_enumerated();
+        Ok(())
+    })
 }
 
 fn finish_printer_enrichment(
