@@ -891,7 +891,7 @@ fn supply_graph(supply: &SupplyLevel) -> Element<'static, Message> {
                         .wrapping(Wrapping::None)
                         .ellipsize(Ellipsize::End(EllipsizeHeightLimit::Lines(1))),
                 )
-                .push_maybe((colors.len() > 1).then(|| color_dots(&colors))),
+                .push_maybe((!colors.is_empty()).then(|| color_dots(&colors))),
         )
         .push(
             row::with_capacity(2)
