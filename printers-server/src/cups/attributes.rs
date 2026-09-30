@@ -177,6 +177,14 @@ fn connect_to_device(
             uri: device_uri.clone(),
             source,
         })?;
+    // libcups hands back the connection even when the device never answered, and a request
+    // on it then keeps reconnecting for a minute.
+    if connection.address().is_none() {
+        return Err(BackendError::DeviceUnreachable {
+            uri: device_uri,
+            source: cups_rs::Error::ConnectionFailed("no connection to the device".to_string()),
+        });
+    }
     connection.set_timeout(DEVICE_SILENCE_TIMEOUT_SECONDS);
 
     Ok((device_uri, connection))
