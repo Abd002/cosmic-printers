@@ -82,17 +82,26 @@ fn fill_printer_attrs(
 ) {
     const MAX_CONCURRENT_ENRICHMENTS: usize = 4;
 
-    for printers in printers.chunks_mut(MAX_CONCURRENT_ENRICHMENTS) {
-        std::thread::scope(|scope| {
-            for (destination, printer) in printers {
-                let context = context.clone();
-                scope.spawn(move || {
+    let printers = Mutex::new(printers.iter_mut());
+    std::thread::scope(|scope| {
+        for _ in 0..MAX_CONCURRENT_ENRICHMENTS {
+            let context = context.clone();
+            let printers = &printers;
+            scope.spawn(move || {
+                loop {
+                    let next = printers
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner())
+                        .next();
+                    let Some((destination, printer)) = next else {
+                        break;
+                    };
                     let result = read_printer_attrs(destination, printer, owned);
                     finish_printer_enrichment(&context, printer, result);
-                });
-            }
-        });
-    }
+                }
+            });
+        }
+    });
 }
 
 fn finish_printer_enrichment(
