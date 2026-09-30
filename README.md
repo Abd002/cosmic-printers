@@ -76,5 +76,5 @@ cargo check --workspace --all-targets
 Run the standalone application:
 
 ```sh
-cargo run -p cosmic-printers
+cargo run -p printers
 ```
