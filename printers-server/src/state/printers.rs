@@ -1,11 +1,12 @@
 //! The printers libcups says exist, as they were last seen.
 
-use cosmic_settings_printers_core::PrinterEntry;
+use cosmic_settings_printers_core::{PrinterEntry, host_is_local};
 use std::collections::HashSet;
 use std::sync::atomic::Ordering;
 
 use super::State;
 use super::endpoints::apply_resolved_device_endpoint;
+use crate::ipp::parse_uri_endpoint;
 use crate::notify::toast;
 
 impl State {
@@ -51,9 +52,18 @@ impl State {
             Some(known) => {
                 let mut merged = known.clone();
                 merged.set_is_default(incoming.is_default());
+                // cupsd's page is on this machine, and doesn't replace one the printer gave.
+                let is_local = |page: &str| {
+                    parse_uri_endpoint(page).is_some_and(|(host, _)| host_is_local(&host))
+                };
+                let keep_page = incoming.option("printer-more-info").is_some_and(is_local)
+                    && known
+                        .option("printer-more-info")
+                        .is_some_and(|page| !is_local(page));
                 merged.merge_options(
                     incoming
                         .options()
+                        .filter(|(name, _)| !keep_page || *name != "printer-more-info")
                         .map(|(name, value)| (name.to_string(), value.to_string())),
                 );
                 merged
@@ -335,5 +345,20 @@ mod tests {
         assert_eq!(cached[0].port(), Some(8000));
         assert_eq!(cached[0].endpoint_address(), None);
         assert_eq!(cached[0].endpoint_source(), Some(EndpointSource::Connected));
+    }
+
+    #[tokio::test]
+    async fn cupsds_page_does_not_replace_the_one_the_printer_gave() {
+        let context = State::new();
+        let mut read = destination("office", "first floor");
+        read.set_option("printer-more-info", "https://printer.local/");
+        context.update_available_destination(read);
+
+        let mut queue = destination("office", "first floor");
+        queue.set_option("printer-more-info", "http://localhost:631/printers/office");
+        context.update_available_destination(queue);
+
+        let cached = context.available_destinations_cached().await;
+        assert_eq!(cached[0].web_page(), Some("https://printer.local/"));
     }
 }

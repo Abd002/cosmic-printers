@@ -226,14 +226,9 @@ impl GroupedDestination {
 
     /// Returns the shared web endpoint for a queue-only group.
     pub fn queues_web_page(&self) -> Option<String> {
-        if self.queues.iter().all(PrinterEntry::endpoint_is_local) {
-            return Some(format!("http://localhost:{}", self.port()?));
-        }
-
         self.queues
             .iter()
             .find_map(|queue| queue.web_page().and_then(web_origin))
-            .or_else(|| Some(format!("http://{}", self.hostname()?)))
     }
 }
 
@@ -995,7 +990,7 @@ mod tests {
     }
 
     #[test]
-    fn a_device_without_a_page_of_its_own_falls_back_to_the_hostname() {
+    fn a_device_without_a_page_of_its_own_offers_none() {
         let groups = group_printers(
             vec![printer(
                 "hp-print",
@@ -1006,22 +1001,6 @@ mod tests {
             Vec::new(),
         );
 
-        assert_eq!(
-            groups[0].queues_web_page(),
-            Some("http://192.168.0.70".to_owned())
-        );
-    }
-
-    #[test]
-    fn a_local_printer_application_still_answers_on_its_own_port() {
-        let mut queue = printer_queue("SocketLabel", "10.255.255.254", 8000);
-        queue.set_option("endpoint-is-local", "true");
-
-        let groups = group_printers(vec![queue], Vec::new());
-
-        assert_eq!(
-            groups[0].queues_web_page(),
-            Some("http://localhost:8000".to_owned())
-        );
+        assert_eq!(groups[0].queues_web_page(), None);
     }
 }
