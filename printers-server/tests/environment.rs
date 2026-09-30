@@ -1,4 +1,5 @@
-//! Whether a printer on the network is found at all, and where it answers.
+//! Whether a printer on the network is found at all, where it answers, and what a
+//! queue says about its supplies.
 //! Needs the fixtures: `ci/fixtures.sh start && ci/fixtures.sh wait`.
 
 use cosmic_settings_printers_core::{PrinterEntry, local_addresses};
@@ -9,6 +10,7 @@ use std::time::{Duration, Instant};
 const PRINTER_A: &str = "CI_Test_Printer_A";
 const PRINTER_B: &str = "CI_Test_Printer_B";
 const PORT_A: u16 = 8801;
+const SUPPLY_QUEUE: &str = "CI_Supply_Queue";
 
 /// Long enough for a browse and a resolve on a slow runner.
 const TIMEOUT: Duration = Duration::from_secs(60);
@@ -94,4 +96,37 @@ async fn a_detected_printer_resolves_to_where_it_answers() {
         printer.endpoint_address(),
         local_addresses(),
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs fixture printers: ci/fixtures.sh start"]
+async fn a_queue_shows_the_supplies_its_printer_reports() {
+    let server = Server::new();
+
+    printers_until(&server, |printers| {
+        find(printers, SUPPLY_QUEUE).is_some_and(|printer| !printer.supplies().is_empty())
+    })
+    .await;
+
+    let supplies = server
+        .printer_supplies(SUPPLY_QUEUE)
+        .await
+        .expect("reading supplies failed");
+    let names = supplies
+        .iter()
+        .map(|supply| supply.name.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        names,
+        [
+            "Black Toner High Yield",
+            "Cyan Toner",
+            "Magenta Toner",
+            "Yellow Toner"
+        ],
+        "{supplies:?}"
+    );
+    for supply in &supplies {
+        assert_eq!(supply.colors.len(), 1, "{supply:?}");
+    }
 }
