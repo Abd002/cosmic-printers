@@ -65,7 +65,22 @@ sudo make install
 sudo ldconfig
 ```
 
+On Arch Linux, nothing searches `/usr/local` by default: pkg-config won't find `cups3` when you build, and the dynamic loader won't find `libcups3.so.3` when you run the app. Fix both:
+
+```sh
+echo /usr/local/lib | sudo tee /etc/ld.so.conf.d/usr-local.conf
+sudo ldconfig
+export PKG_CONFIG_PATH=/usr/local/lib/pkgconfig
+```
+
 ## Building
+
+Clone the repository and enter it:
+
+```sh
+git clone https://github.com/Abd002/cosmic-printers.git
+cd cosmic-printers
+```
 
 Check the core workspace members:
 
