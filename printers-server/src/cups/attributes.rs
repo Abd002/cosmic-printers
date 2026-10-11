@@ -179,8 +179,9 @@ fn connect_to_device(
             source,
         })?;
     // libcups hands back the connection even when the device never answered, and a request
-    // on it then keeps reconnecting for a minute.
-    if connection.address().is_none() {
+    // on it then keeps reconnecting for a minute. `port` only asks whether libcups holds an
+    // address, while `address` also has to parse it.
+    if connection.port().is_none() {
         return Err(BackendError::DeviceUnreachable {
             uri: device_uri,
             source: cups_rs::Error::ConnectionFailed("no connection to the device".to_string()),
