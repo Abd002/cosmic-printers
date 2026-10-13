@@ -26,6 +26,7 @@ choose-the-printer-application-to-set-up-your-printer = Choose the printer appli
 added-printers = Added printers
 printer-web-interface-description = Your printer has a web interface where you can configure additional options, perform maintenance, and order supplies. Click the Printer web interface button to access it.
 no-printer-applications-found = No printer applications found
+also-already-set-up-with = { $available } · Already set up with { $configured }
 no-compatible-printer-applications = No compatible printer application was found for this printer
 seen-without-a-driver = Seen by { $count } printer { $count ->
         [1] application

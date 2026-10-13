@@ -10,7 +10,7 @@ use std::time::Instant;
 
 use super::drivers::PaDriverMatch;
 use super::identity::{
-    PaConfigurationCandidate, PhysicalPrinter, drop_already_configured, group_candidates,
+    PaConfigurationCandidate, PhysicalPrinter, drop_rows_with_nothing_to_set_up, group_candidates,
 };
 
 /// Identifies one round of discovery.
@@ -286,7 +286,7 @@ impl AddPrinterDiscovery {
             .flat_map(|snapshot| snapshot.candidates.iter().cloned())
             .collect::<Vec<_>>();
         let mut printers = group_candidates(candidates);
-        drop_already_configured(&mut printers, configured_printers);
+        drop_rows_with_nothing_to_set_up(&mut printers, configured_printers);
         // A round starts with no rows of its own, so the first pass matches against the
         // previous ones instead.
         let established = if self.physical_printers.is_empty() {

@@ -40,6 +40,11 @@ impl PaConfigurationCandidate {
         self.endpoints.first()
     }
 
+    /// Returns whether this application has a driver for the device and no printer for it yet.
+    pub(crate) fn can_set_up(&self) -> bool {
+        matches!(self.driver_match, PaDriverMatch::Supported { .. })
+    }
+
     /// Returns the endpoints to try, in order, if the first one fails.
     pub(crate) fn fallback_endpoints(&self) -> &[PaDeviceEndpoint] {
         self.endpoints.get(1..).unwrap_or_default()
@@ -188,9 +193,14 @@ pub(crate) fn group_candidates(candidates: Vec<PaConfigurationCandidate>) -> Vec
     printers
 }
 
-/// Removes rows matching a queue CUPS already has. An application only marks its own
-/// candidates `AlreadyConfigured`, so queues from elsewhere would still be offered.
-pub(crate) fn drop_already_configured(
+/// Removes the rows that match a printer CUPS already has and leave nothing to set up:
+/// - a Printer Application's own printer, found again by another application. Setting it up
+///   would send every job through two applications.
+/// - a printer no application has a driver for.
+///
+/// A printer that already prints, driverless or through an application, stays while an
+/// application has a driver for it.
+pub(crate) fn drop_rows_with_nothing_to_set_up(
     printers: &mut Vec<PhysicalPrinter>,
     configured_printers: &[PrinterEntry],
 ) {
@@ -212,9 +222,26 @@ pub(crate) fn drop_already_configured(
         .collect::<Vec<_>>();
 
     printers.retain(|printer| {
-        !configured_identities
+        let matched = configured_printers
             .iter()
-            .any(|configured| configured.can_merge(&printer.identity))
+            .zip(&configured_identities)
+            .filter(|(_, configured)| configured.can_merge(&printer.identity))
+            .map(|(matched, _)| matched)
+            .collect::<Vec<_>>();
+        if matched.is_empty() {
+            return true;
+        }
+        if matched
+            .iter()
+            .any(|matched| matched.printer_application_id().is_some())
+        {
+            return false;
+        }
+
+        printer
+            .candidates
+            .iter()
+            .any(PaConfigurationCandidate::can_set_up)
     });
 }
 
@@ -528,7 +555,7 @@ mod tests {
     }
 
     #[test]
-    fn a_row_matching_a_configured_printer_by_uuid_is_dropped() {
+    fn a_configured_printer_no_application_can_drive_is_dropped() {
         let device_id = "MFG:Acme;MDL:Test Laser;SN:ABC123;";
         let mut printers = group_candidates(collapse_observations(vec![observation(
             "pa-a",
@@ -548,7 +575,7 @@ mod tests {
         let configured = vec![configured_printer(
             "urn:uuid:11111111-2222-3333-4444-555555555555",
         )];
-        drop_already_configured(&mut printers, &configured);
+        drop_rows_with_nothing_to_set_up(&mut printers, &configured);
 
         assert!(printers.is_empty());
     }
@@ -574,7 +601,84 @@ mod tests {
         let configured = vec![configured_printer(
             "urn:uuid:99999999-8888-7777-6666-555555555555",
         )];
-        drop_already_configured(&mut printers, &configured);
+        drop_rows_with_nothing_to_set_up(&mut printers, &configured);
+
+        assert_eq!(printers.len(), 1);
+    }
+
+    /// A row whose only candidate has a driver, sharing the UUID `configured_printer` takes.
+    fn row_an_application_can_set_up(device_uuid: &str) -> Vec<PhysicalPrinter> {
+        let mut printers = group_candidates(collapse_observations(vec![observation(
+            "pa-a",
+            0,
+            "socket://192.0.2.10:9100",
+            Some("MFG:Acme;MDL:Test Laser;SN:ABC123;"),
+        )]));
+        printers[0]
+            .identity
+            .absorb(&PhysicalIdentityAggregate::from_evidence(
+                &PhysicalDeviceEvidence {
+                    device_uuid: Some(device_uuid.to_string()),
+                    ..PhysicalDeviceEvidence::default()
+                },
+            ));
+        printers[0].candidates[0].driver_match = PaDriverMatch::Supported {
+            drivers: vec![super::super::drivers::PaDriver {
+                id: "acme".to_string(),
+                display_name: "Acme".to_string(),
+                supported_device_id: None,
+            }],
+        };
+        printers
+    }
+
+    #[test]
+    fn a_driverless_printer_an_application_can_drive_is_kept() {
+        let uuid = "11111111-2222-3333-4444-555555555555";
+        let mut printers = row_an_application_can_set_up(uuid);
+
+        let configured = vec![configured_printer(&format!("urn:uuid:{uuid}"))];
+        drop_rows_with_nothing_to_set_up(&mut printers, &configured);
+
+        assert_eq!(printers.len(), 1);
+    }
+
+    #[test]
+    fn an_applications_own_printer_is_dropped_even_with_a_driver_for_it() {
+        let uuid = "11111111-2222-3333-4444-555555555555";
+        let mut printers = row_an_application_can_set_up(uuid);
+
+        let mut configured = configured_printer(&format!("urn:uuid:{uuid}"));
+        configured.set_printer_application_id("pa-b");
+        drop_rows_with_nothing_to_set_up(&mut printers, &[configured]);
+
+        assert!(printers.is_empty());
+    }
+
+    #[test]
+    fn a_device_one_application_set_up_stays_for_the_others() {
+        let mut printers = row_an_application_can_set_up("11111111-2222-3333-4444-555555555555");
+
+        // The printer another application made for the device answers as that application:
+        // its own UUID, host, port and URI, none of them the device's.
+        let mut set_up_elsewhere = PrinterEntry::new(
+            "Acme_Test_Laser",
+            "Acme Test Laser",
+            false,
+            std::collections::HashMap::new(),
+        );
+        set_up_elsewhere.set_option(
+            "printer-uuid",
+            "urn:uuid:99999999-8888-7777-6666-555555555555",
+        );
+        set_up_elsewhere.set_option("dnssd-hostname", "pa-host.local");
+        set_up_elsewhere.set_option("dnssd-port", "8000");
+        set_up_elsewhere.set_option(
+            "device-uri",
+            "ipps://pa-host.local:8000/ipp/print/Acme_Test_Laser",
+        );
+        set_up_elsewhere.set_printer_application_id("pa-b");
+        drop_rows_with_nothing_to_set_up(&mut printers, &[set_up_elsewhere]);
 
         assert_eq!(printers.len(), 1);
     }
@@ -600,7 +704,7 @@ mod tests {
             "dnssd://Raw%20Printer._pdl-datastream._tcp.local/",
         );
 
-        drop_already_configured(&mut printers, &[configured_printer]);
+        drop_rows_with_nothing_to_set_up(&mut printers, &[configured_printer]);
 
         assert!(printers.is_empty());
     }

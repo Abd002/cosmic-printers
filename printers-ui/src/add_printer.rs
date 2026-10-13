@@ -359,7 +359,10 @@ impl State {
     fn printers_to_set_up(&self) -> impl Iterator<Item = &DiscoveredPhysicalPrinter> {
         self.physical_printers()
             .iter()
-            .filter(|printer| !is_configured(printer))
+            // A printer already set up stays while another application can still set it up.
+            .filter(|printer| {
+                !is_configured(printer) || !selectable_candidate_ids(printer).is_empty()
+            })
     }
 
     fn physical_printers(&self) -> &[DiscoveredPhysicalPrinter] {
@@ -1027,7 +1030,20 @@ fn candidate_summary(printer: &DiscoveredPhysicalPrinter, every_answer_in: bool)
         .collect::<Vec<_>>();
 
     if !names.is_empty() {
-        return names.join(", ");
+        let configured_with = printer
+            .candidates
+            .iter()
+            .filter(|candidate| candidate.state == PaCandidateState::AlreadyConfigured)
+            .map(|candidate| candidate.printer_application_name.as_str())
+            .collect::<Vec<_>>();
+        if configured_with.is_empty() {
+            return names.join(", ");
+        }
+        return fl!(
+            "also-already-set-up-with",
+            available = names.join(", "),
+            configured = configured_with.join(", ")
+        );
     }
     if !every_answer_in {
         return fl!("searching");
