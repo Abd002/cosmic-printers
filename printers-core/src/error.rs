@@ -33,6 +33,9 @@ pub enum Error {
     /// A discovered network/IPP device couldn't be reached directly.
     DeviceUnreachable { why: String },
 
+    /// A typed printer address could not be read.
+    InvalidPrinterAddress { why: String },
+
     /// A blocking CUPS task panicked or was cancelled.
     Internal { why: String },
 
@@ -125,6 +128,7 @@ impl std::fmt::Display for Error {
                 write!(f, "invalid print-job destination: {why}")
             }
             Error::DeviceUnreachable { why } => write!(f, "device unreachable: {why}"),
+            Error::InvalidPrinterAddress { why } => write!(f, "invalid printer address: {why}"),
             Error::Internal { why } => write!(f, "internal error: {why}"),
             Error::CupsFailed { why } => write!(f, "CUPS error: {why}"),
             Error::AddPrinterDiscoveryNotStarted => {

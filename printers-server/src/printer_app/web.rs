@@ -48,27 +48,32 @@ pub(crate) async fn manual_setup_applications(context: &State) -> ListManualSetu
     let printer_applications = context
         .printer_applications_cached()
         .await
-        .into_iter()
-        .filter_map(|application| {
-            let web_interface_uri = application_web_interface(&application)
-                .and_then(|uri| validate_web_interface(&uri))?;
-
-            Some(ManualSetupPrinterApplication {
-                printer_application_id: application.id.clone(),
-                display_name: application
-                    .make_and_model
-                    .clone()
-                    .filter(|name| !name.trim().is_empty())
-                    .unwrap_or_else(|| application.service_name.clone()),
-                web_interface_uri,
-                state: application.state,
-            })
-        })
+        .iter()
+        .filter_map(manual_setup_application)
         .collect();
 
     ListManualSetupApplicationsReply {
         printer_applications,
     }
+}
+
+/// Offers one Printer Application for manual setup, when it has a page to set up in.
+pub(crate) fn manual_setup_application(
+    application: &PrinterApplication,
+) -> Option<ManualSetupPrinterApplication> {
+    let web_interface_uri =
+        application_web_interface(application).and_then(|uri| validate_web_interface(&uri))?;
+
+    Some(ManualSetupPrinterApplication {
+        printer_application_id: application.id.clone(),
+        display_name: application
+            .make_and_model
+            .clone()
+            .filter(|name| !name.trim().is_empty())
+            .unwrap_or_else(|| application.service_name.clone()),
+        web_interface_uri,
+        state: application.state,
+    })
 }
 
 #[cfg(test)]

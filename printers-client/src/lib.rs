@@ -4,13 +4,14 @@ use zlink::Connection;
 
 pub use cosmic_settings_printers_core::{
     AddPrinterDiscoveryReply, AddPrinterDiscoveryState, ConfigureDiscoveredPrinterRequest,
-    ConfigurePrinterReply, DiscoveredPhysicalPrinter, DiscoveryGeneration, Error, GetJobsReply,
-    GetPrinterSuppliesReply, GroupedDestination, IdentityConfidenceKind, JobFilter, JobInfo,
-    JobState, ListManualSetupApplicationsReply, ListPrinterApplicationsReply, ListPrintersReply,
-    ManualSetupPrinterApplication, PaCandidateState, PrintTestPageReply, PrinterApplication,
-    PrinterApplicationCandidateSummary, PrinterApplicationCapabilities,
-    PrinterApplicationScanState, PrinterApplicationScanStatus, PrinterApplicationState,
-    PrinterConfigurationState, PrinterEntry, PrinterStatus, PrintersEvent, PrintersEventKind,
+    ConfigurePrinterAtAddressRequest, ConfigurePrinterReply, DiscoveredPhysicalPrinter,
+    DiscoveryGeneration, Error, GetJobsReply, GetPrinterSuppliesReply, GroupedDestination,
+    IdentityConfidenceKind, JobFilter, JobInfo, JobState, ListManualSetupApplicationsReply,
+    ListPrinterApplicationsReply, ListPrintersReply, ManualSetupPrinterApplication,
+    PaCandidateState, PrintTestPageReply, PrinterApplication, PrinterApplicationCandidateSummary,
+    PrinterApplicationCapabilities, PrinterApplicationScanState, PrinterApplicationScanStatus,
+    PrinterApplicationState, PrinterAtAddress, PrinterConfigurationState, PrinterEntry,
+    PrinterStatus, PrintersAtAddressReply, PrintersEvent, PrintersEventKind,
     StartAddPrinterDiscoveryReply, SupplyLevel, group_printers, printers_match,
 };
 
@@ -143,6 +144,27 @@ impl Client {
                 .await,
         )?;
         Ok(reply.printer_applications)
+    }
+
+    pub async fn printers_at_address(
+        &mut self,
+        host: String,
+        port: Option<u16>,
+    ) -> ClientResult<PrintersAtAddressReply> {
+        flatten(
+            protocol::CosmicPrintersProxy::find_printers_at_address(&mut self.conn, host, port)
+                .await,
+        )
+    }
+
+    pub async fn configure_printer_at_address(
+        &mut self,
+        request: ConfigurePrinterAtAddressRequest,
+    ) -> ClientResult<ConfigurePrinterReply> {
+        flatten(
+            protocol::CosmicPrintersProxy::configure_printer_at_address(&mut self.conn, request)
+                .await,
+        )
     }
 
     pub async fn printer_applications(&mut self) -> ClientResult<Vec<PrinterApplication>> {

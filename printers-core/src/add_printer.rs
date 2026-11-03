@@ -197,3 +197,30 @@ pub struct ManualSetupPrinterApplication {
 pub struct ListManualSetupApplicationsReply {
     pub printer_applications: Vec<ManualSetupPrinterApplication>,
 }
+
+/// One driverless printer that answered at a typed address.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize, zlink::introspect::Type)]
+pub struct PrinterAtAddress {
+    /// The printer's IPP URI, which also identifies the row.
+    pub id: String,
+    pub display_name: String,
+    pub make_and_model: Option<String>,
+}
+
+/// What answered at a typed address.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize, zlink::introspect::Type)]
+pub struct PrintersAtAddressReply {
+    /// Driverless printers that answered. Empty when none did.
+    pub printers: Vec<PrinterAtAddress>,
+    /// Printer Applications that can create the printer at the address themselves.
+    pub printer_applications: Vec<ManualSetupPrinterApplication>,
+}
+
+/// Asks the server to create a printer at a typed address through one Printer Application.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize, zlink::introspect::Type)]
+pub struct ConfigurePrinterAtAddressRequest {
+    /// The address as typed. It is asked again, so the device URI comes from the server.
+    pub host: String,
+    pub port: Option<u16>,
+    pub printer_application_id: String,
+}

@@ -1,4 +1,5 @@
 use std::rc::Rc;
+use std::sync::LazyLock;
 
 use crate::backend::{Backend, BackendError};
 use cosmic::app::Task;
@@ -13,15 +14,21 @@ use cosmic::widget::{
 use cosmic::{Apply, Element, cosmic_theme};
 use cosmic_settings_printers_core::{
     AddPrinterDiscoveryReply, AddPrinterDiscoveryState, ConfigureDiscoveredPrinterRequest,
-    ConfigurePrinterReply, DiscoveredPhysicalPrinter, DiscoveryGeneration, Error as PrinterError,
-    ManualSetupPrinterApplication, PaCandidateState, PrinterApplicationCandidateSummary,
-    PrinterConfigurationState, PrinterEntry,
+    ConfigurePrinterAtAddressRequest, ConfigurePrinterReply, DiscoveredPhysicalPrinter,
+    DiscoveryGeneration, Error as PrinterError, ManualSetupPrinterApplication, PaCandidateState,
+    PrinterApplicationCandidateSummary, PrinterAtAddress, PrinterConfigurationState, PrinterEntry,
+    PrintersAtAddressReply,
 };
 
 const DIALOG_SIZE: Size = Size::new(680.0, 570.0);
 const SEARCH_MAX_WIDTH: f32 = 314.0;
 const PRINTER_ROW_HEIGHT: f32 = 54.0;
 const APPLICATION_ROW_HEIGHT: f32 = 48.0;
+const ADDRESS_PLACEHOLDER: &str = "000.000.00.00";
+
+/// The address field, focused when the address view opens.
+static ADDRESS_INPUT: LazyLock<widget::Id> =
+    LazyLock::new(|| widget::Id::new("add-printer-address"));
 
 /// Active Add Printer dialog view.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -35,6 +42,10 @@ pub enum DialogView {
     },
     /// Displays manual setup options.
     ManualSetup,
+    /// Types an IP address or hostname.
+    Address,
+    /// Selects a printer found at the typed address.
+    AddressPrinters,
     /// Displays configuration progress.
     Adding {
         /// Printer being configured.
@@ -60,6 +71,25 @@ pub struct State {
     manual_setup_applications: Vec<ManualSetupPrinterApplication>,
     pending_operation: Option<String>,
     added: Vec<AddedPrinter>,
+    address: AddressSetup,
+}
+
+/// What was typed and found when adding a printer by its address.
+#[derive(Clone, Debug, Default)]
+struct AddressSetup {
+    host: String,
+    port: String,
+    looking_up: bool,
+    // Kept apart from the dialog error, which a discovery refresh clears.
+    error: Option<String>,
+    printers: Vec<PrinterAtAddress>,
+    /// Printer Applications that can create the printer at the address, once a lookup found no
+    /// driverless printer.
+    printer_applications: Option<Vec<ManualSetupPrinterApplication>>,
+    /// The Printer Application creating the printer, while it does.
+    setting_up: Option<String>,
+    selected: Option<String>,
+    sharing: usize,
 }
 
 #[derive(Clone, Debug)]
@@ -89,6 +119,7 @@ impl State {
             manual_setup_applications: Vec::new(),
             pending_operation: None,
             added: Vec::new(),
+            address: AddressSetup::default(),
         }
     }
 
@@ -142,6 +173,31 @@ impl State {
             Message::OpenPrinterWebPage(web_page) => Self::open_web_page(web_page),
             Message::PrinterSetupFinished(result) => self.finish_printer_setup(result),
             Message::WebPageOpened(result) => self.finish_web_page_open(result),
+            Message::OpenAddressSetup => self.open_address_setup(),
+            Message::AddressHost(host) => {
+                self.address.host = host;
+                Action::None
+            }
+            Message::AddressPort(port) => {
+                self.address.port = port;
+                Action::None
+            }
+            Message::FindPrintersAtAddress => self.find_printers_at_address(),
+            Message::PrintersAtAddressFound(result) => {
+                self.apply_printers_at_address(result);
+                Action::None
+            }
+            Message::SelectPrinterAtAddress(printer_id) => {
+                self.address.selected = Some(printer_id);
+                Action::None
+            }
+            Message::Share(sharing) => {
+                self.address.sharing = sharing;
+                Action::None
+            }
+            Message::SetUpWithApplication(application_id) => {
+                self.set_up_with_application(application_id)
+            }
         }
     }
 
@@ -166,7 +222,93 @@ impl State {
         }
 
         self.error = None;
+        self.address.printer_applications = None;
         self.view = DialogView::ManualSetup;
+    }
+
+    fn open_address_setup<M>(&mut self) -> Action<M>
+    where
+        M: 'static + Send + From<Message>,
+    {
+        if self.is_adding() {
+            return Action::None;
+        }
+
+        self.error = None;
+        self.address = AddressSetup::default();
+        self.view = DialogView::Address;
+
+        Action::Task(widget::text_input::focus(ADDRESS_INPUT.clone()))
+    }
+
+    fn find_printers_at_address<M>(&mut self) -> Action<M>
+    where
+        M: 'static + Send + From<Message>,
+    {
+        if !self.can_find_printers_at_address() {
+            return Action::None;
+        }
+
+        let Some(port) = self.typed_port() else {
+            self.address.error = Some(fl!("invalid-port-number"));
+            return Action::None;
+        };
+
+        self.address.error = None;
+        self.address.looking_up = true;
+
+        Action::Task(printers_at_address_task(
+            self.backend.clone(),
+            self.address.host.trim().to_string(),
+            port,
+        ))
+    }
+
+    fn set_up_with_application<M>(&mut self, application_id: String) -> Action<M>
+    where
+        M: 'static + Send + From<Message>,
+    {
+        if self.is_adding() {
+            return Action::None;
+        }
+        // The port was read when the address was looked up.
+        let Some(port) = self.typed_port() else {
+            return Action::None;
+        };
+
+        self.error = None;
+        self.address.setting_up = Some(application_id.clone());
+
+        Action::Task(address_setup_task(
+            self.backend.clone(),
+            ConfigurePrinterAtAddressRequest {
+                host: self.address.host.trim().to_string(),
+                port,
+                printer_application_id: application_id,
+            },
+        ))
+    }
+
+    fn apply_printers_at_address(&mut self, result: Result<PrintersAtAddressReply, String>) {
+        self.address.looking_up = false;
+        // The dialog moved on while the address was being asked.
+        if self.view != DialogView::Address {
+            return;
+        }
+
+        match result {
+            Ok(reply) if reply.printers.is_empty() => {
+                self.error = None;
+                self.address.printer_applications = Some(reply.printer_applications);
+                self.view = DialogView::ManualSetup;
+            }
+            Ok(reply) => {
+                self.address.selected = None;
+                self.address.printers = reply.printers;
+                self.view = DialogView::AddressPrinters;
+            }
+            Err(why) => self.address.error = Some(why),
+        }
     }
 
     fn select_discovered_printer<M>(&mut self, printer_id: String) -> Action<M>
@@ -282,9 +424,9 @@ impl State {
                 self.continue_in_printer_application(web_interface_uri)
             }
             Err(SetupError::Failed(why)) => {
-                tracing::error!(why, "failed to configure discovered printer");
+                tracing::error!(why, "failed to configure printer");
                 self.error = Some(why);
-                self.view = DialogView::Discovery;
+                self.view = self.view_after_failed_setup();
                 Action::None
             }
         }
@@ -303,6 +445,7 @@ impl State {
             | PrinterConfigurationState::Reconciled
             | PrinterConfigurationState::AlreadyConfigured => {
                 self.error = None;
+                self.address.setting_up = None;
                 self.added.push(AddedPrinter {
                     name: reply.configured_printer_name,
                     destination_id: reply.destination_id,
@@ -315,7 +458,7 @@ impl State {
             }
             PrinterConfigurationState::UnknownOutcome | PrinterConfigurationState::Failed => {
                 self.error = Some(fl!("failed-to-add-printer"));
-                self.view = DialogView::Discovery;
+                self.view = self.view_after_failed_setup();
                 Action::None
             }
         }
@@ -325,6 +468,7 @@ impl State {
     where
         M: 'static + Send + From<Message>,
     {
+        self.address.setting_up = None;
         self.view = DialogView::ManualSetup;
 
         match web_interface_uri {
@@ -405,7 +549,28 @@ impl State {
     }
 
     fn is_adding(&self) -> bool {
-        matches!(self.view, DialogView::Adding { .. })
+        matches!(self.view, DialogView::Adding { .. }) || self.address.setting_up.is_some()
+    }
+
+    // A printer set up manually stays on the applications that can reach its address.
+    fn view_after_failed_setup(&mut self) -> DialogView {
+        match self.address.setting_up.take() {
+            Some(_) => DialogView::ManualSetup,
+            None => DialogView::Discovery,
+        }
+    }
+
+    /// The typed port, `None` inside when left empty. `None` when it is not a port number.
+    fn typed_port(&self) -> Option<Option<u16>> {
+        // An empty port lets the server try the IPP port and then the raw ones.
+        match self.address.port.trim() {
+            "" => Some(None),
+            port => port.parse::<u16>().ok().filter(|port| *port != 0).map(Some),
+        }
+    }
+
+    fn can_find_printers_at_address(&self) -> bool {
+        !self.address.looking_up && !self.address.host.trim().is_empty()
     }
 
     fn open_web_page<M>(web_page: String) -> Action<M>
@@ -445,6 +610,22 @@ pub enum Message {
     PrinterSetupFinished(Result<ConfigurePrinterReply, SetupError>),
     /// Reports whether a web interface opened.
     WebPageOpened(Result<(), (String, String)>),
+    /// Opens setup by IP address or hostname.
+    OpenAddressSetup,
+    /// Updates the typed IP address or hostname.
+    AddressHost(String),
+    /// Updates the typed port number.
+    AddressPort(String),
+    /// Asks what answers at the typed address.
+    FindPrintersAtAddress,
+    /// Reports what answered at the typed address.
+    PrintersAtAddressFound(Result<PrintersAtAddressReply, String>),
+    /// Selects a printer found at the typed address.
+    SelectPrinterAtAddress(String),
+    /// Selects who the printer is shared with.
+    Share(usize),
+    /// Creates the printer at the typed address through a Printer Application.
+    SetUpWithApplication(String),
 }
 
 /// Errors from configuring a discovered printer.
@@ -486,6 +667,17 @@ where
     cosmic::task::future(async move { M::from(Message::Loaded(load.await)) })
 }
 
+fn address_setup_task<M>(backend: Backend, request: ConfigurePrinterAtAddressRequest) -> Task<M>
+where
+    M: 'static + Send + From<Message>,
+{
+    cosmic::task::future(async move {
+        M::from(Message::PrinterSetupFinished(
+            configure_at_address(backend, request).await,
+        ))
+    })
+}
+
 fn setup_task<M>(backend: Backend, request: ConfigureDiscoveredPrinterRequest) -> Task<M>
 where
     M: 'static + Send + From<Message>,
@@ -493,6 +685,17 @@ where
     cosmic::task::future(async move {
         M::from(Message::PrinterSetupFinished(
             configure(backend, request).await,
+        ))
+    })
+}
+
+fn printers_at_address_task<M>(backend: Backend, host: String, port: Option<u16>) -> Task<M>
+where
+    M: 'static + Send + From<Message>,
+{
+    cosmic::task::future(async move {
+        M::from(Message::PrintersAtAddressFound(
+            printers_at_address(backend, host, port).await,
         ))
     })
 }
@@ -536,6 +739,16 @@ async fn configure(
         .map_err(setup_error)
 }
 
+async fn configure_at_address(
+    backend: Backend,
+    request: ConfigurePrinterAtAddressRequest,
+) -> Result<ConfigurePrinterReply, SetupError> {
+    backend
+        .configure_printer_at_address(request)
+        .await
+        .map_err(setup_error)
+}
+
 async fn printer_configuration(
     backend: Backend,
     operation_id: String,
@@ -544,6 +757,34 @@ async fn printer_configuration(
         .printer_configuration(&operation_id)
         .await
         .map_err(setup_error)
+}
+
+async fn printers_at_address(
+    backend: Backend,
+    host: String,
+    port: Option<u16>,
+) -> Result<PrintersAtAddressReply, String> {
+    backend
+        .printers_at_address(host, port)
+        .await
+        .map_err(address_error)
+}
+
+fn address_error(error: BackendError) -> String {
+    match error {
+        BackendError::Service(PrinterError::InvalidPrinterAddress { why }) => {
+            tracing::debug!(why, "typed printer address could not be read");
+            fl!("invalid-printer-address")
+        }
+        BackendError::Service(PrinterError::DeviceUnreachable { why }) => {
+            tracing::debug!(why, "nothing answered at the typed printer address");
+            fl!("no-printer-answers-at-this-address")
+        }
+        error => {
+            tracing::error!(%error, "failed to find printers at address");
+            error.to_string()
+        }
+    }
 }
 
 fn setup_error(error: BackendError) -> SetupError {
@@ -568,12 +809,17 @@ pub fn dialog(state: &State) -> Element<'_, Message> {
     let body = match &state.view {
         DialogView::Discovery | DialogView::Adding { .. } => discovery_view(state),
         DialogView::ManualSetup => manual_setup_view(state),
+        DialogView::Address => address_view(state),
+        DialogView::AddressPrinters => address_printers_view(state),
         DialogView::SelectApplication { printer_id } => select_application_view(state, printer_id),
         DialogView::Added => added_printers_view(state),
     };
 
     let body_padding = match state.view {
-        DialogView::ManualSetup | DialogView::SelectApplication { .. } => Padding::ZERO
+        DialogView::ManualSetup
+        | DialogView::Address
+        | DialogView::AddressPrinters
+        | DialogView::SelectApplication { .. } => Padding::ZERO
             .top(spacing.space_l)
             .bottom(spacing.space_xxl)
             .horizontal(spacing.space_xxl),
@@ -612,23 +858,35 @@ fn dialog_footer(state: &State) -> Element<'static, Message> {
         space_xxs,
         ..
     } = cosmic::theme::spacing();
-    let label = match state.view {
-        DialogView::Added | DialogView::ManualSetup => fl!("close"),
-        _ => fl!("cancel"),
+    let buttons = row::with_capacity(3)
+        .align_y(Alignment::Center)
+        .spacing(space_xxs)
+        .push(horizontal_space());
+    let buttons = match state.view {
+        DialogView::Address => buttons
+            .push(widget::button::standard(fl!("close")).on_press(Message::Close))
+            .push(
+                widget::button::suggested(fl!("next")).on_press_maybe(
+                    state
+                        .can_find_printers_at_address()
+                        .then_some(Message::FindPrintersAtAddress),
+                ),
+            ),
+        // Nothing can hold the printer until CUPS 3 is out, so Add stays disabled.
+        DialogView::AddressPrinters => buttons
+            .push(widget::button::standard(fl!("cancel")).on_press(Message::Close))
+            .push(widget::button::suggested(fl!("add"))),
+        DialogView::Added | DialogView::ManualSetup => {
+            buttons.push(widget::button::standard(fl!("close")).on_press(Message::Close))
+        }
+        _ => buttons.push(widget::button::standard(fl!("cancel")).on_press(Message::Close)),
     };
 
     container(
-        widget::layer_container(
-            row::with_capacity(2)
-                .align_y(Alignment::Center)
-                .spacing(space_xxs)
-                .push(horizontal_space())
-                .push(widget::button::standard(label).on_press(Message::Close))
-                .width(Length::Fill),
-        )
-        .layer(cosmic_theme::Layer::Primary)
-        .padding([space_xxs, space_xs])
-        .width(Length::Fill),
+        widget::layer_container(buttons.width(Length::Fill))
+            .layer(cosmic_theme::Layer::Primary)
+            .padding([space_xxs, space_xs])
+            .width(Length::Fill),
     )
     .padding(space_xxs)
     .width(Length::Fill)
@@ -650,15 +908,14 @@ fn discovery_view(state: &State) -> Element<'_, Message> {
     .width(Length::Fill)
     .center_x(Length::Fill);
 
-    let mut settings = column::with_capacity(3)
+    // Typing an address needs no discovery, so it is offered before every scan has answered.
+    column::with_capacity(3)
         .spacing(spacing.space_s)
         .push(search)
-        .push(printers_section(state));
-    if !state.is_searching() {
-        settings = settings.push(manual_setup_prompt());
-    }
-
-    settings.width(Length::Fill).into()
+        .push(printers_section(state))
+        .push(manual_setup_prompt())
+        .width(Length::Fill)
+        .into()
 }
 
 fn manual_setup_view(state: &State) -> Element<'_, Message> {
@@ -666,14 +923,34 @@ fn manual_setup_view(state: &State) -> Element<'_, Message> {
     if let Some(error) = &state.error {
         rows.push(plain_row(error.clone()));
     }
-    rows.extend(
-        state
-            .manual_setup_applications
-            .iter()
-            .map(manual_application_row),
-    );
-    if rows.is_empty() {
-        rows.push(plain_row(fl!("no-printer-applications-found")));
+    // A lookup that found no driverless printer narrows manual setup to what can create it.
+    match &state.address.printer_applications {
+        Some(applications) => {
+            rows.extend(
+                applications
+                    .iter()
+                    .map(|application| address_application_row(state, application)),
+            );
+            if rows.is_empty() {
+                rows.push(plain_row(fl!(
+                    "no-printer-application-can-set-up-this-printer"
+                )));
+            }
+        }
+        None => {
+            rows.extend(state.manual_setup_applications.iter().map(|application| {
+                manual_application_row(
+                    application,
+                    fl!("set-up-printer"),
+                    Some(Message::OpenPrinterWebPage(
+                        application.web_interface_uri.clone(),
+                    )),
+                )
+            }));
+            if rows.is_empty() {
+                rows.push(plain_row(fl!("no-printer-applications-found")));
+            }
+        }
     }
     let spacing = cosmic::theme::active().cosmic().spacing;
 
@@ -683,6 +960,54 @@ fn manual_setup_view(state: &State) -> Element<'_, Message> {
             "use-a-printer-application-to-manually-set-up-a-printer"
         )))
         .push(application_list(rows))
+        .width(Length::Fill)
+        .into()
+}
+
+fn address_view(state: &State) -> Element<'_, Message> {
+    let spacing = cosmic::theme::active().cosmic().spacing;
+    let host = widget::text_input(ADDRESS_PLACEHOLDER, &state.address.host)
+        .id(ADDRESS_INPUT.clone())
+        .label(fl!("ip-address-or-hostname"))
+        .on_input(Message::AddressHost)
+        .on_submit(|_| Message::FindPrintersAtAddress)
+        .width(Length::Fill);
+    let port = widget::text_input("", &state.address.port)
+        .label(fl!("port-number"))
+        .on_input(Message::AddressPort)
+        .on_submit(|_| Message::FindPrintersAtAddress)
+        .width(Length::Fill);
+
+    let mut fields = column::with_capacity(4)
+        .spacing(spacing.space_s)
+        .push(section_heading(fl!(
+            "add-a-printer-by-typing-ip-address-or-a-hostname"
+        )))
+        .push(host)
+        .push(port);
+    if state.address.looking_up {
+        fields = fields.push(regular_heading(fl!("searching")));
+    } else if let Some(error) = &state.address.error {
+        fields = fields.push(regular_heading(error.clone()));
+    }
+
+    fields.width(Length::Fill).into()
+}
+
+fn address_printers_view(state: &State) -> Element<'_, Message> {
+    let rows = state
+        .address
+        .printers
+        .iter()
+        .map(|printer| printer_at_address_row(state, printer))
+        .collect();
+    let spacing = cosmic::theme::active().cosmic().spacing;
+
+    column::with_capacity(3)
+        .spacing(spacing.space_xxs)
+        .push(section_heading(fl!("select-printer-to-add")))
+        .push(list_view(rows))
+        .push(list_view(vec![share_row(state.address.sharing)]))
         .width(Length::Fill)
         .into()
 }
@@ -774,21 +1099,29 @@ fn printers_section(state: &State) -> Element<'_, Message> {
 
 fn manual_setup_prompt() -> Element<'static, Message> {
     let spacing = cosmic::theme::spacing();
-    let chevron = chevron();
 
     column::with_capacity(2)
         .spacing(spacing.space_xxs)
         .push(regular_heading(fl!("your-printer-not-discovered")))
-        .push(row_button(
-            row::with_capacity(2)
-                .align_y(Alignment::Center)
-                .spacing(spacing.space_s)
-                .push(row_label(fl!("manual-setup")))
-                .push(chevron),
-            APPLICATION_ROW_HEIGHT,
-            Some(Message::OpenManualSetup),
-        ))
+        .push(list_view(vec![
+            setup_option_row(fl!("use-ip-address-or-hostname"), Message::OpenAddressSetup),
+            setup_option_row(fl!("manual-setup"), Message::OpenManualSetup),
+        ]))
         .into()
+}
+
+fn setup_option_row(label: String, on_press: Message) -> Element<'static, Message> {
+    let spacing = cosmic::theme::spacing();
+
+    row_button(
+        row::with_capacity(2)
+            .align_y(Alignment::Center)
+            .spacing(spacing.space_s)
+            .push(row_label(label))
+            .push(chevron()),
+        APPLICATION_ROW_HEIGHT,
+        Some(on_press),
+    )
 }
 
 fn discovered_printer_row(
@@ -812,6 +1145,41 @@ fn discovered_printer_row(
         PRINTER_ROW_HEIGHT,
         (!state.is_adding()).then_some(Message::SelectDiscoveredPrinter(printer_id)),
     )
+}
+
+fn printer_at_address_row(state: &State, printer: &PrinterAtAddress) -> Element<'static, Message> {
+    let selected = state.address.selected.as_deref() == Some(printer.id.as_str());
+    // The model only says something new when the name is not already the model.
+    let caption = printer
+        .make_and_model
+        .clone()
+        .filter(|model| model != &printer.display_name)
+        .unwrap_or_else(|| printer.id.clone());
+
+    row_button(
+        two_line_printer_content(printer.display_name.clone(), caption, selected, None),
+        PRINTER_ROW_HEIGHT,
+        Some(Message::SelectPrinterAtAddress(printer.id.clone())),
+    )
+}
+
+// Sharing is chosen here only; nothing is sent until CUPS 3 can hold the printer.
+fn share_row(sharing: usize) -> Element<'static, Message> {
+    let spacing = cosmic::theme::spacing();
+
+    row::with_capacity(2)
+        .align_y(Alignment::Center)
+        .spacing(spacing.space_s)
+        .push(row_label(fl!("share-this-printer")))
+        .push(widget::dropdown::dropdown(
+            vec![fl!("current-user-only"), fl!("all-users")],
+            Some(sharing),
+            Message::Share,
+        ))
+        .padding([spacing.space_xxs, spacing.space_m])
+        .width(Length::Fill)
+        .height(Length::Fixed(APPLICATION_ROW_HEIGHT))
+        .into()
 }
 
 fn added_printer_row(state: &State, added: &AddedPrinter) -> Element<'static, Message> {
@@ -886,8 +1254,29 @@ fn two_line_printer_content(
     content.width(Length::Fill).into()
 }
 
+// Every application listed for an address creates the printer itself.
+fn address_application_row(
+    state: &State,
+    application: &ManualSetupPrinterApplication,
+) -> Element<'static, Message> {
+    let application_id = &application.printer_application_id;
+    let connecting = state.address.setting_up.as_ref() == Some(application_id);
+
+    manual_application_row(
+        application,
+        if connecting {
+            fl!("connecting")
+        } else {
+            fl!("set-up-printer")
+        },
+        (!state.is_adding()).then_some(Message::SetUpWithApplication(application_id.clone())),
+    )
+}
+
 fn manual_application_row(
     application: &ManualSetupPrinterApplication,
+    label: String,
+    on_press: Option<Message>,
 ) -> Element<'static, Message> {
     let spacing = cosmic::theme::spacing();
 
@@ -895,11 +1284,7 @@ fn manual_application_row(
         .align_y(Alignment::Center)
         .spacing(spacing.space_s)
         .push(row_label(application_display_name(application)))
-        .push(
-            widget::button::text(fl!("set-up-printer")).on_press(Message::OpenPrinterWebPage(
-                application.web_interface_uri.clone(),
-            )),
-        )
+        .push(widget::button::text(label).on_press_maybe(on_press))
         .padding([spacing.space_xxs, spacing.space_m])
         .width(Length::Fill)
         .height(Length::Fixed(APPLICATION_ROW_HEIGHT))

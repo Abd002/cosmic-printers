@@ -1,10 +1,11 @@
 use cosmic_settings_printers_core::{
-    AddPrinterDiscoveryReply, ConfigureDiscoveredPrinterRequest, ConfigurePrinterReply, Error,
-    ListManualSetupApplicationsReply, StartAddPrinterDiscoveryReply,
+    AddPrinterDiscoveryReply, ConfigureDiscoveredPrinterRequest, ConfigurePrinterAtAddressRequest,
+    ConfigurePrinterReply, Error, ListManualSetupApplicationsReply, PrintersAtAddressReply,
+    StartAddPrinterDiscoveryReply,
 };
 
 use super::Server;
-use crate::printer_app;
+use crate::{manual, printer_app};
 
 impl Server {
     /// Starts asynchronous discovery and returns the generation required by configuration requests.
@@ -40,5 +41,22 @@ impl Server {
         &self,
     ) -> Result<ListManualSetupApplicationsReply, Error> {
         Ok(printer_app::manual_setup_applications(&self.context).await)
+    }
+
+    /// Lists what answers at a typed address, for adding a printer manually.
+    pub async fn find_printers_at_address(
+        &self,
+        host: String,
+        port: Option<u16>,
+    ) -> Result<PrintersAtAddressReply, Error> {
+        manual::printers_at_address(&self.context, host, port).await
+    }
+
+    /// Creates a printer at a typed address through the Printer Application chosen.
+    pub async fn configure_printer_at_address(
+        &self,
+        request: ConfigurePrinterAtAddressRequest,
+    ) -> Result<ConfigurePrinterReply, Error> {
+        manual::configure_printer_at_address(&self.context, request).await
     }
 }

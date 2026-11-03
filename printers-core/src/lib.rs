@@ -11,10 +11,11 @@ mod supplies;
 
 pub use add_printer::{
     AddPrinterDiscoveryReply, AddPrinterDiscoveryState, ConfigureDiscoveredPrinterRequest,
-    ConfigurePrinterReply, DiscoveredPhysicalPrinter, DiscoveryGeneration, IdentityConfidenceKind,
-    ListManualSetupApplicationsReply, ManualSetupPrinterApplication, PaCandidateState,
-    PrinterApplicationCandidateSummary, PrinterApplicationScanState, PrinterApplicationScanStatus,
-    PrinterConfigurationState, StartAddPrinterDiscoveryReply,
+    ConfigurePrinterAtAddressRequest, ConfigurePrinterReply, DiscoveredPhysicalPrinter,
+    DiscoveryGeneration, IdentityConfidenceKind, ListManualSetupApplicationsReply,
+    ManualSetupPrinterApplication, PaCandidateState, PrinterApplicationCandidateSummary,
+    PrinterApplicationScanState, PrinterApplicationScanStatus, PrinterAtAddress,
+    PrinterConfigurationState, PrintersAtAddressReply, StartAddPrinterDiscoveryReply,
 };
 pub use application::{
     PrinterApplication, PrinterApplicationCapabilities, PrinterApplicationId,

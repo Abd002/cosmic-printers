@@ -2,9 +2,10 @@
 
 use cosmic_settings_printers_client::{self as client, ClientError};
 use cosmic_settings_printers_core::{
-    AddPrinterDiscoveryReply, ConfigureDiscoveredPrinterRequest, ConfigurePrinterReply, Error,
-    JobFilter, JobInfo, ManualSetupPrinterApplication, PrinterApplication, PrinterEntry,
-    PrintersEvent, StartAddPrinterDiscoveryReply, SupplyLevel,
+    AddPrinterDiscoveryReply, ConfigureDiscoveredPrinterRequest, ConfigurePrinterAtAddressRequest,
+    ConfigurePrinterReply, Error, JobFilter, JobInfo, ManualSetupPrinterApplication,
+    PrinterApplication, PrinterEntry, PrintersAtAddressReply, PrintersEvent,
+    StartAddPrinterDiscoveryReply, SupplyLevel,
 };
 
 /// Errors returned by backend requests.
@@ -229,6 +230,19 @@ impl Backend {
         }
     }
 
+    /// Lists what answers at a typed address.
+    pub async fn printers_at_address(
+        &self,
+        host: String,
+        port: Option<u16>,
+    ) -> Answer<PrintersAtAddressReply> {
+        match self {
+            Self::Daemon => Ok(self.client().await?.printers_at_address(host, port).await?),
+            #[cfg(feature = "embedded")]
+            Self::Embedded(server) => Ok(server.find_printers_at_address(host, port).await?),
+        }
+    }
+
     /// Configures a discovered printer.
     pub async fn configure_discovered_printer(
         &self,
@@ -242,6 +256,22 @@ impl Backend {
                 .await?),
             #[cfg(feature = "embedded")]
             Self::Embedded(server) => Ok(server.configure_discovered_printer(request).await?),
+        }
+    }
+
+    /// Creates a printer at a typed address through one Printer Application.
+    pub async fn configure_printer_at_address(
+        &self,
+        request: ConfigurePrinterAtAddressRequest,
+    ) -> Answer<ConfigurePrinterReply> {
+        match self {
+            Self::Daemon => Ok(self
+                .client()
+                .await?
+                .configure_printer_at_address(request)
+                .await?),
+            #[cfg(feature = "embedded")]
+            Self::Embedded(server) => Ok(server.configure_printer_at_address(request).await?),
         }
     }
 

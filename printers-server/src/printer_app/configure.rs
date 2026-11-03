@@ -6,7 +6,6 @@ use cosmic_settings_printers_core::{
 use cups_rs::{IppOperation, IppTag, IppValueTag};
 
 use super::client::{OperationCost, PaError, PaRequest, bounded, check_status};
-use super::identity::PaConfigurationCandidate;
 use super::printers::{self, ConfiguredPrinter};
 use super::reconcile::{PendingConfigurationState, PendingPaConfiguration};
 use super::{drivers, errors, identity, web};
@@ -420,7 +419,87 @@ pub(crate) async fn configure_discovered_printer(
         why: error.to_string(),
     })?;
 
-    finish_configuration(context, &application, &candidate, &request, outcome)
+    let receipt = Receipt {
+        round: request.discovery_generation.to_string(),
+        physical_printer_id: request.physical_printer_id.clone(),
+        candidate_id: candidate.id.clone(),
+    };
+
+    finish_configuration(context, &application, &receipt, outcome)
+}
+
+/// Creates a printer at an address the user typed, rather than one the application found itself.
+/// The device URI comes from asking that address. The driver is always `auto`: the application
+/// chooses from the device URI and ID.
+pub(crate) async fn configure_printer_manually(
+    context: &State,
+    application: &PrinterApplication,
+    printer: ManualPrinter,
+) -> Result<ConfigurePrinterReply, Error> {
+    // Serialized per application and device, as for a discovered printer.
+    let configuration_lock = context.configuration_lock(&application.id, &printer.device_uri);
+    let _configuration_guard = configuration_lock.lock().await;
+
+    let receipt = Receipt {
+        round: "manual".to_string(),
+        physical_printer_id: printer.address.clone(),
+        candidate_id: printer.device_uri.clone(),
+    };
+    let system_uri = application.administration_uri();
+    let outcome = tokio::task::spawn_blocking(move || {
+        create_printer_manually_blocking(&system_uri, &printer)
+    })
+    .await
+    .map_err(|error| Error::Internal {
+        why: error.to_string(),
+    })?;
+
+    finish_configuration(context, application, &receipt, outcome)
+}
+
+/// A printer to create from a typed address.
+#[derive(Clone, Debug)]
+pub(crate) struct ManualPrinter {
+    /// The address as typed, kept only to name the receipt.
+    pub(crate) address: String,
+    /// Worked out from what answered at the address, never typed.
+    pub(crate) device_uri: String,
+    pub(crate) device_id: Option<String>,
+    /// What the queue name is derived from, also sent as the readable description.
+    pub(crate) name: String,
+}
+
+/// Sends `Create-Printer` for a printer set up manually.
+fn create_printer_manually_blocking(
+    system_uri: &str,
+    printer: &ManualPrinter,
+) -> Result<CreateOutcome, PaError> {
+    let existing = printers::get_printers(system_uri)?;
+
+    if let Some(already) = printers::find_by_device_uri(&existing, &printer.device_uri) {
+        return Ok(CreateOutcome::AlreadyConfigured {
+            printer_name: already.name.clone(),
+        });
+    }
+
+    let base_name = printer_name_from_display_name(&printer.name);
+    let printer_name = unique_printer_name(&base_name, &existing).ok_or_else(|| {
+        PaError::malformed(format!(
+            "could not find an unused printer name based on '{base_name}'"
+        ))
+    })?;
+
+    create_printer(
+        system_uri,
+        &CreatePrinterRequest {
+            printer_name,
+            printer_info: Some(printer.name.clone()),
+            device_uri: printer.device_uri.clone(),
+            driver: "auto".to_string(),
+            device_id: printer.device_id.clone(),
+            accepted_attributes: Vec::new(),
+        },
+    )
 }
 
 /// Tries a candidate's device routes in preference order.
@@ -518,12 +597,19 @@ fn create_printer_blocking(
     )
 }
 
+/// What a configuration attempt is filed under until its printer appears.
+struct Receipt {
+    /// The discovery generation, or `manual` for a printer set up manually.
+    round: String,
+    physical_printer_id: String,
+    candidate_id: String,
+}
+
 /// Keeps a receipt whenever an outcome names a printer, including uncertain failures.
 fn finish_configuration(
     context: &State,
     application: &PrinterApplication,
-    candidate: &PaConfigurationCandidate,
-    request: &cosmic_settings_printers_core::ConfigureDiscoveredPrinterRequest,
+    receipt_key: &Receipt,
     outcome: Result<CreateOutcome, PaError>,
 ) -> Result<ConfigurePrinterReply, Error> {
     let web_interface_uri = web::application_web_interface(application);
@@ -532,15 +618,12 @@ fn finish_configuration(
                    printer_uri: Option<String>,
                    printer_uuid: Option<String>|
      -> String {
-        let operation_id = format!(
-            "{}:{}:{printer_name}",
-            application.id, request.discovery_generation
-        );
+        let operation_id = format!("{}:{}:{printer_name}", application.id, receipt_key.round);
         context.insert_pending_configuration(PendingPaConfiguration {
             operation_id: operation_id.clone(),
             printer_application_id: application.id.clone(),
-            physical_printer_id: request.physical_printer_id.clone(),
-            candidate_id: candidate.id.clone(),
+            physical_printer_id: receipt_key.physical_printer_id.clone(),
+            candidate_id: receipt_key.candidate_id.clone(),
             configured_printer_name: printer_name.to_string(),
             expected_printer_uri: printer_uri,
             expected_printer_uuid: printer_uuid,

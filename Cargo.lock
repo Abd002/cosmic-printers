@@ -486,9 +486,9 @@ dependencies = [
 
 [[package]]
 name = "bindgen"
-version = "0.71.1"
+version = "0.72.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5f58bf3d7db68cfbac37cfc485a8d711e87e064c3d0fe0435b92f7a407f9d6b3"
+checksum = "993776b509cfb49c750f11b8f07a46fa23e0a1386ffc01fb1e7d343efc387895"
 dependencies = [
  "bitflags 2.13.0",
  "cexpr",
@@ -1163,7 +1163,7 @@ dependencies = [
 [[package]]
 name = "cups_rs"
 version = "0.3.0"
-source = "git+https://github.com/OpenPrinting/cups-rs.git?branch=main#83ce53406e41bfac8e2977c6a4d6e5507d8e7bfb"
+source = "git+https://github.com/OpenPrinting/cups-rs.git?branch=main#22e81b6aa5a05a50808d3d265937120f46304f19"
 dependencies = [
  "bindgen",
  "chrono",
@@ -2148,7 +2148,7 @@ dependencies = [
  "js-sys",
  "log",
  "wasm-bindgen",
- "windows-core 0.62.2",
+ "windows-core 0.61.2",
 ]
 
 [[package]]
@@ -4795,7 +4795,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix 1.1.4",
  "windows-sys 0.61.2",
