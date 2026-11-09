@@ -50,6 +50,22 @@ sudo apt-get install -y \
   zlib1g-dev
 ```
 
+On Fedora/Red Hat:
+
+```sh
+sudo dnf5 group install -y c-development && \
+sudo dnf5 install -y \
+  clang \
+  clang-devel \
+  glib2-devel \
+  libxkbcommon-devel \
+  avahi-devel \
+  nss-mdns \
+  libpng-devel \
+  openssl-devel \
+  zlib-ng-devel
+```
+
 Requires `libcups3` from OpenPrinting/libcups:
 
 ```sh
@@ -65,7 +81,7 @@ sudo make install
 sudo ldconfig
 ```
 
-On Arch Linux, nothing searches `/usr/local` by default: pkg-config won't find `cups3` when you build, and the dynamic loader won't find `libcups3.so.3` when you run the app. Fix both:
+On Arch Linux and Fedora/Red Hat, nothing searches `/usr/local` by default: pkg-config won't find `cups3` when you build, and the dynamic loader won't find `libcups3.so.3` when you run the app. Fix both:
 
 ```sh
 echo /usr/local/lib | sudo tee /etc/ld.so.conf.d/usr-local.conf
